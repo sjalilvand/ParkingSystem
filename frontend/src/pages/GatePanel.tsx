@@ -1,16 +1,32 @@
-import { useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import {
-  Alert, Box, Button, Card, CardContent, Chip, Divider, List, ListItem, ListItemText,
+  Alert, Box, Button, Card, CardContent, Chip, List, ListItem, ListItemText,
   Stack, TextField, Typography,
 } from '@mui/material'
-import { CameraAlt, PhotoCamera, Login as EntryIcon, Logout as ExitIcon, Payments } from '@mui/icons-material'
+import {
+  CameraAlt, Login as EntryIcon, Logout as ExitIcon, Payments,
+  Person, PersonOff,
+} from '@mui/icons-material'
 import { api, apiErrorFa } from '../api/client'
 import { useLiveEvents } from '../api/ws'
 import { decisionColors, decisionFa } from '../app/theme'
 import PlateBox from '../components/PlateBox'
+import { parsePlateRaw } from '../components/PlateInput'
 import { durationFa, faDate, money } from '../utils/format'
 
 const GATE_API_KEY = 'gate-dev-key'
+
+interface LookupInfo {
+  kind: 'RESIDENT' | 'GUEST'
+  owner_name?: string | null
+  unit_number?: string | null
+  tower_name?: string | null
+  plate_province?: string | null
+  plate_city?: string | null
+  province?: string | null
+  city?: string | null
+  vehicle?: { id: string; brand?: string | null; model?: string | null; color?: string | null } | null
+}
 
 interface DecisionResult {
   access_event_id: string
@@ -29,17 +45,74 @@ interface DecisionResult {
   } | null
 }
 
-export default function GatePanel() {
-  const [direction, setDirection] = useState<'IN' | 'OUT'>('IN')
+function IdentityStrip({ info }: { info: LookupInfo | null }) {
+  if (!info) return null
+  if (info.kind === 'RESIDENT') {
+    return (
+      <Box sx={{ bgcolor: '#E8F5E9', border: '1px solid #A5D6A7', borderRadius: 2.5, p: 1.25, my: 1.5 }}>
+        <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
+          <Chip size="small" color="success" icon={<Person />} label="ساکن" />
+          {info.owner_name && <Typography variant="body2" fontWeight={800}>{info.owner_name}</Typography>}
+          {info.unit_number && (
+            <Chip size="small" variant="outlined"
+              label={`واحد ${info.unit_number}${info.tower_name ? ` — ${info.tower_name}` : ''}`} />
+          )}
+          {info.vehicle?.brand && <Chip size="small" variant="outlined" label={String(info.vehicle.brand)} />}
+        </Stack>
+        {info.plate_province && (
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+            {'\u{1F4CD}'} {info.plate_province}{info.plate_city ? ` — ${info.plate_city}` : ''}
+          </Typography>
+        )}
+      </Box>
+    )
+  }
+  return (
+    <Box sx={{ bgcolor: '#FFF3E0', border: '1px solid #FFB74D', borderRadius: 2.5, p: 1.25, my: 1.5 }}>
+      <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
+        <Chip size="small" color="warning" icon={<PersonOff />} label="مهمان / ناشناس" />
+        {info.province ? (
+          <Typography variant="body2" fontWeight={800}>
+            {'\u{1F4CD}'} استان: {info.province}{info.city ? ` — شهرستان: ${info.city}` : ''}
+          </Typography>
+        ) : (
+          <Typography variant="body2" color="text.secondary">خودرو در سیستم ثبت نشده است</Typography>
+        )}
+      </Stack>
+    </Box>
+  )
+}
+
+function GateSide({ direction }: { direction: 'IN' | 'OUT' }) {
+  const isEntry = direction === 'IN'
   const [plate, setPlate] = useState('۱۲ ب ۳۴۵ ایران ۶۷')
+  const [lookup, setLookup] = useState<LookupInfo | null>(null)
   const [result, setResult] = useState<DecisionResult | null>(null)
   const [error, setError] = useState('')
   const [msg, setMsg] = useState('')
   const [busy, setBusy] = useState(false)
   const [paid, setPaid] = useState(false)
-  const { events, connected } = useLiveEvents(15)
 
-  const gateCode = direction === 'IN' ? 'GATE-IN-01' : 'GATE-OUT-01'
+  const gateCode = isEntry ? 'GATE-IN-01' : 'GATE-OUT-01'
+  const accent = isEntry ? '#2E7D32' : '#C62828'
+
+  // تشخیص زنده ساکن/مهمان هنگام تایپ پلاک
+  useEffect(() => {
+    const t = setTimeout(async () => {
+      const raw = plate.trim()
+      if (!raw) { setLookup(null); return }
+      try {
+        const p = parsePlateRaw(raw)
+        const r = await api.post('/vehicles/plate-lookup', {
+          plate_raw: raw,
+          code: p.province || p.two || undefined,
+          letter: p.letterFa || undefined,
+        })
+        setLookup(r.data)
+      } catch { setLookup(null) }
+    }, 500)
+    return () => clearTimeout(t)
+  }, [plate])
 
   const send = async (e: FormEvent) => {
     e.preventDefault()
@@ -78,35 +151,90 @@ export default function GatePanel() {
     } catch (err) { setError(apiErrorFa(err)) } finally { setBusy(false) }
   }
 
-  const color = result ? (decisionColors[result.decision] ?? '#757575') : '#90A4AE'
+  const color = result ? (decisionColors[result.decision] ?? '#757575') : accent
 
   return (
-    <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' }, gap: 2 }}>
-      <Card sx={{ borderTop: `6px solid ${color}` }}>
-        <CardContent sx={{ p: 3 }}>
-          <Stack direction="row" spacing={1} mb={2.5}>
-            <Button fullWidth size="large" variant={direction === 'IN' ? 'contained' : 'outlined'}
-              startIcon={<EntryIcon />} onClick={() => { setDirection('IN'); setResult(null) }}>گیت ورود</Button>
-            <Button fullWidth size="large" color="secondary" variant={direction === 'OUT' ? 'contained' : 'outlined'}
-              startIcon={<ExitIcon />} onClick={() => { setDirection('OUT'); setResult(null) }}>گیت خروج</Button>
-          </Stack>
+    <Card sx={{ borderTop: `6px solid ${color}` }}>
+      <CardContent sx={{ p: 2.5 }}>
+        <Stack direction="row" spacing={1} alignItems="center" mb={2}>
+          {isEntry ? <EntryIcon color="success" /> : <ExitIcon color="error" />}
+          <Typography variant="h6" fontWeight={900}>{isEntry ? 'گیت ورود' : 'گیت خروج'}</Typography>
+          <Chip size="small" label={gateCode} variant="outlined" />
+        </Stack>
 
-          {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
-          {msg && <Alert severity="success" sx={{ mb: 2 }}>{msg}</Alert>}
+        {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+        {msg && <Alert severity="success" sx={{ mb: 2 }}>{msg}</Alert>}
 
-          <form onSubmit={send}>
-            <TextField fullWidth label="پلاک خودرو (ورودی دوربین)" value={plate}
-              onChange={(e) => setPlate(e.target.value)} sx={{ mb: 1.5 }} />
-            <Stack alignItems="center" mb={2}>
-              <PlateBox plate={plate} />
+        <form onSubmit={send}>
+          <TextField fullWidth size="small" label="پلاک خودرو (ورودی دوربین)" value={plate}
+            onChange={(e) => setPlate(e.target.value)} sx={{ mb: 1.5 }} />
+          <Stack alignItems="center" mb={1}><PlateBox plate={plate} /></Stack>
+          <IdentityStrip info={lookup} />
+          <Button fullWidth variant="contained" color={isEntry ? 'primary' : 'secondary'}
+            startIcon={<CameraAlt />} type="submit" disabled={busy} sx={{ mt: 1.5, py: 1.2 }}>
+            ارسال رویداد دوربین
+          </Button>
+        </form>
+
+        {result && (
+          <Box sx={{ mt: 2, bgcolor: color, borderRadius: 3, p: 2, color: '#fff' }}>
+            <Stack alignItems="center" mb={1}><PlateBox plate={plate} size="lg" /></Stack>
+            <Typography variant="h4" fontWeight={900} textAlign="center" mb={0.5}>
+              {decisionFa[result.decision] ?? result.decision}
+            </Typography>
+            <Stack direction="row" spacing={1} justifyContent="center" mb={1} flexWrap="wrap" useFlexGap>
+              <Chip size="small" label={`راهبند: ${result.barrier_action === 'OPEN' ? 'باز شود' : 'بسته'}`}
+                sx={{ bgcolor: 'rgba(255,255,255,.25)', color: '#fff', fontWeight: 700 }} />
+              {result.duplicate && <Chip size="small" label="تکراری" sx={{ bgcolor: 'rgba(255,255,255,.25)', color: '#fff' }} />}
             </Stack>
-            <Button fullWidth size="large" variant="contained" startIcon={<CameraAlt />}
-              type="submit" disabled={busy} sx={{ fontSize: 17, py: 1.5 }}>
-              ارسال رویداد دوربین ({gateCode})
-            </Button>
-          </form>
+            <Typography variant="body2" textAlign="center">دلیل: {result.decision_reason}</Typography>
+            {result.unit && <Typography variant="body2" textAlign="center">واحد: {result.unit.tower} — {result.unit.unit_number}</Typography>}
+            {result.parking?.code && <Typography variant="body2" textAlign="center">پارکینگ: {result.parking.code}</Typography>}
 
-          <Divider sx={{ my: 2 }} />
+            {result.session && (
+              <Box sx={{ bgcolor: 'rgba(0,0,0,.22)', borderRadius: 2.5, p: 1.5, mt: 1.5, textAlign: 'center' }}>
+                <Typography variant="subtitle2" fontWeight={800}>صورتحساب توقف</Typography>
+                <Typography variant="body2">مدت: {durationFa(result.session.duration_seconds)}</Typography>
+                <Typography variant="h5" fontWeight={900}>{money(result.session.final_amount)}</Typography>
+                <Typography variant="caption">
+                  {result.session.payment_status === 'UNPAID' ? 'پرداخت‌نشده' : result.session.payment_status}
+                </Typography>
+              </Box>
+            )}
+            {result.warnings && result.warnings.length > 0 && (
+              <Alert severity="warning" sx={{ mt: 1, bgcolor: '#fff' }}>{result.warnings.join('، ')}</Alert>
+            )}
+            <Stack spacing={1} mt={1.5}>
+              {result.barrier_action === 'OPEN' && (
+                <Button fullWidth variant="contained" sx={{ bgcolor: '#fff', color, py: 1.2 }}
+                  onClick={openBarrier} disabled={busy}>
+                  تأیید و بازکردن راهبند
+                </Button>
+              )}
+              {result.session && result.session.payment_status === 'UNPAID' && (result.session.final_amount ?? 0) > 0 && !paid && (
+                <Button fullWidth variant="contained" color="warning" startIcon={<Payments />} onClick={payNow} disabled={busy}>
+                  ثبت پرداخت {money(result.session.final_amount)}
+                </Button>
+              )}
+              {paid && <Alert severity="success" sx={{ bgcolor: '#fff' }}>پرداخت انجام شد ✔</Alert>}
+            </Stack>
+          </Box>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+export default function GatePanel() {
+  const { events, connected } = useLiveEvents(15)
+  return (
+    <Stack spacing={2}>
+      <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', lg: '1fr 1fr' }, gap: 2 }}>
+        <GateSide direction="IN" />
+        <GateSide direction="OUT" />
+      </Box>
+      <Card>
+        <CardContent sx={{ py: 2 }}>
           <Stack direction="row" justifyContent="space-between" alignItems="center">
             <Typography variant="body2" color="text.secondary">رویدادهای زنده</Typography>
             <Chip size="small" label={connected ? 'WebSocket متصل' : 'قطع'} color={connected ? 'success' : 'default'} />
@@ -115,7 +243,7 @@ export default function GatePanel() {
             {events.map((e) => (
               <ListItem key={e.event_id} divider>
                 <ListItemText
-                  primary={`${e.event} — ${String((e.data as { plate?: string })?.plate ?? '')}`}
+                  primary={`${e.event} — ${String((e.data as { plate?: string })?.plate ?? (e.data as { title?: string })?.title ?? '')}`}
                   secondary={faDate(e.occurred_at)}
                 />
               </ListItem>
@@ -123,63 +251,6 @@ export default function GatePanel() {
           </List>
         </CardContent>
       </Card>
-
-      <Card sx={{ bgcolor: color, color: '#fff', minHeight: 340, display: 'flex' }}>
-        <CardContent sx={{ p: 3, width: '100%', display: 'flex', flexDirection: 'column' }}>
-          {!result ? (
-            <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, opacity: 0.92 }}>
-              <PhotoCamera sx={{ fontSize: 72 }} />
-              <Typography variant="h6">در انتظار رویداد دوربین...</Typography>
-            </Box>
-          ) : (
-            <>
-              <Stack alignItems="center" mb={2}>
-                <PlateBox plate={plate} size="lg" />
-              </Stack>
-              <Typography variant="h3" fontWeight={900} textAlign="center" mb={1}>
-                {decisionFa[result.decision] ?? result.decision}
-              </Typography>
-              <Stack direction="row" spacing={1} justifyContent="center" mb={2}>
-                <Chip label={`راهبند: ${result.barrier_action === 'OPEN' ? 'باز شود' : 'بسته'}`}
-                  sx={{ bgcolor: 'rgba(255,255,255,.25)', color: '#fff', fontWeight: 700 }} />
-                {result.duplicate && <Chip label="رویداد تکراری" sx={{ bgcolor: 'rgba(255,255,255,.25)', color: '#fff' }} />}
-              </Stack>
-              <Typography variant="body1" mb={0.5} textAlign="center">دلیل: {result.decision_reason}</Typography>
-              {result.unit && <Typography variant="body1" mb={0.5} textAlign="center">واحد: {result.unit.tower} — واحد {result.unit.unit_number}</Typography>}
-              {result.parking?.code && <Typography variant="body1" mb={0.5} textAlign="center">پارکینگ: {result.parking.code}</Typography>}
-
-              {result.session && (
-                <Box sx={{ bgcolor: 'rgba(0,0,0,.22)', borderRadius: 3, p: 2, my: 2, textAlign: 'center' }}>
-                  <Typography variant="subtitle1" fontWeight={800} mb={1}>صورتحساب توقف</Typography>
-                  <Typography variant="body1">مدت توقف: {durationFa(result.session.duration_seconds)}</Typography>
-                  <Typography variant="h4" fontWeight={900} my={1}>{money(result.session.final_amount)}</Typography>
-                  <Typography variant="body2">وضعیت: {result.session.payment_status === 'UNPAID' ? 'پرداخت‌نشده' : result.session.payment_status}</Typography>
-                </Box>
-              )}
-
-              {result.warnings && result.warnings.length > 0 && (
-                <Alert severity="warning" sx={{ mt: 1, bgcolor: '#fff' }}>{result.warnings.join('، ')}</Alert>
-              )}
-
-              <Stack spacing={1.5} mt={2}>
-                {result.barrier_action === 'OPEN' && (
-                  <Button fullWidth size="large" variant="contained"
-                    sx={{ bgcolor: '#fff', color, fontSize: 17, py: 1.5 }} onClick={openBarrier} disabled={busy}>
-                    تأیید و بازکردن راهبند
-                  </Button>
-                )}
-                {result.session && result.session.payment_status === 'UNPAID' && (result.session.final_amount ?? 0) > 0 && !paid && (
-                  <Button fullWidth size="large" variant="contained" color="warning" startIcon={<Payments />}
-                    onClick={payNow} disabled={busy} sx={{ fontSize: 16, py: 1.5 }}>
-                    ثبت پرداخت {money(result.session.final_amount)}
-                  </Button>
-                )}
-                {paid && <Alert severity="success" sx={{ bgcolor: '#fff' }}>پرداخت انجام شد ✔</Alert>}
-              </Stack>
-            </>
-          )}
-        </CardContent>
-      </Card>
-    </Box>
+    </Stack>
   )
 }

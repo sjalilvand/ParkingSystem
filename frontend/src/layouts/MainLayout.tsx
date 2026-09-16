@@ -1,47 +1,30 @@
-import { useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { Navigate, Outlet, useLocation, useNavigate } from 'react-router-dom'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
-  Alert,
-  AppBar,
-  Box,
-  Button,
-  Chip,
-  Dialog,
-  DialogActions,
-  DialogContent,
-  DialogTitle,
-  Drawer,
-  IconButton,
-  List,
-  ListItemButton,
-  ListItemIcon,
-  ListItemText,
-  TextField,
-  Toolbar,
-  Typography,
+  Alert, AppBar, Badge, Box, Button, Chip, Dialog, DialogActions, DialogContent,
+  DialogTitle, Divider, Drawer, IconButton, List, ListItemButton, ListItemIcon,
+  ListItemText, Popover, TextField, Toolbar, Typography,
 } from '@mui/material'
 import {
-  AccountBalance,
-  Apartment,
-  ConfirmationNumber,
-  DirectionsCar,
-  Dashboard as DashIcon,
-  LockReset,
-  Logout,
-  LocalParking,
-  ManageAccounts,
-  Menu as MenuIcon,
-  Payments,
-  ReportProblem,
-  ReceiptLong,
-  SwapHoriz,
-  Tour,
-  Tune,
+  AccountBalance, Apartment, ConfirmationNumber, DirectionsCar,
+  Dashboard as DashIcon, LockReset, Logout, LocalParking, ManageAccounts,
+  Menu as MenuIcon, Notifications, Payments, ReportProblem, ReceiptLong,
+  SwapHoriz, Tour, Tune,
 } from '@mui/icons-material'
 import { api, apiErrorFa } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
+import { useLiveEvents } from '../api/ws'
 
 const DRAWER_W = 250
+
+interface NotifItem {
+  id: string
+  title: string
+  message?: string | null
+  read_at?: string | null
+  created_at?: string | null
+}
 
 const menu = [
   { label: 'داشبورد', icon: <DashIcon />, path: '/' },
@@ -64,6 +47,47 @@ export default function MainLayout() {
   const nav = useNavigate()
   const { pathname } = useLocation()
   const [open, setOpen] = useState(true)
+  const qc = useQueryClient()
+
+  const [bellAnchor, setBellAnchor] = useState<HTMLElement | null>(null)
+  const bellOpen = Boolean(bellAnchor)
+
+  const { data: unreadData } = useQuery({
+    queryKey: ['notif-unread'],
+    queryFn: async () => (await api.get('/notifications/unread-count')).data as { unread: number },
+    refetchInterval: 60000,
+  })
+  const unread = unreadData?.unread ?? 0
+
+  const { data: listData } = useQuery({
+    queryKey: ['notif-list'],
+    queryFn: async () => (await api.get('/notifications', { params: { page_size: 20 } })).data as { items: NotifItem[] },
+    enabled: bellOpen,
+  })
+
+  const { events } = useLiveEvents(8)
+  const lastNotif = events.find((e) => e.event === 'notification.new')?.event_id
+  useEffect(() => {
+    if (!lastNotif) return
+    qc.invalidateQueries({ queryKey: ['notif-unread'] })
+    if (bellOpen) qc.invalidateQueries({ queryKey: ['notif-list'] })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastNotif])
+
+  const markRead = async (id: string) => {
+    try {
+      await api.post(`/notifications/${id}/read`)
+      qc.invalidateQueries({ queryKey: ['notif-unread'] })
+      qc.invalidateQueries({ queryKey: ['notif-list'] })
+    } catch { /* ignore */ }
+  }
+  const markAllRead = async () => {
+    try {
+      await api.post('/notifications/read-all')
+      qc.invalidateQueries({ queryKey: ['notif-unread'] })
+      qc.invalidateQueries({ queryKey: ['notif-list'] })
+    } catch { /* ignore */ }
+  }
 
   const [pwOpen, setPwOpen] = useState(false)
   const [cur, setCur] = useState('')
@@ -160,6 +184,11 @@ export default function MainLayout() {
             <Typography variant="h6" noWrap sx={{ flexGrow: 1, fontWeight: 900, letterSpacing: 0.5 }}>
               سامانه مدیریت پارکینگ
             </Typography>
+            <IconButton color="inherit" title="اعلان‌ها" onClick={(e) => setBellAnchor(e.currentTarget)}>
+              <Badge badgeContent={unread} color="error" max={99}>
+                <Notifications />
+              </Badge>
+            </IconButton>
             <IconButton color="inherit" title="تغییر رمز عبور" onClick={() => { setPwOpen(true); setPwErr(''); setPwMsg('') }}>
               <LockReset />
             </IconButton>
@@ -178,6 +207,38 @@ export default function MainLayout() {
           <Outlet />
         </Box>
       </Box>
+
+      <Popover
+        open={bellOpen}
+        anchorEl={bellAnchor}
+        onClose={() => setBellAnchor(null)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
+        transformOrigin={{ vertical: 'top', horizontal: 'right' }}
+        sx={{ mt: 1 }}
+      >
+        <Box sx={{ width: 340 }}>
+          <Stack direction="row" justifyContent="space-between" alignItems="center" px={2} py={1.5}>
+            <Typography fontWeight={800}>اعلان‌ها</Typography>
+            <Button size="small" onClick={markAllRead}>همه خوانده شد</Button>
+          </Stack>
+          <Divider />
+          <List dense sx={{ maxHeight: 380, overflow: 'auto', p: 0 }}>
+            {(listData?.items ?? []).map((n) => (
+              <ListItemButton key={n.id} onClick={() => markRead(n.id)}
+                sx={{ bgcolor: n.read_at ? 'transparent' : 'action.hover', alignItems: 'flex-start' }}>
+                <ListItemText
+                  primary={n.title}
+                  secondary={n.message || undefined}
+                  primaryTypographyProps={{ fontWeight: n.read_at ? 600 : 800 }}
+                />
+              </ListItemButton>
+            ))}
+            {listData && listData.items.length === 0 && (
+              <ListItem><ListItemText primary="اعلانی وجود ندارد" /></ListItem>
+            )}
+          </List>
+        </Box>
+      </Popover>
 
       <Dialog open={pwOpen} onClose={() => setPwOpen(false)}>
         <DialogTitle>تغییر رمز عبور من</DialogTitle>
