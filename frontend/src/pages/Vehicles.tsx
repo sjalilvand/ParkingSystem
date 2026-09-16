@@ -22,7 +22,7 @@ interface VehicleRow {
   owner_person_id?: string | null; unit_id?: string | null
   owner_name?: string | null; unit_number?: string | null; tower_name?: string | null
   plate_province?: string | null; plate_city?: string | null
-  is_active: boolean; notes?: string | null
+  is_active: boolean; notes?: string | null; created_at?: string
 }
 
 const emptyForm = {
