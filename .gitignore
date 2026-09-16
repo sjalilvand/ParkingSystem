@@ -1,0 +1,36 @@
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*.py,cover
+.venv/
+venv/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ===== Node / Frontend =====
+node_modules/
+logs/
+*.log
+dist/
+build/
+
+# ===== Databases =====
+*.db
+*.sqlite
+*.sqlite3
+
+# ===== Secrets =====
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# ===== IDE / OS =====
+.vs/
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+Desktop.ini

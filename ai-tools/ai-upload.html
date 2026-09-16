@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<title>ابزار تحلیل DXF با هوش مصنوعی — سامانه پارکینگ</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: Tahoma, sans-serif; background: #F0F4F8; margin: 0; padding: 24px; }
+  .card { background: #fff; border-radius: 16px; box-shadow: 0 2px 14px rgba(16,42,83,.08);
+          padding: 24px; max-width: 1100px; margin: 0 auto 20px; }
+  h1 { color: #0D47A1; font-size: 22px; margin: 0 0 8px; }
+  h2 { color: #263238; font-size: 16px; margin: 0 0 12px; }
+  p  { color: #546E7A; font-size: 13px; }
+  #drop { border: 3px dashed #90CAF9; border-radius: 14px; padding: 36px; text-align: center;
+          background: #E3F2FD; cursor: pointer; transition: .2s; }
+  #drop.hover { background: #BBDEFB; border-color: #1565C0; }
+  #drop b { color: #1565C0; font-size: 16px; }
+  .btn { background: #1565C0; color: #fff; border: none; border-radius: 10px;
+         padding: 12px 22px; font-family: Tahoma; font-size: 14px; font-weight: bold;
+         cursor: pointer; margin: 6px 4px 0 0; }
+  .btn:hover { background: #0D47A1; }
+  .btn.secondary { background: #00897B; }
+  .btn.warn { background: #F57C00; }
+  .btn:disabled { background: #B0BEC5; cursor: not-allowed; }
+  #jsonInfo { margin-top: 12px; font-size: 13px; color: #2E7D32; font-weight: bold; }
+  #status { margin-top: 12px; font-size: 14px; font-weight: bold; min-height: 20px; }
+  textarea { width: 100%; height: 260px; font-family: Consolas, monospace; font-size: 12px;
+             direction: ltr; text-align: left; border: 1px solid #CFD8DC; border-radius: 10px;
+             padding: 10px; background: #FAFAFA; }
+  .aiLinks a { display: inline-block; margin: 4px 6px 0 0; padding: 10px 18px; border-radius: 10px;
+               text-decoration: none; color: #fff; font-weight: bold; font-size: 13px; }
+  .aiLinks a.chatgpt { background: #10A37F; }
+  .aiLinks a.claude  { background: #D97757; }
+  .aiLinks a.gemini  { background: #4285F4; }
+  .error { color: #C62828; }
+  .steps { color: #37474F; font-size: 13px; line-height: 2; }
+  .steps b { color: #1565C0; }
+</style>
+</head>
+<body>
+
+<div class="card">
+  <h1>🤖 ابزار تحلیل نقشه DXF پارکینگ با هوش مصنوعی</h1>
+  <p>فایل <b>parking-ai-package.json</b> را بارگذاری کنید، سپس پرامپت آماده را کپی و در مدل هوش مصنوعی ارسال کنید. خروجی JSON دریافت‌شده را با دکمه «اعتبارسنجی» بررسی کنید.</p>
+  <ol class="steps">
+    <li><b>گام ۱:</b> فایل JSON را انتخاب یا در کادر رها کنید (فایل کامل و یکپارچه باشد).</li>
+    <li><b>گام ۲:</b> دکمه «ساخت پرامپت کامل» را بزنید و سپس «کپی در کلیپ‌بورد».</li>
+    <li><b>گام ۳:</b> از لینک‌های زیر مدل AI را باز کنید و پیست کنید (اگر JSON بزرگ بود، فقط بخش drawings انتهای پیام را از فایل جداگانه پیست کنید).</li>
+    <li><b>گام ۴:</b> خروجی JSON مدل را در کادر پایین پیست و «اعتبارسنجی» بزنید؛ سپس «دانلود خروجی».</li>
+  </ol>
+</div>
+
+<div class="card">
+  <h2>📁 گام ۱ — بارگذاری parking-ai-package.json</h2>
+  <div id="drop">
+    <b>فایل JSON را اینجا رها کنید</b><br>یا کلیک و انتخاب کنید
+    <input type="file" id="file" accept=".json" style="display:none">
+  </div>
+  <div id="jsonInfo">فایلی بارگذاری نشده.</div>
+</div>
+
+<div class="card">
+  <h2>🧠 گام ۲ — پرامپت + داده</h2>
+  <button class="btn" id="build" disabled>ساخت پرامپت کامل</button>
+  <button class="btn secondary" id="copy" disabled>📋 کپی در کلیپ‌بورد</button>
+  <button class="btn warn" id="download" disabled>⬇ دانلود prompt+data.txt</button>
+  <div id="status"></div>
+  <textarea id="promptBox" placeholder="پرامپت ترکیب‌شده اینجا نمایش داده می‌شود..." style="margin-top:10px"></textarea>
+  <div class="aiLinks">
+    <a class="chatgpt" href="https://chat.openai.com" target="_blank">ChatGPT ↗</a>
+    <a class="claude" href="https://claude.ai/new" target="_blank">Claude ↗</a>
+    <a class="gemini" href="https://gemini.google.com" target="_blank">Gemini ↗</a>
+  </div>
+</div>
+
+<div class="card">
+  <h2>✅ گام ۴ — اعتبارسنجی خروجی مدل</h2>
+  <textarea id="resultBox" placeholder="خروجی JSON مدل هوش مصنوعی را اینجا پیست کنید..."></textarea>
+  <button class="btn" id="validate">اعتبارسنجی و آمار</button>
+  <button class="btn secondary" id="dlResult" disabled>⬇ دانلود خروجی JSON</button>
+  <div id="valStatus"></div>
+</div>
+
+<script>
+let pkg = null;
+let fullPrompt = '';
+
+const drop = document.getElementById('drop');
+const fileInput = document.getElementById('file');
+const info = document.getElementById('jsonInfo');
+const status = document.getElementById('status');
+const promptBox = document.getElementById('promptBox');
+const valStatus = document.getElementById('valStatus');
+
+drop.addEventListener('click', () => fileInput.click());
+drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('hover'); });
+drop.addEventListener('dragleave', () => drop.classList.remove('hover'));
+drop.addEventListener('drop', e => {
+  e.preventDefault(); drop.classList.remove('hover');
+  if (e.dataTransfer.files.length) loadFile(e.dataTransfer.files[0]);
+});
+fileInput.addEventListener('change', e => { if (e.target.files.length) loadFile(e.target.files[0]); });
+
+function loadFile(f) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      pkg = JSON.parse(reader.result);
+      const drawings = (pkg.drawings || []).map(d => d.file_name + ' (' + d.entity_count + ' entity)').join('، ');
+      info.innerHTML = '✅ فایل معتبر: ' + (pkg.package_type || '?') +
+        ' | نقشه‌ها: ' + (pkg.drawings ? pkg.drawings.length : 0) +
+        ' — ' + drawings +
+        ' | حجم: ' + Math.round(f.size / 1024) + ' KB';
+      document.getElementById('build').disabled = false;
+    } catch (e) {
+      info.innerHTML = '<span class="error">❌ فایل JSON نامعتبر است: ' + e.message + '</span>';
+      info.className = 'error';
+    }
+  };
+  reader.readAsText(f);
+}
+
+document.getElementById('build').addEventListener('click', () => {
+  status.textContent = 'در حال ساخت...';
+  try {
+    // پرامپت پایه (فشرده)
+    const base = `# نقش شما
+متخصص تحلیل نقشه‌های CAD، طراحی پارکینگ، هندسه دوبعدی و استخراج داده از DXF هستید.
+یک فایل JSON (parking-ai-package.json) شامل هندسه، لایه‌ها، متن‌ها و پلی‌لاین‌های DXF پارکینگ محوطه برج به شما داده می‌شود.
+
+# هدف
+تشخیص دقیق محل‌های پارک خودرو و تولید JSON استاندارد برای ثبت در دیتابیس سامانه پلاک‌خوان.
+رنگ نمایش: آزاد=سبز، اشغال=قرمز، رزرو=زرد، غیرفعال=خاکستری.
+
+# وظایف
+1. شناسایی لایه‌های پارکینگ (PARKING/PARK/CAR/SLOT/STALL/PARKING_SPOTS).
+2. پلی‌لاین‌های بسته و بلوک‌های محتمل جای پارک را پیدا کن (مستطیل ~2.5×5 متر).
+3. خطوط موازی منظم = مرز جای پارک.
+4. متن TEXT/MTEXT نزدیک مرکز هر محدوده = شماره پارکینگ آن.
+5. بدون شماره → P-001, P-002,... (از بالا به پایین، راست به چپ).
+6. entity_handle، polygon، centroid، مساحت برای هر جایگاه ثبت کن.
+7. موارد مشکوک → review_items (حذف نکن).
+8. ساختمان/رمپ/پله/آسانسور/فضای سبز → پارکینگ نیست.
+9. فقط از handle و مختصات واقعی ورودی استفاده کن.
+10. confidence بین 0..1؛ کمتر از 0.7 → در review_items هم.
+11. متن مشترک بین چند پارکینگ → در review_items.
+12. خروجی فقط JSON (بدون هیچ توضیح).
+
+# ساختار خروجی
+{
+  "analysis_status": "success | needs_review | failed",
+  "map_summary": { "detected_parking_count": 0, "confirmed_label_count": 0, "suggested_label_count": 0, "needs_review_count": 0, "parking_layers": [], "notes": [] },
+  "parking_spots": [
+    { "parking_id": "P-001", "source_drawing": "A", "source_layer": "...", "source_entity_handle": "AB12",
+      "confidence": 0.95, "detection_method": "closed_polyline_and_nearby_text", "label_from_dxf": "101",
+      "display_name": "پارکینگ 101", "polygon": [{"x":0,"y":0}], "center": {"x":0,"y":0},
+      "area_dxf_unit2": 0, "rotation_degree": 0, "status_default": "free", "is_active": true, "notes": "" }
+  ],
+  "unmatched_labels": [],
+  "review_items": []
+}
+
+یادآوری: فقط JSON معتبر برگردان. داده ورودی در ادامه می‌آید:
+
+# داده ورودی (parking-ai-package.json)
+`;
+    fullPrompt = base + JSON.stringify(pkg);
+    promptBox.value = fullPrompt.length > 500000
+      ? fullPrompt.slice(0, 500000) + '\n\n... [بریده شد — JSON کامل را با دکمه دانلود بفرستید] ...'
+      : fullPrompt;
+    status.textContent = '✅ پرامپت آماده است (' + Math.round(fullPrompt.length / 1024) + ' KB). دکمه کپی را بزنید.';
+    document.getElementById('copy').disabled = false;
+    document.getElementById('download').disabled = false;
+  } catch (e) {
+    status.innerHTML = '<span class="error">خطا: ' + e.message + '</span>';
+  }
+});
+
+document.getElementById('copy').addEventListener('click', async () => {
+  try {
+    await navigator.clipboard.writeText(fullPrompt);
+    status.textContent = '✅ کپی شد! حالا مدل AI را باز کنید و پیست (Ctrl+V) کنید.';
+  } catch {
+    promptBox.select();
+    document.execCommand('copy');
+    status.textContent = '✅ کپی شد (روش جایگزین).';
+  }
+});
+
+document.getElementById('download').addEventListener('click', () => {
+  const blob = new Blob([fullPrompt], { type: 'text/plain;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'ai-prompt-with-data.txt';
+  a.click();
+});
+
+document.getElementById('validate').addEventListener('click', () => {
+  const txt = document.getElementById('resultBox').value.trim();
+  try {
+    // حذف احتمالی بلاک کد Markdown
+    const cleaned = txt.replace(/^```(json)?/m, '').replace(/```$/m, '').trim();
+    const j = JSON.parse(cleaned);
+    const n = (j.parking_spots || []).length;
+    const conf = (j.parking_spots || []).filter(s => (s.confidence ?? 0) >= 0.7).length;
+    valStatus.innerHTML = '✅ JSON معتبر!<br>' +
+      '• تعداد پارکینگ: <b>' + n + '</b><br>' +
+      '• با اطمینان بالا (≥0.7): <b>' + conf + '</b><br>' +
+      '• نیاز به بررسی: <b>' + ((j.review_items || []).length) + '</b><br>' +
+      '• متن‌های بدون جایگاه: <b>' + ((j.unmatched_labels || []).length) + '</b>';
+    document.getElementById('dlResult').disabled = false;
+    window._result = cleaned;
+  } catch (e) {
+    valStatus.innerHTML = '<span class="error">❌ JSON نامعتبر: ' + e.message + '</span>';
+  }
+});
+
+document.getElementById('dlResult').addEventListener('click', () => {
+  const blob = new Blob([window._result], { type: 'application/json;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'parking-ai-result.json';
+  a.click();
+});
+</script>
+</body>
+</html>

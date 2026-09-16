@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<title>نمایش هندسی DXF — سامانه پارکینگ</title>
+<style>
+  body { font-family: Tahoma; background: #263238; margin: 0; padding: 16px; }
+  .bar { background: #37474F; color: #ECEFF1; padding: 12px 16px; border-radius: 12px;
+         display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+  .bar b { color: #90CAF9; }
+  input[type=file] { color: #ECEFF1; }
+  button { background: #1565C0; color: #fff; border: none; border-radius: 8px; padding: 8px 16px;
+           font-family: Tahoma; cursor: pointer; }
+  canvas { background: #fff; border-radius: 12px; width: 100%; display: block; }
+  .legend { color: #B0BEC5; font-size: 12px; margin-top: 8px; }
+</style>
+</head>
+<body>
+<div class="bar">
+  <b>نمایش DXF:</b>
+  <input type="file" id="file" accept=".json">
+  <button id="fit">نمایش کامل</button>
+  <label><input type="checkbox" id="lbl" checked> نمایش متن‌ها</label>
+  <span id="info" style="margin-right:auto"></span>
+</div>
+<canvas id="cv" width="1400" height="900"></canvas>
+<div class="legend">
+  رنگ‌ها بر اساس لایه (خودکار) — با چرخ موس زوم و با درگ جابه‌جایی کنید. روی هر المان کلیک = نمایش Handle.
+</div>
+<script>
+let pkg = null, view = { x: 0, y: 0, s: 1 };
+const cv = document.getElementById('cv'), ctx = cv.getContext('2d');
+const palette = ['#1565C0','#2E7D32','#F57C00','#8E24AA','#00897B','#C62828','#5E35B1','#546E7A','#F9A825','#00ACC1'];
+
+const layerColor = {};
+let ci = 0;
+const colorOf = (layer) => layerColor[layer] ??= palette[ci++ % palette.length];
+
+document.getElementById('file').addEventListener('change', e => {
+  const f = e.target.files[0]; if (!f) return;
+  const r = new FileReader();
+  r.onload = () => {
+    pkg = JSON.parse(r.result);
+    document.getElementById('info').textContent =
+      (pkg.drawings?.length || 0) + ' نقشه | ' +
+      (pkg.drawings?.reduce((a, d) => a + (d.entity_count || d.entities?.length || 0), 0) || 0) + ' المان';
+    fitAll(); draw();
+  };
+  r.readAsText(f);
+});
+
+function bounds() {
+  let minX = 1e9, minY = 1e9, maxX = -1e9, maxY = -1e9;
+  for (const d of pkg?.drawings || []) for (const e of d.entities || []) {
+    const pts = e.vertices || (e.start_point ? [e.start_point] : []) || [];
+    if (e.center) { pts.push(e.center); }
+    for (const p of pts) {
+      if (typeof p.x !== 'number') continue;
+      minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
+      minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y);
+    }
+  }
+  return { minX, minY, maxX, maxY };
+}
+
+function fitAll() {
+  if (!pkg) return;
+  const b = bounds();
+  const w = b.maxX - b.minX || 1, h = b.maxY - b.minY || 1;
+  view.s = Math.min(cv.width / w, cv.height / h) * 0.92;
+  view.x = (cv.width - w * view.s) / 2 - b.minX * view.s;
+  view.y = (cv.height + h * view.s) / 2 + b.minY * view.s;
+}
+
+function toXY(x, y) { return [view.x + x * view.s, view.y - y * view.s]; }
+
+function draw() {
+  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, cv.width, cv.height);
+  if (!pkg) return;
+  const showLbl = document.getElementById('lbl').checked;
+  ctx.lineWidth = 1;
+
+  for (const d of pkg.drawings || []) {
+    for (const e of d.entities || []) {
+      ctx.strokeStyle = colorOf(e.layer || '?');
+      if (e.type === 'LINE' && e.vertices?.length >= 2) {
+        const [x1, y1] = toXY(e.vertices[0].x, e.vertices[0].y);
+        const [x2, y2] = toXY(e.vertices[1].x, e.vertices[1].y);
+        ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+      } else if ((e.type === 'LWPOLYLINE' || e.type === 'POLYLINE') && e.vertices) {
+        ctx.beginPath();
+        e.vertices.forEach((v, i) => {
+          const [x, y] = toXY(v.x, v.y);
+          i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+        });
+        if (e.shape_closed) ctx.closePath();
+        ctx.stroke();
+      } else if (e.type === 'ARC' && e.center) {
+        const [cx, cy] = toXY(e.center.x, e.center.y);
+        ctx.beginPath();
+        ctx.arc(cx, cy, e.radius * view.s, -e.end_angle, -e.start_angle);
+        ctx.stroke();
+      } else if (e.type === 'CIRCLE' && e.center) {
+        const [cx, cy] = toXY(e.center.x, e.center.y);
+        ctx.beginPath(); ctx.arc(cx, cy, e.radius * view.s, 0, 7); ctx.stroke();
+      }
+      if (showLbl && e.type === 'TEXT' && e.start_point && e.text) {
+        const [x, y] = toXY(e.start_point.x, e.start_point.y);
+        ctx.fillStyle = '#111';
+        ctx.font = `${Math.max(9, e.text_height * view.s)}px Tahoma`;
+        ctx.fillText(e.text, x, y);
+      }
+    }
+  }
+}
+
+// zoom / pan
+cv.addEventListener('wheel', e => {
+  e.preventDefault();
+  const f = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+  const mx = e.offsetX, my = e.offsetY;
+  view.x = mx - (mx - view.x) * f;
+  view.y = my - (my - view.y) * f;
+  view.s *= f; draw();
+});
+let drag = null;
+cv.addEventListener('mousedown', e => drag = { x: e.offsetX, y: e.offsetY });
+cv.addEventListener('mousemove', e => {
+  if (!drag) return;
+  view.x += e.offsetX - drag.x; view.y += e.offsetY - drag.y;
+  drag = { x: e.offsetX, y: e.offsetY }; draw();
+});
+addEventListener('mouseup', () => drag = null);
+document.getElementById('fit').addEventListener('click', () => { fitAll(); draw(); });
+</script>
+</body>
+</html>

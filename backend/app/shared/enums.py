@@ -1,0 +1,59 @@
+from enum import Enum
+
+
+class Decision(str, Enum):
+    ALLOW = "ALLOW"
+    ALLOW_WITH_WARNING = "ALLOW_WITH_WARNING"
+    REQUIRE_OPERATOR_APPROVAL = "REQUIRE_OPERATOR_APPROVAL"
+    DENY = "DENY"
+    UNKNOWN_PLATE = "UNKNOWN_PLATE"
+    OFFLINE_ALLOW = "OFFLINE_ALLOW"
+    OFFLINE_REQUIRE_REVIEW = "OFFLINE_REQUIRE_REVIEW"
+
+
+class EventType(str, Enum):
+    ENTRY = "ENTRY"
+    EXIT = "EXIT"
+    MANUAL_ENTRY = "MANUAL_ENTRY"
+    MANUAL_EXIT = "MANUAL_EXIT"
+    DENIED_ENTRY = "DENIED_ENTRY"
+    DENIED_EXIT = "DENIED_EXIT"
+    BARRIER_OPEN = "BARRIER_OPEN"
+
+
+class PermitType(str, Enum):
+    PERMANENT = "PERMANENT"
+    TEMPORARY = "TEMPORARY"
+    PRIMARY = "PRIMARY"
+    SECONDARY = "SECONDARY"
+    GUEST = "GUEST"
+    CONTRACTOR = "CONTRACTOR"
+    SERVICE = "SERVICE"
+    EMERGENCY = "EMERGENCY"
+    SINGLE_ENTRY = "SINGLE_ENTRY"
+    TIME_WINDOW = "TIME_WINDOW"
+
+
+class ParkingSessionStatus(str, Enum):
+    OPEN = "OPEN"
+    CLOSED = "CLOSED"
+    CANCELLED = "CANCELLED"
+    REQUIRES_REVIEW = "REQUIRES_REVIEW"
+
+
+class GateDirection(str, Enum):
+    IN = "IN"
+    OUT = "OUT"
+
+
+class DeviceType(str, Enum):
+    CAMERA = "CAMERA"
+    BARRIER = "BARRIER"
+    PRINTER = "PRINTER"
+
+
+class PersonType(str, Enum):
+    OWNER = "OWNER"
+    TENANT = "TENANT"
+    GUEST = "GUEST"
+    STAFF = "STAFF"
