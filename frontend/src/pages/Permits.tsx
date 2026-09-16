@@ -5,7 +5,8 @@ import {
   DialogTitle, MenuItem, Stack, TextField, Typography,
 } from '@mui/material'
 import { api, apiErrorFa } from '../api/client'
-import { faDate, jalaliDisplay } from '../utils/jalali'
+import { jalaliDisplay } from '../utils/jalali'
+import { faDate } from '../utils/format'
 import PlateBox from '../components/PlateBox'
 import PlateInput from '../components/PlateInput'
 import JalaliDateInput from '../components/JalaliDateInput'

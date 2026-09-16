@@ -11,7 +11,7 @@ import PlateBox from '../components/PlateBox'
 import PlateInput, { parsePlateRaw } from '../components/PlateInput'
 
 interface Brand { id: string; name_fa: string; country: string; is_active: boolean }
-interface VColor { id: string; name_fa: string; hex_code: string }
+interface VColor { id: string; name_fa: string; hex_code: string; is_active: boolean }
 interface Person { id: string; first_name: string; last_name: string }
 interface Unit { id: string; tower_id: string; unit_number: string }
 interface Tower { id: string; name: string }

@@ -3,8 +3,8 @@ import { Navigate, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Alert, AppBar, Badge, Box, Button, Chip, Dialog, DialogActions, DialogContent,
-  DialogTitle, Divider, Drawer, IconButton, List, ListItemButton, ListItemIcon,
-  ListItemText, Popover, TextField, Toolbar, Typography,
+  DialogTitle, Divider, Drawer, IconButton, List, ListItem, ListItemButton, ListItemIcon,
+  ListItemText, Popover, Stack, TextField, Toolbar, Typography,
 } from '@mui/material'
 import {
   AccountBalance, Apartment, ConfirmationNumber, DirectionsCar,
