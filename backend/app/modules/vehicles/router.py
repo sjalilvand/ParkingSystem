@@ -245,3 +245,64 @@ async def resolve_restriction(restriction_id: str, db: AsyncSession = Depends(ge
     obj.resolved_at = datetime.now(timezone.utc)
     await db.commit()
     return {"success": True}
+
+
+class PlateLookupBody(BaseModel):
+    plate_raw: str = Field(min_length=2, max_length=64)
+    code: str | None = None
+    letter: str | None = None
+
+
+@router.post("/vehicles/plate-lookup")
+async def plate_lookup(body: PlateLookupBody, db: AsyncSession = Depends(get_db),
+                       user: User = Depends(get_current_user)):
+    """تشخیص ساکن/غریبه برای پنل گیت.
+    RESIDENT: خودرو ثبت‌شده است -> مشخصات مالک/واحد/برج.
+    GUEST: ناشناس -> استان/شهرستان از (کد استان، حرف) یا پارس خودکار raw.
+    """
+    raw = body.plate_raw
+    normalized = normalize_plate(raw) or raw
+    vehicle = await VehicleService.get_by_plate(db, raw)
+    if vehicle:
+        owner_name = None
+        if vehicle.owner_person_id:
+            p = await db.get(Person, vehicle.owner_person_id)
+            if p:
+                owner_name = f"{p.first_name} {p.last_name}".strip() or None
+        unit_number = tower_name = None
+        if vehicle.unit_id:
+            u = await db.get(Unit, vehicle.unit_id)
+            if u:
+                unit_number = u.unit_number
+                t = await db.get(Tower, u.tower_id)
+                tower_name = t.name if t else None
+        return {"kind": "RESIDENT", "plate_normalized": normalized,
+                "owner_name": owner_name, "unit_number": unit_number, "tower_name": tower_name,
+                "plate_province": vehicle.plate_province, "plate_city": vehicle.plate_city,
+                "vehicle": {"id": vehicle.id, "brand": vehicle.brand, "model": vehicle.model,
+                            "color": vehicle.color, "plate_raw": vehicle.plate_raw,
+                            "is_active": vehicle.is_active}}
+
+    code = _norm_code(body.code)
+    letter = _norm_letter(body.letter or "") or None
+    if not code or not letter:
+        import re as _re
+        for tok in _re.split(r"[\s\-_/,().]+", raw.translate(_CODE_DIGITS)):
+            tok = tok.strip().strip('"')
+            if not tok:
+                continue
+            if code is None and tok.isdigit() and len(tok) == 2:
+                code = tok
+            elif letter is None and len(tok) == 1:
+                letter = tok
+    province = city = None
+    if code and letter:
+        rows = (await db.execute(select(PlateRegion).where(PlateRegion.plate_code == code))).scalars().all()
+        for r in rows:
+            if letter in {_norm_letter(tok) for tok in (r.letters or "").split()}:
+                province, city = r.province, r.city
+                break
+        if province is None and rows:
+            province = rows[0].province
+    return {"kind": "GUEST", "plate_normalized": normalized,
+            "province": province, "city": city}

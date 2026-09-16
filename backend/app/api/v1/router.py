@@ -4,6 +4,7 @@ from app.api.v1 import auth
 from app.api.v1.users import roles_router, router as users_router
 from app.modules.access_control.router import router as gate_router
 from app.modules.base_data.router import router as base_data_router
+from app.modules.notifications.router import router as notifications_router
 from app.modules.parking.cad_router import router as cad_router
 from app.modules.complexes.router import router as complexes_router
 from app.modules.devices.router import router as devices_router
@@ -33,6 +34,7 @@ api_router.include_router(reports_router)
 api_router.include_router(files_router)
 api_router.include_router(base_data_router)
 api_router.include_router(cad_router)
+api_router.include_router(notifications_router)
 
 
 @api_router.get("/ping", tags=["System"])
