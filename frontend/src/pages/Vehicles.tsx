@@ -74,9 +74,12 @@ export default function Vehicles() {
   // resolve زنده استان/شهر از فرم
   const parsed = useMemo(() => parsePlateRaw(f.plate), [f.plate])
   const regionInfo = useMemo(() => {
-    if (!parsed.letterFa || !parsed.province) return null
-    const rows = (regions ?? []).filter((r) => r.plate_code === parsed.province)
-    const hit = rows.find((r) => (r.letters || '').split(' ').includes(parsed.letterFa))
+    if (!parsed.letterFa || (!parsed.province && !parsed.two)) return null
+    const fa2en = (s: string) => s.replace(/[۰-۹]/g, (d) => String(d.charCodeAt(0) & 15))
+    const codeEn = fa2en(parsed.province) || fa2en(parsed.two)
+    const rows = (regions ?? []).filter((r) => r.plate_code === codeEn)
+    const normL = (s: string) => s.replace(/\u0640/g, '').replace(/ك/g, 'ک').replace(/[يى]/g, 'ی').trim()
+    const hit = rows.find((r) => (r.letters || '').split(/\s+/).map(normL).includes(normL(parsed.letterFa)))
     if (hit) return { province: hit.province, city: hit.city }
     return rows.length ? { province: rows[0].province, city: null } : null
   }, [parsed, regions])
@@ -102,7 +105,8 @@ export default function Vehicles() {
         notes: f.notes || null,
       }
       if (parsed.letterFa) payload.plate_letter = parsed.letterFa
-      if (parsed.province) payload.plate_province_code = parsed.province
+      const effCode = parsed.province || parsed.two
+      if (effCode) payload.plate_province_code = effCode
       if (editId) return (await api.patch(`/vehicles/${editId}`, payload)).data
       return (await api.post('/vehicles', payload)).data
     },

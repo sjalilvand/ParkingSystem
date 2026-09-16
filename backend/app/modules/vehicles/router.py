@@ -17,6 +17,20 @@ from app.shared.plate import normalize_plate
 
 router = APIRouter(tags=["Vehicles"])
 
+_CODE_DIGITS = str.maketrans("\u06f0\u06f1\u06f2\u06f3\u06f4\u06f5\u06f6\u06f7\u06f8\u06f9\u0660\u0661\u0662\u0663\u0664\u0665\u0666\u0667\u0668\u0669", "01234567890123456789")
+
+
+def _norm_code(c):
+    return c.translate(_CODE_DIGITS).strip() if c else None
+
+
+def _norm_letter(s):
+    if not s:
+        return s
+    s = s.replace("\u0640", "").replace("\u0643", "\u06a9").replace("\u064a", "\u06cc").replace("\u0649", "\u06cc")
+    return s.strip()
+
+
 
 class VehicleCreate(BaseModel):
     owner_person_id: str | None = None
@@ -52,12 +66,16 @@ async def resolve_region(db: AsyncSession, letter: str | None, code: str | None)
     """جدول پایه پلاک‌ها: کد استان + حرف => (استان، شهر)."""
     if not letter or not code:
         return None, None
+    code = _norm_code(code)
     rows = (await db.execute(
         select(PlateRegion).where(PlateRegion.plate_code == code)
     )).scalars().all()
-    letter = letter.strip()
+    def _norm_letter(s: str) -> str:
+        return s.replace("\u0640", "").replace("ك", "ک").replace("ي", "ی").replace("ى", "ی").strip()
+
+    letter_n = _norm_letter(letter)
     for r in rows:
-        if letter in (r.letters or "").split():
+        if letter_n in {_norm_letter(tok) for tok in (r.letters or "").split()}:
             return r.province, r.city
     return None, None
 
@@ -106,8 +124,8 @@ async def list_vehicles(search: str | None = None, page: int = 1, page_size: int
 async def create_vehicle(body: VehicleCreate, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
     data = body.model_dump()
     raw = data.pop("plate_raw")
-    letter = data.pop("plate_letter", None)
-    code = data.pop("plate_province_code", None)
+    letter = _norm_letter(data.pop("plate_letter", None) or "") or None
+    code = _norm_code(data.pop("plate_province_code", None))
     normalized = normalize_plate(raw) or raw
     existing = await VehicleService.get_by_plate(db, raw)
     if existing:
@@ -147,8 +165,8 @@ async def update_vehicle(vehicle_id: str, body: VehicleUpdate,
         raise NotFoundError("خودرو یافت نشد")
     data = body.model_dump(exclude_unset=True)
     new_raw = data.pop("plate_raw", None)
-    letter = data.pop("plate_letter", None)
-    code = data.pop("plate_province_code", None)
+    letter = _norm_letter(data.pop("plate_letter", None) or "") or None
+    code = _norm_code(data.pop("plate_province_code", None))
     if new_raw:
         normalized = normalize_plate(new_raw) or new_raw
         if normalized != obj.plate_normalized:

@@ -47,9 +47,12 @@ export default function PlateInput({ raw, onChange }: Props) {
 
   // resolve خودکار: کد استان + حرف => استان + شهر
   const regionInfo = useMemo(() => {
-    if (!p.province || !p.letterFa || !regions?.length) return null
-    const rows = regions.filter((r) => r.plate_code === p.province)
-    const hit = rows.find((r) => (r.letters || '').split(' ').includes(p.letterFa))
+    if ((!p.province && !p.two) || !p.letterFa || !regions?.length) return null
+    const fa2en = (s: string) => s.replace(/[۰-۹]/g, (d) => String(d.charCodeAt(0) & 15))
+    const codeEn = fa2en(p.province) || fa2en(p.two)
+    const rows = regions.filter((r) => r.plate_code === codeEn)
+    const normL = (s: string) => s.replace(/\u0640/g, '').replace(/ك/g, 'ک').replace(/[يى]/g, 'ی').trim()
+    const hit = rows.find((r) => (r.letters || '').split(/\s+/).map(normL).includes(normL(p.letterFa)))
     if (hit) return { province: hit.province, city: hit.city }
     if (rows.length) return { province: rows[0].province, city: null }
     return null
