@@ -9,12 +9,23 @@ import {
 } from '@mui/icons-material'
 import { api, apiErrorFa } from '../api/client'
 import { useLiveEvents } from '../api/ws'
-import { decisionColors, decisionFa } from '../app/theme'
+import { decisionColors, decisionFa, reasonFa } from '../app/theme'
 import PlateBox from '../components/PlateBox'
 import { parsePlateRaw } from '../components/PlateInput'
 import { durationFa, faDate, money } from '../utils/format'
 
 const GATE_API_KEY = 'gate-dev-key'
+
+const eventFa: Record<string, string> = {
+  'plate.detected': 'پلاک شناسایی شد',
+  'access.allowed': 'تردد مجاز',
+  'access.denied': 'تردد ممنوع',
+  'barrier.open_request': 'فرمان بازکردن راهبند',
+  'barrier.result': 'نتیجه راهبند',
+  'notification.new': 'اعلان جدید',
+  'session.opened': 'جلسه پارکینگ باز شد',
+  'session.closed': 'جلسه پارکینگ بسته شد',
+}
 
 interface LookupInfo {
   kind: 'RESIDENT' | 'GUEST'
@@ -25,7 +36,7 @@ interface LookupInfo {
   plate_city?: string | null
   province?: string | null
   city?: string | null
-  vehicle?: { id: string; brand?: string | null; model?: string | null; color?: string | null } | null
+  vehicle?: { id: string; brand?: string | null; model?: string | null; color?: string | null; is_active?: boolean | null } | null
 }
 
 interface DecisionResult {
@@ -58,6 +69,7 @@ function IdentityStrip({ info }: { info: LookupInfo | null }) {
               label={`واحد ${info.unit_number}${info.tower_name ? ` — ${info.tower_name}` : ''}`} />
           )}
           {info.vehicle?.brand && <Chip size="small" variant="outlined" label={String(info.vehicle.brand)} />}
+          {info.vehicle?.is_active === false && <Chip size="small" color="error" label="خودرو غیرفعال" />}
         </Stack>
         {info.plate_province && (
           <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
@@ -101,15 +113,25 @@ function GateSide({ direction }: { direction: 'IN' | 'OUT' }) {
     const t = setTimeout(async () => {
       const raw = plate.trim()
       if (!raw) { setLookup(null); return }
+      const p = parsePlateRaw(raw)
+      const code = p.province || p.two || ''
       try {
-        const p = parsePlateRaw(raw)
         const r = await api.post('/vehicles/plate-lookup', {
           plate_raw: raw,
-          code: p.province || p.two || undefined,
+          code: code || undefined,
           letter: p.letterFa || undefined,
         })
         setLookup(r.data)
-      } catch { setLookup(null) }
+      } catch {
+        try {
+          const regs = await api.get('/base-data/plate-regions')
+          const normL = (s: string) => s.replace(/ـ/g, '').replace(/ك/g, 'ک').replace(/[يى]/g, 'ی').trim()
+          const rows = ((regs.data ?? []) as { plate_code: string; province: string; city: string; letters?: string | null }[])
+            .filter((x) => x.plate_code === code)
+          const hit = rows.find((x) => (x.letters || '').split(/\s+/).map(normL).includes(normL(p.letterFa || '')))
+          setLookup({ kind: 'GUEST', province: hit?.province ?? rows[0]?.province ?? null, city: hit?.city ?? null })
+        } catch { setLookup(null) }
+      }
     }, 500)
     return () => clearTimeout(t)
   }, [plate])
@@ -187,7 +209,7 @@ function GateSide({ direction }: { direction: 'IN' | 'OUT' }) {
                 sx={{ bgcolor: 'rgba(255,255,255,.25)', color: '#fff', fontWeight: 700 }} />
               {result.duplicate && <Chip size="small" label="تکراری" sx={{ bgcolor: 'rgba(255,255,255,.25)', color: '#fff' }} />}
             </Stack>
-            <Typography variant="body2" textAlign="center">دلیل: {result.decision_reason}</Typography>
+            <Typography variant="body2" textAlign="center">دلیل: {reasonFa[result.decision_reason] ?? result.decision_reason}</Typography>
             {result.unit && <Typography variant="body2" textAlign="center">واحد: {result.unit.tower} — {result.unit.unit_number}</Typography>}
             {result.parking?.code && <Typography variant="body2" textAlign="center">پارکینگ: {result.parking.code}</Typography>}
 
@@ -243,7 +265,7 @@ export default function GatePanel() {
             {events.map((e) => (
               <ListItem key={e.event_id} divider>
                 <ListItemText
-                  primary={`${e.event} — ${String((e.data as { plate?: string })?.plate ?? (e.data as { title?: string })?.title ?? '')}`}
+                  primary={`${eventFa[e.event] ?? e.event} — ${String((e.data as { plate?: string })?.plate ?? (e.data as { title?: string })?.title ?? '')}`}
                   secondary={faDate(e.occurred_at)}
                 />
               </ListItem>
