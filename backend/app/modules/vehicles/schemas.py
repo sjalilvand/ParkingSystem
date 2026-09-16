@@ -33,11 +33,17 @@ class VehicleOut(BaseModel):
     unit_id: str | None = None
     plate_raw: str
     plate_normalized: str
+    plate_letter: str | None = None
+    plate_province_code: str | None = None
+    plate_province: str | None = None
+    plate_city: str | None = None
     plate_type: str
     vehicle_type: str
     brand: str | None = None
     model: str | None = None
     color: str | None = None
+    year: int | None = None
+    notes: str | None = None
     is_active: bool
 
 

@@ -5,7 +5,7 @@ import { api } from '../api/client'
 
 export const PLATE_LETTERS: { fa: string }[] = [
   { fa: 'الف' }, { fa: 'ب' }, { fa: 'پ' }, { fa: 'ت' }, { fa: 'ث' }, { fa: 'ج' },
-  { fa: 'د' }, { fa: 'س' }, { fa: 'ص' }, { fa: 'ط' }, { fa: 'ع' }, { fa: 'ف' },
+  { fa: 'د' }, { fa: 'ز' }, { fa: 'س' }, { fa: 'ص' }, { fa: 'ط' }, { fa: 'ع' }, { fa: 'ف' },
   { fa: 'ق' }, { fa: 'ک' }, { fa: 'گ' }, { fa: 'ل' }, { fa: 'م' }, { fa: 'ن' },
   { fa: 'و' }, { fa: 'هـ' }, { fa: 'ی' },
 ]
