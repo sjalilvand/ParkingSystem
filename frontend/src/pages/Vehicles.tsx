@@ -257,7 +257,7 @@ export default function Vehicles() {
                 ))}
               </TextField>
               <TextField fullWidth label="سال ساخت" type="number" value={f.year}
-                onChange={(e) => setF((p) => ({ ...p, year: e.target.value }))} />
+                onChange={(e) => setF((p) => ({ ...p, year: e.target.value.replace(/[^0-9۰-۹]/g, '').replace(/[۰-۹]/g, (d) => String(d.charCodeAt(0) & 15)).slice(0, 4) }))} />
             </Stack>
 
             <Stack direction="row" spacing={1} mt={2}>

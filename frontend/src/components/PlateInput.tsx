@@ -79,8 +79,8 @@ export default function PlateInput({ raw, onChange }: Props) {
 
   return (
     <Box>
-      <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1.4fr 1fr', gap: 1 }}>
-        <TextField label="دو رقم" value={p.two} placeholder="۱۲"
+      <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1.4fr', gap: 1 }}>
+        <TextField label="دو رقم" value={p.two} placeholder="۲۸"
           onChange={(e) => {
             const digits = e.target.value.replace(/[۰-۹]/g, (d) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d))).replace(/\D/g, '')
             update({ two: digits.slice(0, 2) })
@@ -94,15 +94,10 @@ export default function PlateInput({ raw, onChange }: Props) {
             const digits = e.target.value.replace(/[۰-۹]/g, (d) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d))).replace(/\D/g, '')
             update({ three: digits.slice(0, 3) })
           }} />
-        <TextField label="کد استان" value={p.province} placeholder="۲۸"
-          onChange={(e) => {
-            const digits = e.target.value.replace(/[۰-۹]/g, (d) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d))).replace(/\D/g, '')
-            update({ province: digits.slice(0, 2) })
-          }} />
       </Box>
 
       {/* نمایش خودکار استان/شهر — بدون امکان انتخاب */}
-      {p.province && p.letterFa ? (
+      {(p.province || p.two) && p.letterFa ? (
         regionInfo ? (
           <Stack direction="row" spacing={1} alignItems="center" mt={1.5} justifyContent="center">
             <Typography variant="body2" fontWeight={800} color="primary.main">
@@ -112,12 +107,12 @@ export default function PlateInput({ raw, onChange }: Props) {
           </Stack>
         ) : (
           <Typography variant="body2" color="warning.main" mt={1.5} textAlign="center">
-            ⚠️ ترکیب کد {p.province} + حرف {p.letterFa} در جدول پایه یافت نشد
+            ⚠️ ترکیب کد {p.province || p.two} + حرف {p.letterFa} در جدول پایه یافت نشد
           </Typography>
         )
       ) : (
         <Typography variant="caption" color="text.secondary" mt={1.5} display="block" textAlign="center">
-          فرمت پلاک ایران: دو رقم + یک حرف + سه رقم + کد استان (استان/شهرستان خودکار تشخیص داده می‌شود)
+          فرمت پلاک ایران: دو رقم (کد استان) + یک حرف + سه رقم (استان/شهرستان خودکار تشخیص داده می‌شود)
         </Typography>
       )}
     </Box>
