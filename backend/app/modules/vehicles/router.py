@@ -284,6 +284,11 @@ async def plate_lookup(body: PlateLookupBody, db: AsyncSession = Depends(get_db)
                             "is_active": vehicle.is_active}}
 
     code = _norm_code(body.code)
+    if not code:
+        import re as _re_ir
+        _m = _re_ir.search(r"IR(\d{2})$", normalized or "")
+        if _m:
+            code = _m.group(1)
     letter = _norm_letter(body.letter or "") or None
     if not code or not letter:
         import re as _re
