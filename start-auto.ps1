@@ -45,7 +45,7 @@ if (Test-Port 8000) {
         "*> '$LogDir\backend.log'"
     )
     $up = $false
-    for ($i = 1; $i -le 60; $i++) {
+    for ($i = 1; $i -le 240; $i++) {
         Start-Sleep -Seconds 2
         try { Invoke-RestMethod "http://localhost:8000/health/live" -TimeoutSec 2 | Out-Null; $up = $true; break } catch { }
     }
