@@ -1,4 +1,4 @@
-"""مرکز عملیات: وضعیت زنده، لاگ‌ها، تنظیمات vision (admin)."""
+"""مرکز عملیات: وضعیت زنده، لاگ‌ها، تنظیمات vision — فقط ادمین (user.manage)."""
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -7,8 +7,8 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user
 from app.core.exceptions import NotFoundError
+from app.core.permissions import require_permission
 from app.db.session import get_db
 from app.modules.access_control.models import AccessEvent
 from app.modules.devices.models import Device, Gate
@@ -35,7 +35,8 @@ def _aware(dt):
 
 
 @router.get("/status")
-async def status(db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+async def status(db: AsyncSession = Depends(get_db),
+                 user: User = Depends(require_permission("user.manage"))):
     now = datetime.now(timezone.utc)
     gates = (await db.execute(select(Gate))).scalars().all()
     devices = (await db.execute(select(Device))).scalars().all()
@@ -58,7 +59,8 @@ async def status(db: AsyncSession = Depends(get_db), user: User = Depends(get_cu
 
 
 @router.get("/logs")
-async def logs(name: str = "vision", lines: int = 200, user: User = Depends(get_current_user)):
+async def logs(name: str = "vision", lines: int = 200,
+               user: User = Depends(require_permission("user.manage"))):
     if name not in ALLOWED_LOGS:
         raise NotFoundError("نام لاگ مجاز نیست")
     p = LOG_DIR / "{}.log".format(name)
@@ -81,7 +83,7 @@ def _read_env_map():
 
 
 @router.get("/config")
-async def get_config(user: User = Depends(get_current_user)):
+async def get_config(user: User = Depends(require_permission("user.manage"))):
     env = _read_env_map()
     items = []
     for k in CONFIG_KEYS:
@@ -97,7 +99,8 @@ class ConfigUpdate(BaseModel):
 
 
 @router.post("/config")
-async def set_config(body: ConfigUpdate, user: User = Depends(get_current_user)):
+async def set_config(body: ConfigUpdate,
+                     user: User = Depends(require_permission("user.manage"))):
     lines = AGENT_ENV.read_text(encoding="utf-8-sig").splitlines() if AGENT_ENV.exists() else []
     changed = []
     for k, v in body.updates.items():

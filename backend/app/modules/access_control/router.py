@@ -47,10 +47,55 @@ async def require_gate_key(
     raise HTTPException(status_code=401, detail="GATE_AUTH_FAILED")
 
 
+_NOTIFY_DECISIONS = {"DENY", "UNKNOWN_PLATE", "REQUIRE_OPERATOR_APPROVAL", "OFFLINE_REQUIRE_REVIEW"}
+
+_DECISION_TITLE = {
+    "DENY": "🚫 تردد ممنوع",
+    "UNKNOWN_PLATE": "❓ پلاک ناشناس در گیت",
+    "REQUIRE_OPERATOR_APPROVAL": "⏳ نیاز به تأیید اپراتور",
+    "OFFLINE_REQUIRE_REVIEW": "🔍 نیازمند بررسی (آفلاین)",
+}
+
+_REASON_FA = {
+    "VEHICLE_NOT_REGISTERED": "خودرو در سیستم ثبت نشده است",
+    "VEHICLE_INACTIVE": "خودرو غیرفعال است",
+    "PLATE_NOT_READABLE": "پلاک قابل خواندن نیست",
+    "PLATE_RESTRICTED": "پلاک محدود/ممنوع است",
+    "NO_ACTIVE_PERMIT": "مجوز فعالی یافت نشد",
+    "PERMIT_NOT_FOUND": "مجوزی یافت نشد",
+    "PERMIT_EXPIRED": "اعتبار مجوز به پایان رسیده است",
+    "SESSION_ALREADY_OPEN": "جلسه پارکینگ از قبل باز است",
+    "DUPLICATE_ENTRY_SESSION_OPEN": "ورود تکراری",
+    "NO_OPEN_SESSION_FOR_EXIT": "جلسه بازی برای خروج یافت نشد",
+    "UNKNOWN_PLATE": "پلاک ناشناس",
+}
+
+
+async def _notify_gate_decision(db, gate_code: str, plate_raw: str, result: dict) -> None:
+    """اعلان زنده برای اپراتورها روی تصمیم‌های حساس گیت."""
+    try:
+        decision = result.get("decision")
+        if decision not in _NOTIFY_DECISIONS or result.get("duplicate"):
+            return
+        from app.modules.notifications.service import push_notification
+        reason = result.get("decision_reason") or ""
+        await push_notification(
+            db,
+            recipient_user_id=None,
+            title="{} — گیت {}".format(_DECISION_TITLE.get(decision, decision), gate_code),
+            message="پلاک: {} | دلیل: {}".format(
+                plate_raw, _REASON_FA.get(reason, reason)),
+            payload={"decision": decision, "reason": reason, "gate_code": gate_code,
+                     "access_event_id": result.get("access_event_id")},
+        )
+    except Exception:
+        pass
+
+
 @router.post("/events/plate-detected")
 async def plate_detected(body: PlateDetectedRequest, db: AsyncSession = Depends(get_db), _: object = Depends(require_gate_key)):
     try:
-        return await GateDecisionService.process_plate_event(
+        result = await GateDecisionService.process_plate_event(
             db,
             gate_code=body.gate_code,
             direction=body.direction,
@@ -62,6 +107,8 @@ async def plate_detected(body: PlateDetectedRequest, db: AsyncSession = Depends(
             raw_payload=body.raw_payload,
             client_decision=body.client_decision,
         )
+        await _notify_gate_decision(db, body.gate_code, body.plate_raw, result)
+        return result
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
 
