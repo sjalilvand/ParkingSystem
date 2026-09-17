@@ -88,8 +88,10 @@ async def _notify_gate_decision(db, gate_code: str, plate_raw: str, result: dict
             payload={"decision": decision, "reason": reason, "gate_code": gate_code,
                      "access_event_id": result.get("access_event_id")},
         )
-    except Exception:
-        pass
+    except Exception as _exc:
+        import traceback
+        print("[notify] FAILED:", repr(_exc))
+        traceback.print_exc()
 
 
 @router.post("/events/plate-detected")

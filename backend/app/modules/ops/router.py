@@ -20,7 +20,7 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[4]
 LOG_DIR = _PROJECT_ROOT / "logs"
 AGENT_ENV = _PROJECT_ROOT / "gate-agent" / ".env"
 
-ALLOWED_LOGS = {"backend", "frontend", "agent", "vision", "autostart"}
+ALLOWED_LOGS = {"backend", "frontend", "agent", "vision", "autostart", "anpr"}
 CONFIG_KEYS = ["GATE_CODE", "DEFAULT_DIRECTION", "ANPR_PORT", "WEBCAM_INDEX",
                "RTSP_URL", "SCAN_INTERVAL", "PRC_API_TOKEN", "RTSP_GATE_CODE", "RTSP_DIRECTION"]
 WRITABLE_KEYS = {"DEFAULT_DIRECTION", "ANPR_PORT", "WEBCAM_INDEX", "RTSP_URL",

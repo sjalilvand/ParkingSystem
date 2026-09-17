@@ -67,7 +67,8 @@ export default function PlateInput({ raw, onChange }: Props) {
   const compose = (v: Parts): string => {
     if (!v.two && !v.three) return ''
     const parts = [v.two, v.letterFa || 'ب', v.three].filter(Boolean)
-    if (v.province) parts.push('ایران', v.province)
+    const code = v.province || v.two
+    if (code) parts.push('ایران', code)
     return parts.join(' ')
   }
 

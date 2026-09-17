@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import func, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
@@ -27,7 +27,8 @@ def _out(n: Notification) -> dict:
 async def list_notifications(page: int = 1, page_size: int = 20,
                              db: AsyncSession = Depends(get_db),
                              user: User = Depends(get_current_user)):
-    query = select(Notification).where(Notification.recipient_user_id == user.id)
+    query = select(Notification).where(
+        or_(Notification.recipient_user_id == user.id, Notification.recipient_user_id.is_(None)))
     total = await db.scalar(select(func.count()).select_from(query.subquery()))
     rows = (await db.execute(
         query.order_by(Notification.created_at.desc())
@@ -44,7 +45,8 @@ async def list_notifications(page: int = 1, page_size: int = 20,
 @router.get("/unread-count")
 async def unread_count(db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
     c = await db.scalar(select(func.count()).select_from(Notification).where(
-        Notification.recipient_user_id == user.id, Notification.read_at.is_(None)))
+        or_(Notification.recipient_user_id == user.id, Notification.recipient_user_id.is_(None)),
+        Notification.read_at.is_(None)))
     return {"unread": c or 0}
 
 
@@ -65,7 +67,8 @@ async def mark_read(notification_id: str, db: AsyncSession = Depends(get_db),
 @router.post("/read-all")
 async def mark_all_read(db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
     await db.execute(update(Notification).where(
-        Notification.recipient_user_id == user.id, Notification.read_at.is_(None)
+        or_(Notification.recipient_user_id == user.id, Notification.recipient_user_id.is_(None)),
+        Notification.read_at.is_(None)
     ).values(read_at=datetime.now(timezone.utc)))
     await db.commit()
     return {"success": True}
