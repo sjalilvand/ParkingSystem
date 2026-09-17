@@ -14,6 +14,7 @@ import AccessEvents from '../pages/AccessEvents'
 import Debts from '../pages/Debts'
 import Violations from '../pages/Violations'
 import Tariffs from '../pages/Tariffs'
+import Ops from '../pages/Ops'
 
 export default function App() {
   return (
@@ -33,6 +34,7 @@ export default function App() {
         <Route path="/debts" element={<Debts />} />
         <Route path="/violations" element={<Violations />} />
         <Route path="/tariffs" element={<Tariffs />} />
+        <Route path="/ops" element={<Ops />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
