@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Response
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -7,6 +7,7 @@ from app.api.deps import get_current_user
 from app.core.exceptions import ConflictError, NotFoundError
 from app.db.session import get_db
 from app.modules.base_data.models import PlateRegion, VehicleBrand, VehicleColor
+from app.modules.complexes.models import Tower, Unit
 from app.modules.identity.models import User
 
 router = APIRouter(prefix="/base-data", tags=["BaseData"])
@@ -166,3 +167,24 @@ async def delete_plate_region(region_id: str, db: AsyncSession = Depends(get_db)
     await db.delete(obj)
     await db.commit()
     return {"success": True}
+
+@router.get("/embed")
+async def embed(callback: str = "cb", db: AsyncSession = Depends(get_db)):
+    """دیتاپایه برای فرم Google Apps Script (JSONP — بدون احراز هویت، فقط خواندنی)."""
+    import json as _json
+    brands = (await db.execute(select(VehicleBrand).where(VehicleBrand.is_active == True))).scalars().all()  # noqa: E712
+    colors = (await db.execute(select(VehicleColor).where(VehicleColor.is_active == True))).scalars().all()  # noqa: E712
+    towers = (await db.execute(select(Tower))).scalars().all()
+    units  = (await db.execute(select(Unit))).scalars().all()
+    regions = (await db.execute(select(PlateRegion))).scalars().all()
+    payload = _json.dumps({
+        "brands": [b.name_fa for b in brands],
+        "colors": [{"name": c.name_fa, "hex": c.hex_code} for c in colors],
+        "towers": [{"name": t.name,
+                    "units": [{"id": u.id, "unit_number": u.unit_number}
+                              for u in units if u.tower_id == t.id]} for t in towers],
+        "regions": [{"code": r.plate_code, "province": r.province, "city": r.city,
+                     "letters": (r.letters or "").split()} for r in regions],
+    }, ensure_ascii=False)
+    cb = "".join(ch for ch in callback if ch.isalnum() or ch in "_.") or "cb"
+    return Response(content=cb + "(" + payload + ");", media_type="application/javascript")
