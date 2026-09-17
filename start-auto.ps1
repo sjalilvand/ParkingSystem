@@ -5,10 +5,16 @@
  $ProjectPath = "D:\Projects\ParkingSystem"
  $LogDir      = "$ProjectPath\logs"
 New-Item -ItemType Directory -Force $LogDir | Out-Null
+ $script:__mutex = New-Object System.Threading.Mutex($false, "Global\ParkingSystemAutoStartMutex")
+if (-not $script:__mutex.WaitOne(0)) {
+    Write-Host "[skip] another start-auto instance is running"
+    exit 0
+}
 
 function Log($m) {
     $line = "[{0}] {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $m
-    $line | Tee-Object -FilePath "$LogDir\autostart.log" -Append
+    Write-Host $line
+    try { Add-Content -FilePath "$LogDir\autostart.log" -Value $line -Encoding utf8 -ErrorAction SilentlyContinue } catch { }
 }
 
 function Test-Port([int]$p) {
