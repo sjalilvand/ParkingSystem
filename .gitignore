@@ -34,3 +34,6 @@ build/
 *.swp
 Thumbs.db
 Desktop.ini
+
+.env.prod
+.env.prod.*

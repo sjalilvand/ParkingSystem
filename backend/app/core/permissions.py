@@ -9,6 +9,14 @@ from app.modules.identity.models import Permission, Role, User, role_permissions
 
 
 async def user_has_permission(db: AsyncSession, user: User, perm_code: str) -> bool:
+    superadmin = await db.execute(
+        select(Role.id)
+        .join(user_roles, user_roles.c.role_id == Role.id)
+        .where(user_roles.c.user_id == user.id, Role.code == "ADMIN")
+        .limit(1)
+    )
+    if superadmin.scalar_one_or_none() is not None:
+        return True
     result = await db.execute(
         select(Permission.id)
         .join(role_permissions, role_permissions.c.permission_id == Permission.id)
