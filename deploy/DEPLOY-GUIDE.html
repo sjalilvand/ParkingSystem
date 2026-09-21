@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html dir="rtl" lang="fa">
+<head>
+<meta charset="UTF-8">
+<title>راهنمای استقرار ParkingSystem روی سرور</title>
+<style>
+  body { font-family: Tahoma, sans-serif; background:#f0f4f8; margin:0; padding:24px; line-height:1.9; color:#263238; }
+  .wrap { max-width: 900px; margin: 0 auto; }
+  h1 { color:#0d47a1; font-size:24px; border-bottom:3px solid #1565C0; padding-bottom:10px; }
+  h2 { color:#1565C0; font-size:19px; margin-top:34px; background:#e3f2fd; padding:10px 14px; border-radius:10px; border-right:6px solid #1565C0; }
+  h3 { color:#37474f; font-size:16px; }
+  .card { background:#fff; border-radius:14px; padding:18px 22px; margin:14px 0; box-shadow:0 1px 6px rgba(0,0,0,.07); }
+  code, pre { direction:ltr; text-align:left; font-family:Consolas, monospace; }
+  code { background:#eceff1; padding:2px 6px; border-radius:5px; font-size:13px; }
+  pre { background:#102027; color:#b2ebf2; padding:14px; border-radius:10px; overflow:auto; font-size:13px; }
+  .warn { background:#fff3e0; border:1px solid #ffb74d; border-radius:10px; padding:10px 14px; }
+  .ok   { background:#e8f5e9; border:1px solid #a5d6a7; border-radius:10px; padding:10px 14px; }
+  table { border-collapse:collapse; width:100%; background:#fff; }
+  th, td { border:1px solid #cfd8dc; padding:8px 10px; font-size:13.5px; }
+  th { background:#37474f; color:#fff; }
+  .chk { list-style:none; padding-right:0; } .chk li { padding:4px 0; }
+  .chk li:before { content:"☐ "; color:#1565C0; font-weight:bold; }
+  .step-num { display:inline-block; background:#1565C0; color:#fff; border-radius:50%; width:30px; height:30px; text-align:center; line-height:30px; font-weight:bold; margin-left:8px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>🚀 راهنمای گام‌به‌گام استقرار سامانه پارکینگ روی سرور</h1>
+
+<div class="card">
+<b>معماری نسخه سرور:</b> همه سرویس‌ها داخل Docker اجرا می‌شوند —
+<code>nginx</code> (وب + پروکسی API/WebSocket) → <code>backend</code> (FastAPI) →
+<code>postgres</code> / <code>redis</code> / <code>minio</code>.
+در اولین اجرا، بک‌اند به‌صورت خودکار: ساخت کامل جدول‌ها، کاربر ادمین، نقش ADMIN، دو گیت پیش‌فرض و ۴۶۳ کد پلاک استان/شهرستان را bootstrap می‌کند.
+</div>
+
+<h2><span class="step-num">۱</span>پیش‌نیازهای سرور</h2>
+<div class="card">
+<table>
+<tr><th>مورد</th><th>حداقل</th><th>توضیح</th></tr>
+<tr><td>سیستم‌عامل</td><td>Ubuntu 22.04 (پیشنهادی) یا Windows Server + Docker Desktop</td><td>راهنما برای هر دو داده شده</td></tr>
+<tr><td>CPU / RAM</td><td>2 هسته / 4GB</td><td>8GB برای آینده بهتر</td></tr>
+<tr><td>دیسک</td><td>40GB آزاد</td><td>برای دیتابیس و فایل‌ها</td></tr>
+<tr><td>شبکه</td><td>پورت 80 (و 22 برای SSH) باز</td><td>دسترسی دوربین‌ها/گیت از LAN</td></tr>
+</table>
+</div>
+
+<h2><span class="step-num">۲</span>نصب Docker (اوبونتو)</h2>
+<div class="card">
+<pre>
+sudo apt update && sudo apt install -y ca-certificates curl git
+sudo install -m 0755 -d /etc/apt/keyrings
+sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] \
+  https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo $VERSION_CODENAME) stable" | \
+  sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+sudo apt update
+sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+sudo usermod -aG docker $USER
+# logout/login کنید، بعد تست:
+docker run --rm hello-world
+</pre>
+<p class="warn">🖥 <b>ویندوز سرور:</b> Docker Desktop را نصب کنید (Settings → General → Start when you sign in). بقیه مراحل یکسان است؛ فقط به‌جای bash از PowerShell و به‌جای nano از notepad استفاده کنید.</p>
+</div>
+
+<h2><span class="step-num">۳</span>دریافت کد پروژه</h2>
+<div class="card">
+<h3>روش الف — از گیت‌هاب (پیشنهادی):</h3>
+<pre>
+git clone https://github.com/sjalilvand/ParkingSystem.git
+cd ParkingSystem
+</pre>
+<h3>روش ب — بدون اینترنت (کپی از سیستم فعلی):</h3>
+<pre>
+# روی سیستم فعلی (PowerShell):
+git archive --format=zip -o C:\Users\%USERNAME%\Desktop\parking-deploy.zip HEAD
+# فایل zip را با فلش/شبکه به سرور ببرید و Extract کنید
+</pre>
+</div>
+
+<h2><span class="step-num">۴</span>ساخت فایل تنظیمات امن (.env.prod)</h2>
+<div class="card">
+<pre>
+cp .env.prod.example .env.prod
+nano .env.prod        # در ویندوز: notepad .env.prod
+</pre>
+<p>برای تولید مقادیر امن <code>&lt;GENERATE&gt;</code> (۳ بار برای APP_SECRET_KEY و JWT_SECRET_KEY و POSTGRES_PASSWORD و MINIO_SECRET_KEY و GATE_API_KEY):</p>
+<pre>
+python3 -c "import secrets; print(secrets.token_urlsafe(48))"
+# یا در ویندوز PowerShell:
+# [Convert]::ToBase64String((1..48 | %{Get-Random -Maximum 256}))
+</pre>
+<p class="warn">⚠️ حتماً <code>DEFAULT_ADMIN_PASSWORD</code> را یک رمز قوی بگذارید و جایی امن ذخیره کنید. فایل .env.prod هرگز commit نمی‌شود (در .gitignore هست).</p>
+</div>
+
+<h2><span class="step-num">۵</span>اجرای استقرار</h2>
+<div class="card">
+<pre>
+docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
+</pre>
+<p>اولین build چند دقیقه طول می‌کشد. سپس وضعیت و لاگ bootstrap:</p>
+<pre>
+docker compose -f docker-compose.prod.yml ps
+docker compose -f docker-compose.prod.yml logs -f backend
+# منتظر این خط بمانید:  [bootstrap] BOOTSTRAP OK
+# خروج: Ctrl+C  (سرویس‌ها در پس‌زمینه ادامه می‌دهند)
+</pre>
+<p class="ok">✅ تست سلامت: <code>curl http://localhost/health/live</code> ← باید <code>{"status":"ok"}</code> بدهد</p>
+</div>
+
+<h2><span class="step-num">۶</span>ورود اولیه و تغییر رمز (الزامی)</h2>
+<div class="card">
+<ol>
+<li>مرورگر: <code>http://IP-سرور</code> ← صفحه لاگین</li>
+<li>ورود با <code>admin</code> و رمزی که در .env.prod گذاشتید</li>
+<li>آیکون 🔒 در نوار بالا ← تغییر رمز عبور ← رمز جدید</li>
+<li>بررسی صفحات: داشبورد، مرکز عملیات، پنل گیت</li>
+</ol>
+</div>
+
+<h2><span class="step-num">۷</span>فایروال (اوبونتو)</h2>
+<div class="card">
+<pre>
+sudo ufw allow 22/tcp
+sudo ufw allow 80/tcp
+sudo ufw enable
+sudo ufw status
+</pre>
+<p class="warn">⚠️ پورت‌های 5432 (postgres)، 6379 (redis)، 9000/9001 (minio) عمداً به بیرون باز نشده‌اند — فقط داخل شبکه Docker. دسترسی از بیرون فقط از طریق nginx/پورت 80.</p>
+</div>
+
+<h2><span class="step-num">۸</span>اتصال ماشین گیت (سیستم فعلی شما) به سرور</h2>
+<div class="card">
+<p>فایل <code>gate-agent\.env</code> روی سیستم گیت را ویرایش کنید:</p>
+<pre>
+CENTRAL_API_URL=http://IP-سرور/api/v1
+GATE_API_KEY=<همان GATE_API_KEY در .env.prod سرور>
+</pre>
+<p>و در <code>backend\.env.prod</code> سرور، <code>CORS_ALLOWED_ORIGINS=http://IP-سرور</code> باشد (پیش‌فرض همین است). سپس سرویس‌های گیت را ری‌استارت کنید. دوربین ANPR همچنان به همان سیستم گیت POST می‌زند (پورت 8092 محلی) و پل، رویداد را به سرور می‌فرستد.</p>
+<p class="warn">اگر فرم گوگل‌شیت هم دارید: در Code.gs مقدار API_BASE را به <code>http://IP-سرور/api/v1</code> تغییر دهید و Deploy ← New version بزنید.</p>
+</div>
+
+<h2><span class="step-num">۹</span>بکاپ‌گیری خودکار از دیتابیس</h2>
+<div class="card">
+<pre>
+# بکاپ دستی:
+docker compose -f docker-compose.prod.yml exec postgres \
+  pg_dump -U parking parking_db > backup_$(date +%F).sql
+
+# بکاپ روزانه ساعت 3 بامداد (cron):
+crontab -e
+# این خط را اضافه کنید:
+0 3 * * * cd /path/to/ParkingSystem && docker compose -f docker-compose.prod.yml exec -T postgres pg_dump -U parking parking_db > ~/backups/parking_$(date +\%F).sql
+</pre>
+</div>
+
+<h2><span class="step-num">۱۰</span>به‌روزرسانی نسخه‌های بعدی</h2>
+<div class="card">
+<pre>
+git pull
+docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
+</pre>
+<p>داده‌ها در volume ها (pgdata/miniodata) حفظ می‌شوند.</p>
+</div>
+
+<h2><span class="step-num">۱۱</span>عیب‌یابی</h2>
+<div class="card">
+<table>
+<tr><th>مشکل</th><th>دستور بررسی</th></tr>
+<tr><td>صفحه باز نمی‌شود</td><td><code>docker compose -f docker-compose.prod.yml ps</code> — همه باید Up باشند</td></tr>
+<tr><td>خطای backend</td><td><code>docker compose -f docker-compose.prod.yml logs --tail 50 backend</code></td></tr>
+<tr><td>پورت 80 اشغال</td><td>در .env.prod مقدار APP_PORT=8080 و اجرای مجدد up -d</td></tr>
+<tr><td>WebSocket قطع</td><td>nginx.conf را چک کنید (بخش /ws/ با Upgrade)</td></tr>
+<tr><td>فراموشی رمز ادمین</td><td>.env.prod را ویرایش و کانتینر backend را recreate کنید (اگر ادمین موجود باشد رمز عوض نمی‌شود — به من اطلاع دهید تا اسکریپت reset بدهم)</td></tr>
+</table>
+</div>
+
+<h2>✅ چک‌لیست نهایی تحویل</h2>
+<div class="card">
+<ul class="chk">
+<li>Docker نصب و hello-world موفق</li>
+<li>کد روی سرور (clone یا zip)</li>
+<li>.env.prod با مقادیر امن ساخته شد</li>
+<li>up -d --build موفق و BOOTSTRAP OK در لاگ backend</li>
+<li>http://IP-سرور بالا آمد و ورود ادمین موفق</li>
+<li>رمز ادمین تغییر کرد</li>
+<li>ufw فعال (فقط 22 و 80)</li>
+<li>gate-agent به IP سرور متصل شد (مرکز عملیات ← گیت‌ها آنلاین)</li>
+<li>دوربین ANPR تست شد و رویداد در «تردد» ثبت شد</li>
+<li>cron بکاپ روزانه تنظیم شد</li>
+</ul>
+</div>
+
+<p style="text-align:center;color:#90a4ae;margin-top:30px">ParkingSystem — Deployment Guide v1.0</p>
+</div>
+</body>
+</html>
