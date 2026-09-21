@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html dir="rtl" lang="fa">
+<head>
+<meta charset="UTF-8">
+<title>راهنمای کامل استقرار ParkingSystem روی Windows 10</title>
+<style>
+  body { font-family: Tahoma, sans-serif; background:#f0f4f8; margin:0; padding:22px; line-height:2; color:#263238; }
+  .wrap { max-width: 950px; margin: 0 auto; }
+  h1 { color:#0d47a1; font-size:23px; border-bottom:3px solid #1565C0; padding-bottom:10px; }
+  h2 { color:#1565C0; font-size:18px; margin-top:32px; background:#e3f2fd; padding:9px 14px; border-radius:10px; border-right:6px solid #1565C0; }
+  h3 { color:#37474f; font-size:15.5px; }
+  .card { background:#fff; border-radius:14px; padding:16px 20px; margin:12px 0; box-shadow:0 1px 6px rgba(0,0,0,.07); }
+  code, pre { direction:ltr; text-align:left; font-family:Consolas, monospace; }
+  code { background:#eceff1; padding:2px 6px; border-radius:5px; font-size:13px; }
+  pre { background:#102027; color:#b2ebf2; padding:13px; border-radius:10px; overflow:auto; font-size:13px; }
+  .warn { background:#fff3e0; border:1px solid #ffb74d; border-radius:10px; padding:9px 13px; }
+  .ok   { background:#e8f5e9; border:1px solid #a5d6a7; border-radius:10px; padding:9px 13px; }
+  .info { background:#e3f2fd; border:1px solid #90caf9; border-radius:10px; padding:9px 13px; }
+  table { border-collapse:collapse; width:100%; background:#fff; }
+  th, td { border:1px solid #cfd8dc; padding:7px 10px; font-size:13.5px; }
+  th { background:#37474f; color:#fff; }
+  .chk { list-style:none; padding-right:0; } .chk li { padding:3px 0; }
+  .chk li:before { content:"\2610  "; color:#1565C0; font-weight:bold; }
+  .num { display:inline-block; background:#1565C0; color:#fff; border-radius:50%; width:29px; height:29px; text-align:center; line-height:29px; font-weight:bold; margin-left:8px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>🚀 راهنمای کامل استقرار سامانه پارکینگ روی Windows 10</h1>
+
+<div class="card">
+<b>نقشه راه:</b> ویندوز ۱۰ شما با لایه‌ای به‌نام <b>WSL2</b> یک اوبونتو واقعی داخل خودش اجرا می‌کند؛
+<b>Docker Desktop</b> روی همین اوبونتو سوار می‌شود و کل سامانه (nginx + backend + postgres + redis + minio) داخل کانتینرها بالا می‌آید.
+سپس <b>کل داده‌های سیستم فعلی</b> (دیتابیس + عکس‌ها) با دو اسکریپت آماده منتقل می‌شود.
+<br><br>
+<b>تفکیک نقش‌ها بعد از استقرار:</b><br>
+🖥 <b>سرور (ویندوز ۱۰ جدید):</b> برنامه + دیتابیس — مرورگرها به آن وصل می‌شوند (پورت 80)<br>
+🚧 <b>سیستم فعلی (گیت):</b> فقط gate-agent + پل دوربین ANPR — به سرور وصل می‌شود
+</div>
+
+<h2><span class="num">۰</span>آماده‌سازی ویندوز تازه‌نصب</h2>
+<div class="card">
+<ol>
+<li><b>Windows Update</b> را تا آخر اجرا کنید و ری‌استارت کنید (Settings → Windows Update).</li>
+<li><b>نسخه ویندوز:</b> Win+R ← <code>winver</code> ← باید نسخه 2004 به بالا (ساخت 19041+) باشد. (Windows 10 Home هم کافی است.)</li>
+<li><b>مجازی‌سازی CPU:</b> Task Manager ← تب Performance ← CPU ← باید <code>Virtualization: Enabled</code> باشد. اگر Disabled است، در BIOS مادربرد گزینه Intel VT-x / AMD-V (SVM) را Enable کنید.</li>
+<li><b>IP ثابت (مهم!):</b> Settings ← Network &amp; internet ← Ethernet ← IP assignment ← Edit ← Manual ← IPv4 ON:
+<table>
+<tr><th>فیلد</th><th>مثال (طبق شبکه خودتان تنظیم کنید)</th></tr>
+<tr><td>IP address</td><td>192.168.1.50</td></tr>
+<tr><td>Subnet mask</td><td>255.255.255.0</td></tr>
+<tr><td>Gateway</td><td>192.168.1.1</td></tr>
+<tr><td>DNS</td><td>192.168.1.1 یا 8.8.8.8</td></tr>
+</table>
+</li>
+<li><b>هرگز خاموش/خواب نشود:</b> Settings ← System ← Power ← Screen and sleep ← هر دو گزینه <b>Never</b>.</li>
+<li>این IP را جایی یادداشت کنید — از این‌جا به بعد «IP-سرور» همان است.</li>
+</ol>
+</div>
+
+<h2><span class="num">۱</span>نصب WSL2 + اوبونتو داخل ویندوز</h2>
+<div class="card">
+<p>WSL2 یعنی «Windows Subsystem for Linux نسخه ۲» — یک اوبونتو واقعی داخل ویندوز، بدون ماشین‌مجازی سنگین و بدون Dual-Boot.</p>
+<ol>
+<li><b>PowerShell را Run as Administrator</b> باز کنید و بزنید:
+<pre>wsl --install</pre>
+این دستور WSL2 + یک اوبونتو پیش‌فرض نصب می‌کند. (اگر خطای منابع داد: <code>wsl --install -d Ubuntu-22.04</code>)</li>
+<li><b>ری‌استارت کنید.</b></li>
+<li>پنجره اوبونتو خودش باز می‌شود و می‌پرسد <b>UNIX username / password</b> — هر نامی بگذارید (مثلا <code>parking</code>) و رمزش را بگذارید. این رمز فقط مال محیط اوبونتو است و با ویندوز کاری ندارد.</li>
+<li>تست نسخه:
+<pre>wsl -l -v</pre>
+باید <code>Ubuntu ... VERSION 2</code> ببینید.</li>
+</ol>
+<h3>🔗 رابطه ویندوز و اوبونتو (خیلی مهم)</h3>
+<table>
+<tr><th>موضوع</th><th>توضیح</th></tr>
+<tr><td>فایل‌های ویندوز از اوبونتو</td><td>درایو D شما در اوبونتو روی مسیر <code>/mnt/d</code> است — مثلا <code>ls /mnt/d/Projects</code></td></tr>
+<tr><td>فایل‌های اوبونتو از ویندوز</td><td>در File Explorer آدرس <code>\\wsl$\Ubuntu</code> را باز کنید</td></tr>
+<tr><td>شبکه (localhost)</td><td>دوطرفه مشترک است — پورتی که اوبونتو/داکر باز کند از ویندوز با همان localhost در دسترس است (و برعکس)</td></tr>
+<tr><td>ترمینال</td><td>می‌توانید همه کارها را با همان <b>PowerShell</b> انجام دهید؛ داکر که نصب شود از PowerShell هم کنترل می‌شود. ترمینال اوبونتو اختیاری است.</td></tr>
+</table>
+<div class="info">💡 نقش اوبونتو این‌جا فقط «موتور» Docker است. شما لازم نیست دستور لینوکسی بزنید — همه‌چیز از PowerShell انجام می‌شود.</div>
+</div>
+
+<h2><span class="num">۲</span>نصب Docker Desktop</h2>
+<div class="card">
+<ol>
+<li>از <code>https://www.docker.com/products/docker-desktop/</code> فایل <b>Docker Desktop Installer.exe</b> را دانلود و نصب کنید (در صفحۀ نصب گزینه <b>Use WSL 2 instead of Hyper-V</b> تیک‌خورده بماند).</li>
+<li>Docker Desktop را اجرا کنید ← قرارداد را Accept کنید (لاگین گوگل/اکانت لازم نیست، Skip کنید).</li>
+<li>Settings (چرخ‌دنده) ← General ← تیک <b>Start Docker Desktop when you sign in</b> ← Apply.</li>
+<li>Settings ← Resources ← <b>WSL Integration</b> ← گزینه Ubuntu را روشن کنید ← Apply &amp; Restart.</li>
+<li>تست — در PowerShell (عادی):
+<pre>docker run --rm hello-world</pre>
+باید پیام <code>Hello from Docker!</code> را ببینید.</li>
+</ol>
+<div class="warn">اگر خطای «WSL 2 installation is incomplete» دیدید: PowerShell ادمین ← <code>wsl --update</code> ← ری‌استارت.</div>
+</div>
+
+<h2><span class="num">۳</span>انتقال کد پروژه به سرور</h2>
+<div class="card">
+<h3>روش الف — اینترنت دارد:</h3>
+<pre>cd D:\
+git clone https://github.com/sjalilvand/ParkingSystem.git
+cd ParkingSystem</pre>
+<h3>روش ب — بدون اینترنت (از سیستم فعلی):</h3>
+<pre>
+# روی سیستم فعلی (PowerShell):
+cd D:\Projects\ParkingSystem
+git archive --format=zip -o $env:USERPROFILE\Desktop\parking-deploy.zip HEAD
+# فایل zip را به سرور ببرید، در D:\ParkingSystem باز کنید (Extract)
+</pre>
+<p>برای سرعت (غیرفعال‌کردن اسکن Defender روی پروژه) — PowerShell <b>ادمین</b>:</p>
+<pre>Add-MpPreference -ExclusionPath "D:\ParkingSystem"</pre>
+</div>
+
+<h2><span class="num">۴</span>ساخت فایل تنظیمات امن (.env.prod)</h2>
+<div class="card">
+<pre>cd D:\ParkingSystem
+copy .env.prod.example .env.prod
+notepad .env.prod</pre>
+<p>برای هر ۵ مقدار <code>&lt;GENERATE&gt;</code> یک رمز یکتا بسازید — در PowerShell هر بار:</p>
+<pre>-join ((48..57)+(65..90)+(97..122) | Get-Random -Count 40 | % {[char]$_})</pre>
+<table>
+<tr><th>کلید</th><th>توضیح</th></tr>
+<tr><td>APP_SECRET_KEY / JWT_SECRET_KEY</td><td>هر کدام یک رشته تصادفی ۴۰ کاراکتری</td></tr>
+<tr><td>POSTGRES_PASSWORD</td><td>رمز دیتابیس</td></tr>
+<tr><td>MINIO_SECRET_KEY</td><td>رمز فایل‌سرور</td></tr>
+<tr><td>GATE_API_KEY</td><td>کلید اتصال سیستم گیت — این را یادداشت کنید (برای گام ۹ لازم است)</td></tr>
+<tr><td>DEFAULT_ADMIN_PASSWORD</td><td>رمز ورود اولیه ادمین — قوی و یادداشت‌شده</td></tr>
+<tr><td>CORS_ALLOWED_ORIGINS</td><td><code>http://IP-سرور</code> (مثلا http://192.168.1.50)</td></tr>
+</table>
+<p class="warn">⚠️ فایل .env.prod را از دست ندهید — نسخه پشتیبان امن از آن نگه دارید (هرگز در گیت/ایمیل نیست).</p>
+</div>
+
+<h2><span class="num">۵</span>انتقال داده‌ها از سیستم فعلی (دیتابیس + عکس‌ها)</h2>
+<div class="card">
+<h3>۵-۱) روی سیستم فعلی (گیت):</h3>
+<pre>cd D:\Projects\ParkingSystem
+powershell -File deploy\export-data.ps1</pre>
+<p>خروجی: <code>parking-migration-…zip</code> روی دسکتاپ شامل <code>parking_backup.sql</code> + پوشه <code>minio</code> (عکس ساکنین).</p>
+<h3>۵-۲) انتقال به سرور:</h3>
+<p>zip را کپی کنید (اشتراک شبکه: راست‌کلیک ← Give access to، یا فلش) و در سرور Extract کنید — مثلا <code>C:\parking-migration</code>.</p>
+<h3>۵-۳) روی سرور — فقط دیتابیس را بالا بیاورید:</h3>
+<pre>cd D:\ParkingSystem
+docker compose -f docker-compose.prod.yml --env-file .env.prod up -d postgres</pre>
+<h3>۵-۴) Import:</h3>
+<pre>powershell -File deploy\import-data.ps1 -BackupDir "C:\parking-migration"</pre>
+<p class="ok">✅ باید ببینید: «vehicles rows restored: N» و «MinIO restore OK»</p>
+<div class="warn"><b>ترتیب حیاتی است:</b> Import قبل از بالا آوردن کل استک انجام شود (چون bootstrap فقط روی دیتابیس خالی می‌سازد؛ دیتابیسِ restore‌شده را دست نمی‌زند).</div>
+</div>
+
+<h2><span class="num">۶</span>اجرای کامل سامانه</h2>
+<div class="card">
+<pre>docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build</pre>
+<p>اولین build چند دقیقه طول می‌کشد (دانلود base image ها). سپس:</p>
+<pre>docker compose -f docker-compose.prod.yml ps
+docker compose -f docker-compose.prod.yml logs --tail 30 backend</pre>
+<p class="ok">✅ همه ۵ سرویس باید Up باشند و در لاگ backend خط <code>[bootstrap] BOOTSTRAP OK</code> دیده شود (چون دیتابیس restore شده، فقط چک می‌کند و رد می‌شود).</p>
+<p>تست سلامت: <code>curl http://localhost/health/live</code> ← <code>{"status":"ok"}</code></p>
+</div>
+
+<h2><span class="num">۷</span>ورود اولیه و تغییر رمز (الزامی)</h2>
+<div class="card">
+<ol>
+<li>از هر کامپیوتری در شبکه: مرورگر ← <code>http://IP-سرور</code></li>
+<li>ورود: <code>admin</code> / رمزی که در .env.prod گذاشتید (اگر دیتابیس از سیستم قبلی آمده، رمز قبلی <code>Admin@1234</code> است!)</li>
+<li>فوراً آیکون 🔒 نوار بالا ← تغییر رمز عبور.</li>
+<li>بازدید صفحات: داشبورد، خودروها (دیتای قبلی هست؟)، مرکز عملیات.</li>
+</ol>
+<p>بازیابی رمز در صورت فراموشی (PowerShell در پوشه پروژه سرور):</p>
+<pre>docker compose -f docker-compose.prod.yml exec backend python -m scripts.reset_admin --password "NewStrong@123"</pre>
+</div>
+
+<h2><span class="num">۸</span>فایروال ویندوز سرور</h2>
+<div class="card">
+<pre>netsh advfirewall firewall add rule name="ParkingHTTP" dir=in action=allow protocol=tcp localport=80
+netsh advfirewall firewall add rule name="RDP" dir=in action=allow protocol=tcp localport=3389</pre>
+<p>بررسی اشغال پورت ۸۰ (IIS گاهی اشغال می‌کند):</p>
+<pre>netstat -ano | findstr ":80 "
+# اگر PID متعلق به سرویس "World Wide Web Publishing" بود:
+net stop W3SVC
+sc config W3SVC start= disabled</pre>
+<p class="warn">postgres/redis/minio عمداً به بیرون باز نیستند — فقط از داخل شبکه Docker. دسترسی بیرونی فقط nginx (پورت 80).</p>
+</div>
+
+<h2><span class="num">۹</span>اتصال سیستم گیت و فرم گوگل به سرور</h2>
+<div class="card">
+<ol>
+<li>روی سیستم گیت (سیستم فعلی): فایل <code>D:\Projects\ParkingSystem\gate-agent\.env</code> را ویرایش کنید:
+<pre>CENTRAL_API_URL=http://IP-سرور/api/v1
+GATE_API_KEY=مقدار-همان-GATE_API_KEY-در-env.prod-سرور</pre></li>
+<li>غیرفعال کردن سرویس‌های «سرور قبلی» روی سیستم گیت (تا دوتا سرور موازی نشویم):
+<pre>Unregister-ScheduledTask -TaskName "ParkingSystem-Watchdog" -Confirm:$false
+Unregister-ScheduledTask -TaskName "ParkingSystem-AutoStart" -Confirm:$false</pre>
+(فقط gate-agent و ANPR bridge این‌جا می‌مانند.)</li>
+<li>ری‌استارت agent و ANPR روی سیستم گیت ← در سرور: مرکز عملیات ← «گیت ورودی: آنلاین» ✓</li>
+<li>دوربین ANPR نیازی به تغییر ندارد (به همان سیستم گیت POST می‌زند، پل به سرور می‌فرستد).</li>
+<li>فرم گوگل‌شیت (اگر دارید): در Code.gs مقدار <code>API_BASE</code> ← <code>http://IP-سرور/api/v1</code> و Deploy ← New version.</li>
+</ol>
+</div>
+
+<h2><span class="num">۱۰</span>خودراه‌اندازی بعد از ری‌استارت سرور</h2>
+<div class="card">
+<p>سه لایه خودکار دارید: <b>۱)</b> Docker Desktop با Start when sign in بالا می‌آید <b>۲)</b> کانتینرها با <code>restart: unless-stopped</code> خودشان برمی‌گردند <b>۳)</b> داده‌ها در volume دائمی‌اند.</p>
+<p>تست: سرور را یک‌بار Restart کنید ← بعد از لاگین و ۲-۳ دقیقه ← <code>http://localhost</code> باید بالا باشد.</p>
+<div class="warn">اگر سرور رمز ویندوز دارد و بعد از برق‌قطعی کسی لاگین نمی‌کند، داکر بالا نمی‌آید. راه‌حل اختیاری: Win+R ← <code>netplwiz</code> ← تیک «Users must enter…» را بردارید (ریسک امنیتیphysical — با فایروال و محل بسته جبران کنید).</div>
+</div>
+
+<h2><span class="num">۱۱</span>بکاپ روزانه (Task Scheduler)</h2>
+<div class="card">
+<p>فایل <code>D:\ParkingSystem\deploy\daily-backup.ps1</code> بسازید:</p>
+<pre>$d = "D:\backups"; New-Item -ItemType Directory -Force $d | Out-Null
+ $cid = docker compose -f D:\ParkingSystem\docker-compose.prod.yml ps -q postgres
+docker exec $cid pg_dump -U parking parking_db -f /tmp/b.sql
+docker cp "${cid}:/tmp/b.sql" "$d\parking_$(Get-Date -Format yyyyMMdd).sql"
+Get-ChildItem $d -Filter parking_*.sql | Sort-Object LastWriteTime -Desc | Select-Object -Skip 14 | Remove-Item -Force</pre>
+<p>Task Scheduler ← Create Basic Task ← نام: ParkingBackup ← Daily 03:00 ← Start a program ← <code>powershell.exe</code> ← Arguments: <code>-File D:\ParkingSystem\deploy\daily-backup.ps1</code></p>
+</div>
+
+<h2><span class="num">۱۲</span>به‌روزرسانی نسخه‌های بعدی</h2>
+<div class="card">
+<pre>cd D:\ParkingSystem
+git pull
+docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build</pre>
+<p>داده‌ها حفظ می‌شوند (volume ها). .env.prod را دست نزنید.</p>
+</div>
+
+<h2><span class="num">۱۳</span>عیب‌یابی ویندوزی</h2>
+<div class="card">
+<table>
+<tr><th>مشکل</th><th>راه‌حل</th></tr>
+<tr><td>hello-world خطای WSL2</td><td><code>wsl --update</code> در PowerShell ادمین + ری‌استارت</td></tr>
+<tr><td>WSL رمز زیادی می‌گیرد</td><td>فایل <code>C:\Users\%USERNAME%\.wslconfig</code> بسازید: <code>[wsl2]</code> و خط <code>memory=4GB</code> ← سپس <code>wsl --shutdown</code></td></tr>
+<tr><td>پورت 80 اشغال</td><td>.env.prod ← APP_PORT=8080 ← دوباره up -d ← سایت روی :8080</td></tr>
+<tr><td>صفحه سفید/خطا بعد از آپدیت</td><td><code>docker compose -f docker-compose.prod.yml logs --tail 50 backend</code></td></tr>
+<tr><td>WebSocket قطع می‌شود</td><td>nginx.conf بخش /ws/ با Upgrade هست — کش مرورگر Ctrl+Shift+R</td></tr>
+<tr><td>Docker Desktop بالا نمی‌آید بعد از ری‌استارت</td><td>آیکون نهنگ در Taskbar؟ Settings ← Start when sign in؛ در صورت نیاز دستی اجرا کنید</td></tr>
+</table>
+</div>
+
+<h2>✅ چک‌لیست نهایی</h2>
+<div class="card">
+<ul class="chk">
+<li>WSL2 (Ubuntu v2) نصب و Virtualization فعال</li>
+<li>Docker Desktop + hello-world موفق + Start at sign-in</li>
+<li>کد در D:\ParkingSystem و Defender exclusion</li>
+<li>.env.prod با ۵ secret امن + CORS=IP سرور</li>
+<li>export روی سیستم قدیمی → import روی سرور (rows restored + MinIO OK)</li>
+<li>up -d --build و BOOTSTRAP OK</li>
+<li>ورود ادمین + تغییر رمز</li>
+<li>فایروال (80 + RDP) و پورت 80 آزاد</li>
+<li>gate-agent ← CENTRAL_API_URL سرور، گیت‌ها آنلاین در مرکز عملیات</li>
+<li>تست ANPR: رویداد جدید در صفحه «تردد» سرور</li>
+<li>Restart سرور → همه‌چیز خودکار بالا</li>
+<li>Task بکاپ روزانه فعال</li>
+</ul>
+</div>
+
+<p style="text-align:center;color:#90a4ae;margin-top:28px">ParkingSystem — Windows Deployment Guide v2.0</p>
+</div>
+</body>
+</html>

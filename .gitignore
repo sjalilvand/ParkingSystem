@@ -37,3 +37,4 @@ Desktop.ini
 
 .env.prod
 .env.prod.*
+!.env.prod.example
