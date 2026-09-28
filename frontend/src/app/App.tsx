@@ -15,6 +15,7 @@ import Debts from '../pages/Debts'
 import Violations from '../pages/Violations'
 import Tariffs from '../pages/Tariffs'
 import Ops from '../pages/Ops'
+import Simulator from '../pages/Simulator'
 
 export default function App() {
   return (
@@ -35,6 +36,7 @@ export default function App() {
         <Route path="/violations" element={<Violations />} />
         <Route path="/tariffs" element={<Tariffs />} />
         <Route path="/ops" element={<Ops />} />
+        <Route path="/simulator" element={<Simulator />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

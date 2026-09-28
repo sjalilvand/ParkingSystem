@@ -10,7 +10,7 @@ import {
   AccountBalance, Apartment, ConfirmationNumber, DirectionsCar,
   Dashboard as DashIcon, LockReset, Logout, LocalParking, ManageAccounts,
   Menu as MenuIcon, Notifications, Payments, ReportProblem, ReceiptLong,
-  SwapHoriz, Tour, Tune, Troubleshoot,
+  SwapHoriz, Tour, Tune, Troubleshoot, VideogameAsset,
 } from '@mui/icons-material'
 import { api, apiErrorFa } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
@@ -30,6 +30,7 @@ const menu = [
   { label: 'داشبورد', icon: <DashIcon />, path: '/' },
   { label: 'پنل گیت', icon: <SwapHoriz />, path: '/gate' },
   { label: 'مرکز عملیات', icon: <Troubleshoot />, path: '/ops' },
+  { label: 'شبیه‌ساز', icon: <VideogameAsset />, path: '/simulator' },
   { label: 'ساختار مجتمع', icon: <Apartment />, path: '/structure' },
   { label: 'مسئول محوطه', icon: <Tour />, path: '/field' },
   { label: 'خودروها', icon: <DirectionsCar />, path: '/vehicles' },
