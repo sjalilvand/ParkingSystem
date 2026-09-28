@@ -13,7 +13,7 @@ async def status(user: User = Depends(get_current_user)):
 
 
 @router.post("/start")
-async def start(interval: float = 4.0, resident_ratio: float = 0.6,
+async def start(interval: float = 4.0, resident_ratio: float = 0.8,
                 user: User = Depends(get_current_user)):
     return {"success": service.start(interval, resident_ratio), "status": service.status()}
 
@@ -27,3 +27,13 @@ async def stop(user: User = Depends(get_current_user)):
 async def tick(user: User = Depends(get_current_user)):
     await service._tick()
     return service.status()
+
+
+@router.get("/inside")
+async def inside(user: User = Depends(get_current_user)):
+    return await service.inside_report()
+
+
+@router.get("/durations")
+async def durations(limit: int = 30, user: User = Depends(get_current_user)):
+    return await service.durations_report(limit)
