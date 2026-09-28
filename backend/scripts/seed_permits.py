@@ -4,7 +4,9 @@ import sys
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 sys.path.insert(0, "/app")
 
-from sqlalchemy import select
+import app.main  # noqa: F401  <- ثبت همه مدل‌ها (حل NoReferencedTableError)
+
+from sqlalchemy import func, select
 
 from app.db.session import AsyncSessionLocal
 from app.modules.vehicles.models import AccessPermit, Vehicle
@@ -22,7 +24,8 @@ async def main():
                                 permit_type="PERMANENT", status="ACTIVE"))
             added += 1
         await db.commit()
-        print(f"[permits] vehicles={len(vehicles)} added_permits={added}")
+        total = await db.scalar(select(func.count()).select_from(AccessPermit))
+        print(f"[permits] vehicles={len(vehicles)} added={added} total_permits={total}")
 
 
 asyncio.run(main())
