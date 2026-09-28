@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import {
   Alert, Box, Button, Card, CardContent, Chip, List, ListItem, ListItemText,
   Stack, TextField, Typography,
@@ -14,8 +14,6 @@ import PlateBox from '../components/PlateBox'
 import { parsePlateRaw } from '../components/PlateInput'
 import { durationFa, faDate, money } from '../utils/format'
 
-const GATE_API_KEY = 'gate-dev-key'
-
 const eventFa: Record<string, string> = {
   'plate.detected': 'پلاک شناسایی شد',
   'access.allowed': 'تردد مجاز',
@@ -25,36 +23,28 @@ const eventFa: Record<string, string> = {
   'notification.new': 'اعلان جدید',
   'session.opened': 'جلسه پارکینگ باز شد',
   'session.closed': 'جلسه پارکینگ بسته شد',
+  'vehicle.entered': 'ورود خودرو',
+  'vehicle.exited': 'خروج خودرو',
+  'simulator.event': 'شبیه‌ساز',
 }
 
 interface LookupInfo {
   kind: 'RESIDENT' | 'GUEST'
-  owner_name?: string | null
-  unit_number?: string | null
-  tower_name?: string | null
-  plate_province?: string | null
-  plate_city?: string | null
-  province?: string | null
-  city?: string | null
+  owner_name?: string | null; unit_number?: string | null; tower_name?: string | null
+  plate_province?: string | null; plate_city?: string | null
+  province?: string | null; city?: string | null
   vehicle?: { id: string; brand?: string | null; model?: string | null; color?: string | null; is_active?: boolean | null } | null
 }
-
 interface DecisionResult {
-  access_event_id: string
-  decision: string
-  decision_reason: string
-  barrier_action: string
-  warnings?: string[]
+  access_event_id: string; decision: string; decision_reason: string
+  barrier_action: string; warnings?: string[]
   unit?: { tower?: string; unit_number?: string } | null
-  parking?: { code?: string; zone?: string } | null
-  duplicate?: boolean
-  session?: {
-    duration_seconds?: number
-    base_amount?: number
-    final_amount?: number
-    payment_status?: string
-  } | null
+  parking?: { code?: string; zone?: string } | null; duplicate?: boolean
+  session?: { duration_seconds?: number; base_amount?: number; final_amount?: number; payment_status?: string } | null
 }
+interface LiveEvt { id: string; gate: string; direction: 'IN' | 'OUT'; plate: string
+  kind?: string; decision?: string; reason?: string; barrier?: string
+  province?: string | null; city?: string | null }
 
 function IdentityStrip({ info }: { info: LookupInfo | null }) {
   if (!info) return null
@@ -95,7 +85,7 @@ function IdentityStrip({ info }: { info: LookupInfo | null }) {
   )
 }
 
-function GateSide({ direction }: { direction: 'IN' | 'OUT' }) {
+function GateSide({ direction, live }: { direction: 'IN' | 'OUT'; live: LiveEvt | null }) {
   const isEntry = direction === 'IN'
   const [plate, setPlate] = useState('۱۲ ب ۳۴۵ ایران ۶۷')
   const [lookup, setLookup] = useState<LookupInfo | null>(null)
@@ -105,11 +95,18 @@ function GateSide({ direction }: { direction: 'IN' | 'OUT' }) {
   const [busy, setBusy] = useState(false)
   const [paid, setPaid] = useState(false)
   const [fined, setFined] = useState(false)
+  const gateKey = useRef('gate-dev-key')
+  const lastLive = useRef<string | null>(null)
 
   const gateCode = isEntry ? 'GATE-IN-01' : 'GATE-OUT-01'
   const accent = isEntry ? '#2E7D32' : '#C62828'
 
-  // تشخیص زنده ساکن/مهمان هنگام تایپ پلاک
+  // کلید گیت از سرور (چون در production با dev-key فرق دارد)
+  useEffect(() => {
+    api.get('/ops/gate-key').then((r) => { if (r.data?.key) gateKey.current = r.data.key }).catch(() => {})
+  }, [])
+
+  // تشخیص زنده ساکن/مهمان هنگام تایپ
   useEffect(() => {
     const t = setTimeout(async () => {
       const raw = plate.trim()
@@ -118,9 +115,7 @@ function GateSide({ direction }: { direction: 'IN' | 'OUT' }) {
       const code = p.province || p.two || ''
       try {
         const r = await api.post('/vehicles/plate-lookup', {
-          plate_raw: raw,
-          code: code || undefined,
-          letter: p.letterFa || undefined,
+          plate_raw: raw, code: code || undefined, letter: p.letterFa || undefined,
         })
         setLookup(r.data)
       } catch {
@@ -137,6 +132,27 @@ function GateSide({ direction }: { direction: 'IN' | 'OUT' }) {
     return () => clearTimeout(t)
   }, [plate])
 
+  // روتبد رویداد زنده به این کارت
+  useEffect(() => {
+    if (!live || live.id === lastLive.current) return
+    lastLive.current = live.id
+    setPlate(live.plate)
+    setPaid(false); setFined(false); setMsg('')
+    if (live.kind === 'RESIDENT') {
+      setLookup({ kind: 'RESIDENT', plate_province: live.province ?? null, plate_city: live.city ?? null })
+      api.post('/vehicles/plate-lookup', { plate_raw: live.plate })
+        .then((r) => setLookup(r.data)).catch(() => {})
+    } else {
+      setLookup({ kind: 'GUEST', province: live.province ?? null, city: live.city ?? null })
+    }
+    setResult({
+      access_event_id: 'live-' + live.id,
+      decision: live.decision ?? 'UNKNOWN_PLATE',
+      decision_reason: live.reason ?? '',
+      barrier_action: live.barrier ?? 'KEEP_CLOSED',
+    })
+  }, [live])
+
   const send = async (e: FormEvent) => {
     e.preventDefault()
     setError(''); setMsg(''); setResult(null); setPaid(false); setFined(false); setBusy(true)
@@ -144,7 +160,7 @@ function GateSide({ direction }: { direction: 'IN' | 'OUT' }) {
       const r = await api.post('/gate/events/plate-detected', {
         gate_code: gateCode, direction, plate_raw: plate,
         source_event_id: crypto.randomUUID(), confidence: 97.5,
-      }, { headers: { 'X-API-Key': GATE_API_KEY } })
+      }, { headers: { 'X-API-Key': gateKey.current } })
       setResult(r.data)
     } catch (err) {
       setError(apiErrorFa(err))
@@ -183,7 +199,7 @@ function GateSide({ direction }: { direction: 'IN' | 'OUT' }) {
         reason: result.decision_reason || result.decision,
       })
       setFined(true)
-      setMsg('جریمه ثبت شد - پلاک ' + (r.data.plate || '') + ' مبلغ ' + (r.data.amount || 0) + ' ریال')
+      setMsg(`جریمه ثبت شد — پلاک ${r.data.plate} مبلغ ${r.data.amount} ریال`)
     } catch (err) { setError(apiErrorFa(err)) } finally { setBusy(false) }
   }
 
@@ -223,7 +239,9 @@ function GateSide({ direction }: { direction: 'IN' | 'OUT' }) {
                 sx={{ bgcolor: 'rgba(255,255,255,.25)', color: '#fff', fontWeight: 700 }} />
               {result.duplicate && <Chip size="small" label="تکراری" sx={{ bgcolor: 'rgba(255,255,255,.25)', color: '#fff' }} />}
             </Stack>
-            <Typography variant="body2" textAlign="center">دلیل: {reasonFa[result.decision_reason] ?? result.decision_reason}</Typography>
+            <Typography variant="body2" textAlign="center">
+              دلیل: {reasonFa[result.decision_reason] ?? result.decision_reason}
+            </Typography>
             {result.unit && <Typography variant="body2" textAlign="center">واحد: {result.unit.tower} — {result.unit.unit_number}</Typography>}
             {result.parking?.code && <Typography variant="body2" textAlign="center">پارکینگ: {result.parking.code}</Typography>}
 
@@ -252,12 +270,12 @@ function GateSide({ direction }: { direction: 'IN' | 'OUT' }) {
                   ثبت پرداخت {money(result.session.final_amount)}
                 </Button>
               )}
-              {(result.decision === "DENY" || result.decision === "UNKNOWN_PLATE" || result.decision === "REQUIRE_OPERATOR_APPROVAL") && !fined && (
+              {(result.decision === 'DENY' || result.decision === 'UNKNOWN_PLATE' || result.decision === 'REQUIRE_OPERATOR_APPROVAL') && !fined && (
                 <Button fullWidth variant="contained" color="error" onClick={issueFine} disabled={busy}>
-                  {"💰 صدور جریمه (۵۰۰,۰۰۰ ریال)"}
+                  {'\u{1F4B0}'} صدور جریمه (۵۰۰,۰۰۰ ریال)
                 </Button>
               )}
-              {fined && <Alert severity="warning" sx={{ bgcolor: "#fff" }}>جریمه صادر شد ✔</Alert>}
+              {fined && <Alert severity="warning" sx={{ bgcolor: '#fff' }}>جریمه برای این پلاک صادر شد ✔</Alert>}
               {paid && <Alert severity="success" sx={{ bgcolor: '#fff' }}>پرداخت انجام شد ✔</Alert>}
             </Stack>
           </Box>
@@ -268,12 +286,33 @@ function GateSide({ direction }: { direction: 'IN' | 'OUT' }) {
 }
 
 export default function GatePanel() {
-  const { events, connected } = useLiveEvents(15)
+  const { events, connected } = useLiveEvents(40)
+  const lastByGate = useRef<Record<string, LiveEvt | null>>({})
+  const [, force] = useState(0)
+
+  useEffect(() => {
+    const sim = events.filter((e) => e.event === 'simulator.event')
+    let changed = false
+    for (const e of sim) {
+      const d = e.data as LiveEvt
+      if (!d?.gate) continue
+      if (lastByGate.current[d.gate]?.id !== e.event_id) {
+        lastByGate.current[d.gate] = {
+          id: e.event_id, gate: d.gate, direction: d.direction, plate: d.plate,
+          kind: d.kind, decision: d.decision, reason: d.reason, barrier: d.barrier,
+          province: d.province, city: d.city,
+        }
+        changed = true
+      }
+    }
+    if (changed) force((x) => x + 1)
+  }, [events])
+
   return (
     <Stack spacing={2}>
       <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', lg: '1fr 1fr' }, gap: 2 }}>
-        <GateSide direction="IN" />
-        <GateSide direction="OUT" />
+        <GateSide direction="IN" live={lastByGate.current['GATE-IN-01'] ?? null} />
+        <GateSide direction="OUT" live={lastByGate.current['GATE-OUT-01'] ?? null} />
       </Box>
       <Card>
         <CardContent sx={{ py: 2 }}>
@@ -281,15 +320,20 @@ export default function GatePanel() {
             <Typography variant="body2" color="text.secondary">رویدادهای زنده</Typography>
             <Chip size="small" label={connected ? 'WebSocket متصل' : 'قطع'} color={connected ? 'success' : 'default'} />
           </Stack>
-          <List dense sx={{ maxHeight: 200, overflow: 'auto' }}>
-            {events.map((e) => (
-              <ListItem key={e.event_id} divider>
-                <ListItemText
-                  primary={`${eventFa[e.event] ?? e.event} — ${String((e.data as { plate?: string })?.plate ?? (e.data as { title?: string })?.title ?? '')}`}
-                  secondary={faDate(e.occurred_at)}
-                />
-              </ListItem>
-            ))}
+          <List dense sx={{ maxHeight: 220, overflow: 'auto' }}>
+            {events.map((e) => {
+              const d = e.data as { plate?: string; title?: string; direction?: string }
+              const dir = e.event === 'simulator.event'
+                ? (d.direction === 'IN' ? ' (ورود)' : d.direction === 'OUT' ? ' (خروج)' : '') : ''
+              return (
+                <ListItem key={e.event_id} divider>
+                  <ListItemText
+                    primary={`${eventFa[e.event] ?? e.event}${dir} — ${String(d.plate ?? d.title ?? '')}`}
+                    secondary={faDate(e.occurred_at)}
+                  />
+                </ListItem>
+              )
+            })}
           </List>
         </CardContent>
       </Card>

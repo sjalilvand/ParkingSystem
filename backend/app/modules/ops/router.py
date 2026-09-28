@@ -134,44 +134,74 @@ class FineCreate(BaseModel):
 @router.post("/fine")
 async def create_fine(body: FineCreate, db: AsyncSession = Depends(get_db),
                       user: User = Depends(require_permission("user.manage"))):
+    """INTROSPECTIVE_FINE — فقط ستون‌های موجود + پرکردن الزامی‌ها."""
+    import uuid as _uuid
+    from datetime import datetime as _dt, timezone as _tz
+
     from app.modules.notifications.service import push_notification
     from app.modules.violations.models import Violation
+    from app.modules.vehicles.models import Vehicle
     from app.shared.plate import normalize_plate
 
     norm = normalize_plate(body.plate_raw) or body.plate_raw
-    cols = {c.name for c in Violation.__table__.columns}
+    cols = {c.name: c for c in Violation.__table__.columns}
     data = {"plate_normalized": norm}
-    if "plate_raw" in cols:
-        data["plate_raw"] = body.plate_raw
-    if "violation_type" in cols:
-        data["violation_type"] = body.violation_type
-    if "type" in cols:
-        data["type"] = body.violation_type
-    if "amount" in cols:
-        data["amount"] = body.amount
-    if "fine_amount" in cols:
-        data["fine_amount"] = body.amount
-    if "reason" in cols:
-        data["reason"] = body.reason
-    if "description" in cols:
-        data["description"] = body.reason
-    if "status" in cols:
-        data["status"] = "ACTIVE"
-    for k in ("created_by", "reported_by"):
-        if k in cols and user:
-            data[k] = user.id
+    for alt, val in (("plate_raw", body.plate_raw), ("violation_type", body.violation_type),
+                     ("type", body.violation_type), ("amount", body.amount),
+                     ("fine_amount", body.amount), ("reason", body.reason),
+                     ("description", body.reason), ("status", "ACTIVE")):
+        if alt in cols:
+            data[alt] = val
+
+    # vehicle_id اگر الزام‌آور بود، با خودروی واقعی پر شود
+    if "vehicle_id" in cols and "vehicle_id" not in data:
+        v = (await db.execute(select(Vehicle).where(
+            Vehicle.plate_normalized == norm))).scalars().first()
+        if v:
+            data["vehicle_id"] = v.id
+
+    # هر ستون NOT-NULL بدون default که هنوز خالی است، مقدار منطقی بگیرد
+    for name, col in cols.items():
+        if name in data or name in ("id", "created_at", "updated_at"):
+            continue
+        if col.nullable or col.default is not None or col.server_default is not None:
+            continue
+        try:
+            pt = col.type.python_type
+        except Exception:
+            pt = str
+        if name.endswith("_id"):
+            data[name] = user.id if user and name in ("created_by", "reported_by", "recorded_by", "operator_id") else None
+            if data[name] is None:
+                data[name] = None
+        elif pt is int:
+            data[name] = 0
+        elif pt is bool:
+            data[name] = False
+        elif pt is _dt:
+            data[name] = _dt.now(_tz.utc)
+        else:
+            data[name] = _uuid.uuid4().hex[:12]
+
     obj = Violation(**{k: v for k, v in data.items() if k in cols})
     db.add(obj)
-    await db.commit()
+    try:
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        import traceback
+        traceback.print_exc()
+        raise
     await db.refresh(obj)
     try:
         await push_notification(db, recipient_user_id=None,
-                                title="💰 جریمه صادر شد",
-                                message="پلاک {} — مبلغ {} ریال".format(norm, body.amount),
+                                title="FINE ISSUED",
+                                message="plate {} amount {}".format(norm, body.amount),
                                 payload={"violation_id": obj.id, "plate": norm, "amount": body.amount})
     except Exception:
         pass
     return {"success": True, "id": obj.id, "plate": norm, "amount": body.amount}
+
 
 
 @router.get("/fines")
@@ -188,3 +218,9 @@ async def list_fines(limit: int = 20, db: AsyncSession = Depends(get_db),
             d[c.name] = val.isoformat() if hasattr(val, "isoformat") else val
         items.append(d)
     return {"items": items}
+
+@router.get("/gate-key")
+async def get_gate_key(user: User = Depends(require_permission("user.manage"))):
+    from app.core.config import settings
+
+    return {"key": settings.GATE_API_KEY}
