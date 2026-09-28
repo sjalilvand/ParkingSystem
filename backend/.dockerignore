@@ -1,4 +1,9 @@
 .venv
 __pycache__
+**/__pycache__
 *.pyc
 .pytest_cache
+logs
+*.db
+.env
+.env.prod

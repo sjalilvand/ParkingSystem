@@ -13,4 +13,5 @@ pyjwt==2.10.1
 argon2-cffi==23.1.0
 python-multipart==0.0.20
 loguru==0.7.3
+minio==7.2.12
 pytest==8.3.4
