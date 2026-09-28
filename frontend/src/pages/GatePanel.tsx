@@ -85,9 +85,9 @@ function IdentityStrip({ info }: { info: LookupInfo | null }) {
   )
 }
 
-function GateSide({ direction, live }: { direction: 'IN' | 'OUT'; live: LiveEvt | null }) {
+function GateSide({ direction, live, defaultPlate }: { direction: 'IN' | 'OUT'; live: LiveEvt | null; defaultPlate?: string }) {
   const isEntry = direction === 'IN'
-  const [plate, setPlate] = useState('۱۲ ب ۳۴۵ ایران ۶۷')
+  const [plate, setPlate] = useState('')
   const [lookup, setLookup] = useState<LookupInfo | null>(null)
   const [result, setResult] = useState<DecisionResult | null>(null)
   const [error, setError] = useState('')
@@ -97,6 +97,10 @@ function GateSide({ direction, live }: { direction: 'IN' | 'OUT'; live: LiveEvt 
   const [fined, setFined] = useState(false)
   const gateKey = useRef('gate-dev-key')
   const lastLive = useRef<string | null>(null)
+
+  useEffect(() => {
+    if (defaultPlate) setPlate((cur) => (cur === '' ? defaultPlate : cur))
+  }, [defaultPlate])
 
   const gateCode = isEntry ? 'GATE-IN-01' : 'GATE-OUT-01'
   const accent = isEntry ? '#2E7D32' : '#C62828'
@@ -289,6 +293,14 @@ export default function GatePanel() {
   const { events, connected } = useLiveEvents(40)
   const lastByGate = useRef<Record<string, LiveEvt | null>>({})
   const [, force] = useState(0)
+  const [plates, setPlates] = useState<string[]>([])
+
+  useEffect(() => {
+    api.get('/vehicles', { params: { page_size: 10 } }).then((r) => {
+      const arr = (r.data?.items ?? []) as { plate_raw: string }[]
+      setPlates(arr.map((v) => v.plate_raw))
+    }).catch(() => {})
+  }, [])
 
   useEffect(() => {
     const sim = events.filter((e) => e.event === 'simulator.event')
@@ -311,8 +323,8 @@ export default function GatePanel() {
   return (
     <Stack spacing={2}>
       <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', lg: '1fr 1fr' }, gap: 2 }}>
-        <GateSide direction="IN" live={lastByGate.current['GATE-IN-01'] ?? null} />
-        <GateSide direction="OUT" live={lastByGate.current['GATE-OUT-01'] ?? null} />
+        <GateSide direction="IN" live={lastByGate.current['GATE-IN-01'] ?? null} defaultPlate={plates[0]} />
+        <GateSide direction="OUT" live={lastByGate.current['GATE-OUT-01'] ?? null} defaultPlate={plates[1] ?? plates[0]} />
       </Box>
       <Card>
         <CardContent sx={{ py: 2 }}>

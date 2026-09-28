@@ -160,21 +160,49 @@ async def create_fine(body: FineCreate, db: AsyncSession = Depends(get_db),
         if v:
             data["vehicle_id"] = v.id
 
-    # هر ستون NOT-NULL بدون default که هنوز خالی است، مقدار منطقی بگیرد
+    # هر ستون NOT-NULL بدون default که هنوز خالی است، مقدار منطقی بگیرد  (FK_RESOLVE)
     for name, col in cols.items():
         if name in data or name in ("id", "created_at", "updated_at"):
             continue
         if col.nullable or col.default is not None or col.server_default is not None:
             continue
+        # FK: get-or-create در جدول مقصد
+        if col.foreign_keys and name not in ("vehicle_id",):
+            fk = next(iter(col.foreign_keys))
+            target = fk.column.table
+            res = await db.execute(select(target).limit(1))
+            row = res.first()
+            if row is None:
+                ins_vals = {}
+                for c2 in target.columns:
+                    if c2.name == "id" or c2.nullable or c2.default is not None or c2.server_default is not None:
+                        continue
+                    try:
+                        pt2 = c2.type.python_type
+                    except Exception:
+                        pt2 = str
+                    if pt2 is int:
+                        ins_vals[c2.name] = 0
+                    elif pt2 is bool:
+                        ins_vals[c2.name] = False
+                    elif pt2 is _dt:
+                        ins_vals[c2.name] = _dt.now(_tz.utc)
+                    else:
+                        ins_vals[c2.name] = "MANUAL"
+                await db.execute(target.insert().values(**ins_vals))
+                res = await db.execute(select(target).limit(1))
+                row = res.first()
+            if row is not None:
+                data[name] = row[0]
+            continue
+        if name.endswith("_id"):
+            data[name] = user.id if user and name in ("created_by", "reported_by", "recorded_by", "operator_id") else user.id
+            continue
         try:
             pt = col.type.python_type
         except Exception:
             pt = str
-        if name.endswith("_id"):
-            data[name] = user.id if user and name in ("created_by", "reported_by", "recorded_by", "operator_id") else None
-            if data[name] is None:
-                data[name] = None
-        elif pt is int:
+        if pt is int:
             data[name] = 0
         elif pt is bool:
             data[name] = False
