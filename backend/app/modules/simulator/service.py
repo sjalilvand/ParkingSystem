@@ -1,19 +1,25 @@
-"""موتور شبیه‌ساز v2 — ۴۹۵ خودروی واقعی، ورود/خروج منطقی، ردیابی داخل مجموعه."""
+"""موتور شبیه‌ساز v3 — مجوز ساکن/مهمان، آمار تفکیکی، استان/شهرستان، بیشترین توقف."""
 import asyncio
 import random
-from datetime import datetime, timezone
+import re
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 
 from app.db.session import AsyncSessionLocal
+from app.modules.base_data.models import PlateRegion
 from app.modules.vehicles.models import Vehicle
 from app.realtime.manager import manager
+from app.shared.plate import normalize_plate
 
 LETTERS = ["ب","ج","د","س","ص","ط","ق","ل","م","ن","و","هـ","ی"]
+DENY_SET = {"DENY", "UNKNOWN_PLATE", "REQUIRE_OPERATOR_APPROVAL", "OFFLINE_REQUIRE_REVIEW"}
 
-_state = {"running": False, "task": None, "interval": 4.0, "resident_ratio": 0.8,
-          "stats": {"events": 0, "entry": 0, "exit": 0, "violations": 0},
-          "inside": {}, "last": None}
+_state = {"running": False, "task": None, "interval": 4.0,
+          "resident_ratio": 0.8, "guest_permit_ratio": 0.7,
+          "stats": {"events": 0, "entry": 0, "exit": 0, "violations": 0,
+                    "resident_entries": 0, "guest_entries": 0},
+          "by_province": {}, "inside": {}, "last": None, "_rcache": {}}
 
 
 def _broadcast(event, data):
@@ -23,10 +29,41 @@ def _broadcast(event, data):
         pass
 
 
+async def _resolve_region(raw: str):
+    """استان/شهرستان از پلاک خام (کد بعد از ایران + حرف)."""
+    m = re.search(r"ایران\s*(\d{2})", raw)
+    if not m:
+        return None, None
+    code = m.group(1)
+    letter = None
+    for tok in raw.split():
+        if tok == "ایران" or tok.isdigit():
+            continue
+        if all("\u0600" <= ch <= "\u06FF" for ch in tok.replace("\u0640", "")):
+            letter = tok.replace("\u0640", "")
+            break
+    key = f"{code}|{letter}"
+    if key in _state["_rcache"]:
+        return _state["_rcache"][key]
+    prov = city = None
+    async with AsyncSessionLocal() as db:
+        rows = (await db.execute(select(PlateRegion).where(
+            PlateRegion.plate_code == code))).scalars().all()
+        for r in rows:
+            ls = {t.replace("\u0640", "").strip() for t in (r.letters or "").split()}
+            if letter and letter in ls:
+                prov, city = r.province, r.city
+                break
+        if prov is None and rows:
+            prov, city = rows[0].province, rows[0].city
+    _state["_rcache"][key] = (prov, city)
+    return prov, city
+
+
 async def _resident_plates():
     async with AsyncSessionLocal() as db:
         rows = (await db.execute(select(Vehicle).limit(600))).scalars().all()
-        return [(v.plate_raw, v.is_active) for v in rows]
+        return [(v.plate_raw, v.is_active, v.plate_province, v.plate_city) for v in rows]
 
 
 def _guest_plate():
@@ -34,6 +71,17 @@ def _guest_plate():
                           "36","46","51","56","63","67","72","77","83","93"])
     letter = random.choice(LETTERS)
     return f"{random.randint(10,99)} {letter} {random.randint(100,999)} ایران {code}"
+
+
+async def _grant_guest_permit(raw: str):
+    norm = normalize_plate(raw) or raw
+    async with AsyncSessionLocal() as db:
+        db.add(AccessPermit := __import__("app.modules.vehicles.models", fromlist=["AccessPermit"]).AccessPermit(
+            plate_normalized=norm, permit_type="GUEST",
+            valid_from=datetime.now(timezone.utc),
+            valid_until=datetime.now(timezone.utc) + timedelta(hours=3),
+            status="ACTIVE"))
+        await db.commit()
 
 
 async def _tick():
@@ -44,19 +92,26 @@ async def _tick():
         stats["events"] += 1
         inside = _state["inside"]
 
-        if inside and random.random() < 0.45:
+        if inside and random.random() < 0.5:
             plate_raw = random.choice(list(inside.keys()))
             info = inside.pop(plate_raw)
             gate, direction = "GATE-OUT-01", "OUT"
             kind = info.get("kind", "RESIDENT")
+            prov, city = info.get("province"), info.get("city")
         else:
             plates = await _resident_plates()
-            if plates and random.random() < _state["resident_ratio"]:
-                plate_raw, active = random.choice(plates)
+            free = [(p, pr, ci) for (p, a, pr, ci) in plates if p not in inside]
+            if free and random.random() < _state["resident_ratio"]:
+                plate_raw, prov, city = random.choice(free)
                 kind = "RESIDENT"
+                if not prov:
+                    prov, city = await _resolve_region(plate_raw)
             else:
-                plate_raw, active = _guest_plate(), True
+                plate_raw = _guest_plate()
                 kind = "GUEST"
+                if random.random() < _state["guest_permit_ratio"]:
+                    await _grant_guest_permit(plate_raw)
+                prov, city = await _resolve_region(plate_raw)
             gate, direction = "GATE-IN-01", "IN"
 
         try:
@@ -70,21 +125,31 @@ async def _tick():
             return
 
         decision = result.get("decision")
-        if decision in ("DENY", "UNKNOWN_PLATE", "REQUIRE_OPERATOR_APPROVAL", "OFFLINE_REQUIRE_REVIEW"):
+        allowed = decision in ("ALLOW", "ALLOW_WITH_WARNING")
+
+        if decision in DENY_SET:
             stats["violations"] += 1
-        elif direction == "IN":
+        elif allowed and direction == "IN":
             stats["entry"] += 1
-            inside[plate_raw] = {"since": datetime.now(timezone.utc).isoformat(), "kind": kind}
-        else:
+            if kind == "RESIDENT":
+                stats["resident_entries"] += 1
+            else:
+                stats["guest_entries"] += 1
+            if prov:
+                _state["by_province"][prov] = _state["by_province"].get(prov, 0) + 1
+            inside[plate_raw] = {"since": datetime.now(timezone.utc).isoformat(),
+                                 "kind": kind, "province": prov, "city": city}
+        elif allowed and direction == "OUT":
             stats["exit"] += 1
 
         _state["last"] = {"time": datetime.now(timezone.utc).isoformat(),
                           "gate": gate, "direction": direction, "plate": plate_raw,
                           "kind": kind, "decision": decision,
                           "reason": result.get("decision_reason"),
-                          "barrier": result.get("barrier_action")}
-        _broadcast("simulator.event", {**_state["last"],
-                                       "inside_count": len(inside), "stats": dict(stats)})
+                          "barrier": result.get("barrier_action"),
+                          "province": prov, "city": city,
+                          "inside_count": len(inside)}
+        _broadcast("simulator.event", {**_state["last"], "stats": dict(stats)})
 
 
 async def _loop():
@@ -102,7 +167,9 @@ def start(interval=4.0, resident_ratio=0.8):
     _state["running"] = True
     _state["interval"] = max(1.0, float(interval))
     _state["resident_ratio"] = min(0.95, max(0.1, float(resident_ratio)))
-    _state["stats"] = {"events": 0, "entry": 0, "exit": 0, "violations": 0}
+    _state["stats"] = {"events": 0, "entry": 0, "exit": 0, "violations": 0,
+                       "resident_entries": 0, "guest_entries": 0}
+    _state["by_province"] = {}
     _state["inside"] = {}
     _state["task"] = asyncio.create_task(_loop())
     return True
@@ -119,9 +186,23 @@ def stop():
 
 
 def status():
-    return {"running": _state["running"], **_state["stats"],
+    from app.shared.dt import as_utc
+    now = datetime.now(timezone.utc)
+    mx = 0
+    for info in _state["inside"].values():
+        try:
+            d = (now - as_utc(datetime.fromisoformat(info["since"]))).total_seconds()
+            mx = max(mx, int(d))
+        except Exception:
+            pass
+    top = sorted(_state["by_province"].items(), key=lambda x: -x[1])[:12]
+    s = dict(_state["stats"])
+    return {"running": _state["running"], **s,
             "interval": _state["interval"], "resident_ratio": _state["resident_ratio"],
-            "inside_count": len(_state["inside"]), "last": _state.get("last")}
+            "inside_count": len(_state["inside"]),
+            "max_stay_seconds": int(mx),
+            "by_province": dict(top), "provinces_total": len(_state["by_province"]),
+            "last": _state.get("last")}
 
 
 async def inside_report():
@@ -129,10 +210,14 @@ async def inside_report():
     now = datetime.now(timezone.utc)
     items = []
     for plate, info in list(_state["inside"].items()):
-        dur = (now - as_utc(datetime.fromisoformat(info["since"]))).total_seconds()
-        items.append({"plate": plate, "kind": info["kind"], "seconds": int(dur)})
+        try:
+            d = int((now - as_utc(datetime.fromisoformat(info["since"]))).total_seconds())
+        except Exception:
+            d = 0
+        items.append({"plate": plate, "kind": info.get("kind"),
+                      "seconds": d, "province": info.get("province"), "city": info.get("city")})
     items.sort(key=lambda x: -x["seconds"])
-    return {"count": len(items), "items": items[:50]}
+    return {"count": len(items), "items": items[:60]}
 
 
 async def durations_report(limit=30):
@@ -147,7 +232,7 @@ async def durations_report(limit=30):
         events = (await db.execute(
             select(AccessEvent)
             .where(AccessEvent.plate_normalized.isnot(None))
-            .order_by(AccessEvent.event_time.desc()).limit(400))).scalars().all()
+            .order_by(AccessEvent.event_time.desc()).limit(600))).scalars().all()
 
         last_in, out = {}, []
         for ev in reversed(events):
@@ -158,10 +243,10 @@ async def durations_report(limit=30):
                 secs = int((as_utc(ev.event_time) - last_in[p]).total_seconds())
                 if secs > 0:
                     out.append({"plate": p, "seconds": secs,
-                                "from": last_in[p].isoformat(),
                                 "to": as_utc(ev.event_time).isoformat()})
                 last_in.pop(p, None)
-        out = list(reversed(out))[:limit]
+        out.sort(key=lambda x: -x["seconds"])
+        out = out[:limit]
 
         enriched = []
         for it in out:
