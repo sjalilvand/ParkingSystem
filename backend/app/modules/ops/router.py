@@ -121,3 +121,70 @@ async def set_config(body: ConfigUpdate,
         AGENT_ENV.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return {"success": True, "changed": changed,
             "note": "برای اعمال، پروسه‌های vision_bridge مربوطه را ری‌استارت کنید"}
+
+# ---------------- جریمه‌ها ----------------
+
+class FineCreate(BaseModel):
+    plate_raw: str
+    amount: int = 500000
+    reason: str | None = None
+    violation_type: str = "MANUAL"
+
+
+@router.post("/fine")
+async def create_fine(body: FineCreate, db: AsyncSession = Depends(get_db),
+                      user: User = Depends(require_permission("user.manage"))):
+    from app.modules.notifications.service import push_notification
+    from app.modules.violations.models import Violation
+    from app.shared.plate import normalize_plate
+
+    norm = normalize_plate(body.plate_raw) or body.plate_raw
+    cols = {c.name for c in Violation.__table__.columns}
+    data = {"plate_normalized": norm}
+    if "plate_raw" in cols:
+        data["plate_raw"] = body.plate_raw
+    if "violation_type" in cols:
+        data["violation_type"] = body.violation_type
+    if "type" in cols:
+        data["type"] = body.violation_type
+    if "amount" in cols:
+        data["amount"] = body.amount
+    if "fine_amount" in cols:
+        data["fine_amount"] = body.amount
+    if "reason" in cols:
+        data["reason"] = body.reason
+    if "description" in cols:
+        data["description"] = body.reason
+    if "status" in cols:
+        data["status"] = "ACTIVE"
+    for k in ("created_by", "reported_by"):
+        if k in cols and user:
+            data[k] = user.id
+    obj = Violation(**{k: v for k, v in data.items() if k in cols})
+    db.add(obj)
+    await db.commit()
+    await db.refresh(obj)
+    try:
+        await push_notification(db, recipient_user_id=None,
+                                title="💰 جریمه صادر شد",
+                                message="پلاک {} — مبلغ {} ریال".format(norm, body.amount),
+                                payload={"violation_id": obj.id, "plate": norm, "amount": body.amount})
+    except Exception:
+        pass
+    return {"success": True, "id": obj.id, "plate": norm, "amount": body.amount}
+
+
+@router.get("/fines")
+async def list_fines(limit: int = 20, db: AsyncSession = Depends(get_db),
+                     user: User = Depends(require_permission("user.manage"))):
+    from app.modules.violations.models import Violation
+    rows = (await db.execute(
+        select(Violation).order_by(Violation.created_at.desc()).limit(limit))).scalars().all()
+    items = []
+    for r in rows:
+        d = {}
+        for c in Violation.__table__.columns:
+            val = getattr(r, c.name)
+            d[c.name] = val.isoformat() if hasattr(val, "isoformat") else val
+        items.append(d)
+    return {"items": items}

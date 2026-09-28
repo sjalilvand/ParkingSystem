@@ -104,6 +104,7 @@ function GateSide({ direction }: { direction: 'IN' | 'OUT' }) {
   const [msg, setMsg] = useState('')
   const [busy, setBusy] = useState(false)
   const [paid, setPaid] = useState(false)
+  const [fined, setFined] = useState(false)
 
   const gateCode = isEntry ? 'GATE-IN-01' : 'GATE-OUT-01'
   const accent = isEntry ? '#2E7D32' : '#C62828'
@@ -138,7 +139,7 @@ function GateSide({ direction }: { direction: 'IN' | 'OUT' }) {
 
   const send = async (e: FormEvent) => {
     e.preventDefault()
-    setError(''); setMsg(''); setResult(null); setPaid(false); setBusy(true)
+    setError(''); setMsg(''); setResult(null); setPaid(false); setFined(false); setBusy(true)
     try {
       const r = await api.post('/gate/events/plate-detected', {
         gate_code: gateCode, direction, plate_raw: plate,
@@ -170,6 +171,19 @@ function GateSide({ direction }: { direction: 'IN' | 'OUT' }) {
       })
       setPaid(true)
       setMsg(`پرداخت ثبت شد — رسید ${r.data.reference_number}`)
+    } catch (err) { setError(apiErrorFa(err)) } finally { setBusy(false) }
+  }
+
+  const issueFine = async () => {
+    if (!result) return
+    setBusy(true)
+    try {
+      const r = await api.post('/ops/fine', {
+        plate_raw: plate, amount: 500000,
+        reason: result.decision_reason || result.decision,
+      })
+      setFined(true)
+      setMsg('جریمه ثبت شد - پلاک ' + (r.data.plate || '') + ' مبلغ ' + (r.data.amount || 0) + ' ریال')
     } catch (err) { setError(apiErrorFa(err)) } finally { setBusy(false) }
   }
 
@@ -238,6 +252,12 @@ function GateSide({ direction }: { direction: 'IN' | 'OUT' }) {
                   ثبت پرداخت {money(result.session.final_amount)}
                 </Button>
               )}
+              {(result.decision === "DENY" || result.decision === "UNKNOWN_PLATE" || result.decision === "REQUIRE_OPERATOR_APPROVAL") && !fined && (
+                <Button fullWidth variant="contained" color="error" onClick={issueFine} disabled={busy}>
+                  {"💰 صدور جریمه (۵۰۰,۰۰۰ ریال)"}
+                </Button>
+              )}
+              {fined && <Alert severity="warning" sx={{ bgcolor: "#fff" }}>جریمه صادر شد ✔</Alert>}
               {paid && <Alert severity="success" sx={{ bgcolor: '#fff' }}>پرداخت انجام شد ✔</Alert>}
             </Stack>
           </Box>
