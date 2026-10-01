@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { MenuItem, Stack, TextField } from '@mui/material'
 import { api } from '../api/client'
 
-interface CatalogBrand { name: string; models: { name: string; submodels: string[] }[] }
+interface CatalogBrand { id: string; name: string; models: { id: string; name: string; submodels: { id: string; name: string }[] }[] }
 
 interface Props {
   brand: string
@@ -45,7 +45,7 @@ export default function CatalogPicker({ brand, model, onChange }: Props) {
           onChange(brand, s ? `${modelObj!.name} ${s}` : modelObj!.name)
         }}>
         <MenuItem value="">—</MenuItem>
-        {(modelObj?.submodels ?? []).map((s) => <MenuItem key={s} value={s}>{s}</MenuItem>)}
+        {(modelObj?.submodels ?? []).map((s) => <MenuItem key={s.id} value={s.name}>{s.name}</MenuItem>)}
       </TextField>
     </Stack>
   )

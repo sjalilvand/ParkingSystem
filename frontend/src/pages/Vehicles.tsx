@@ -231,15 +231,8 @@ export default function Vehicles() {
             ) : null}
 
             <Stack direction="row" spacing={1}>
-              <TextField fullWidth select label="برند" value={f.brand}
-                onChange={(e) => setF((p) => ({ ...p, brand: e.target.value }))}>
-                <MenuItem value="">—</MenuItem>
-                {(brands ?? []).filter((b) => b.is_active).map((b) => (
-                  <MenuItem key={b.id} value={b.name_fa}>
-                    {b.name_fa} {b.country === 'IR' ? '(ایرانی)' : ''}
-                  </MenuItem>
-                ))}
-              </TextField>
+              <CatalogPicker brand={f.brand} model={f.model}
+              onChange={(b, m2) => setF((s) => ({ ...s, brand: b, model: m2 }))} />
               <TextField fullWidth label="مدل" value={f.model}
                 onChange={(e) => setF((p) => ({ ...p, model: e.target.value }))} />
             </Stack>

@@ -1,13 +1,13 @@
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
-  Accordion, AccordionDetails, AccordionSummary, Box, Button, Chip, IconButton,
+  Accordion, AccordionDetails, AccordionSummary, Alert, Box, Button, Card, CardContent, Chip, IconButton,
   Stack, TextField, Typography,
 } from '@mui/material'
 import { Add, Delete, Edit, ExpandMore } from '@mui/icons-material'
 import { api, apiErrorFa } from '../api/client'
 
-interface CatalogModel { id: string; name: string; submodels: string[] }
+interface CatalogModel { id: string; name: string; submodels: { id: string; name: string }[] }
 interface CatalogBrand { id: string; name: string; models: CatalogModel[] }
 
 export default function VehicleCatalogManager() {
@@ -110,8 +110,8 @@ export default function VehicleCatalogManager() {
                 </Stack>
                 <Stack direction="row" spacing={0.6} flexWrap="wrap" useFlexGap mt={0.8} alignItems="center">
                   {m.submodels.map((s) => (
-                    <Chip key={s} size="small" label={s} onDelete={() => run(async () => {
-                      // حذف زیرمدل: با endpoint عمومی حذف بر اساس نام انجام نمی‌شود؛ از id استفاده می‌کنیم
+                    <Chip key={s.id} size="small" label={s.name} onDelete={() => run(async () => {
+                      await api.delete(`/base-data/vehicle-submodels/${s.id}`)
                     })} />
                   ))}
                   {addSub?.modelId === m.id ? (
