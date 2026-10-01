@@ -9,6 +9,7 @@ import { api, apiErrorFa } from '../api/client'
 import { faDate } from '../utils/format'
 import PlateBox from '../components/PlateBox'
 import PlateInput, { parsePlateRaw } from '../components/PlateInput'
+import CatalogPicker from '../components/CatalogPicker'
 
 interface Brand { id: string; name_fa: string; country: string; is_active: boolean }
 interface VColor { id: string; name_fa: string; hex_code: string; is_active: boolean }
