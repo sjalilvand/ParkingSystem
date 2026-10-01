@@ -79,9 +79,9 @@ export default function BaseData() {
 
       <Tabs value={tab} onChange={(_, v) => setTab(v)} sx={{ bgcolor: '#fff', borderRadius: 2, px: 1 }}>
         <Tab label="برندها" />
-        <Tab label="کاتالوگ خودرو" />
         <Tab label="رنگ‌ها" />
         <Tab label="اشخاص و عکس" />
+          <Tab label="کاتالوگ خودرو" />
       </Tabs>
 
       {tab === 0 && (
@@ -201,7 +201,7 @@ export default function BaseData() {
           </CardContent></Card>
         </Box>
       )}
-      {tab === 1 && <VehicleCatalogManager />}
-    </Stack>
+    {tab === 3 && <VehicleCatalogManager />}
+      </Stack>
   )
 }
