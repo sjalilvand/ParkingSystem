@@ -16,6 +16,7 @@ import {
 } from '@mui/material'
 import { PersonAdd, Delete } from '@mui/icons-material'
 import { api, apiErrorFa } from '../api/client'
+import VehicleCatalogManager from '../components/VehicleCatalogManager'
 import PersonPhoto from '../components/PersonPhoto'
 import { faDate } from '../utils/format'
 
@@ -73,6 +74,7 @@ export default function BaseData() {
   return (
     <Stack spacing={2}>
       <Typography variant="h6" fontWeight={800}>اطلاعات پایه</Typography>
+      <VehicleCatalogManager />
       {err && <Alert severity="error">{err}</Alert>}
       {msg && <Alert severity="success">{msg}</Alert>}
 

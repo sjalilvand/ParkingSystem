@@ -234,3 +234,120 @@ async def vehicle_submodels(brand: str, model: str, db: AsyncSession = Depends(g
     rows = (await db.execute(select(VehicleSubModel).where(
         VehicleSubModel.model_id == mo.id, VehicleSubModel.is_active == True).order_by(VehicleSubModel.name))).scalars().all()  # noqa: E712
     return [s.name for s in rows]
+
+# ---------------- CRUD مدل و زیرمدل ----------------
+
+class BrandUpdate(BaseModel):
+    name_fa: str
+
+
+@router.patch("/brands/{brand_id}")
+async def update_brand(brand_id: str, body: BrandUpdate,
+                       db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    b = await db.get(VehicleBrand, brand_id)
+    if not b:
+        raise NotFoundError("برند یافت نشد")
+    dup = (await db.execute(select(VehicleBrand).where(
+        VehicleBrand.name_fa == body.name_fa, VehicleBrand.id != brand_id))).scalar_one_or_none()
+    if dup:
+        raise ConflictError("برند تکراری است")
+    b.name_fa = body.name_fa
+    await db.commit()
+    return {"success": True}
+
+
+class VehicleModelCreate(BaseModel):
+    brand_name: str
+    name: str
+
+
+class NameUpdate(BaseModel):
+    name: str
+
+
+@router.post("/vehicle-models")
+async def create_vehicle_model(body: VehicleModelCreate,
+                               db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    b = (await db.execute(select(VehicleBrand).where(
+        VehicleBrand.name_fa == body.brand_name))).scalar_one_or_none()
+    if not b:
+        raise NotFoundError("برند یافت نشد")
+    dup = (await db.execute(select(VehicleModel).where(
+        VehicleModel.brand_id == b.id, VehicleModel.name == body.name))).scalar_one_or_none()
+    if dup:
+        raise ConflictError("این مدل قبلا ثبت شده است")
+    obj = VehicleModel(brand_id=b.id, name=body.name)
+    db.add(obj)
+    await db.commit()
+    await db.refresh(obj)
+    return {"id": obj.id, "name": obj.name}
+
+
+@router.patch("/vehicle-models/{model_id}")
+async def update_vehicle_model(model_id: str, body: NameUpdate,
+                               db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    mo = await db.get(VehicleModel, model_id)
+    if not mo:
+        raise NotFoundError("مدل یافت نشد")
+    mo.name = body.name
+    await db.commit()
+    return {"success": True}
+
+
+@router.delete("/vehicle-models/{model_id}")
+async def delete_vehicle_model(model_id: str, db: AsyncSession = Depends(get_db),
+                               user: User = Depends(get_current_user)):
+    subs = (await db.execute(select(VehicleSubModel).where(
+        VehicleSubModel.model_id == model_id))).scalars().all()
+    for s in subs:
+        await db.delete(s)
+    mo = await db.get(VehicleModel, model_id)
+    if not mo:
+        raise NotFoundError("مدل یافت نشد")
+    await db.delete(mo)
+    await db.commit()
+    return {"success": True}
+
+
+class VehicleSubCreate(BaseModel):
+    model_id: str
+    name: str
+
+
+@router.post("/vehicle-submodels")
+async def create_vehicle_sub(body: VehicleSubCreate,
+                             db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    mo = await db.get(VehicleModel, body.model_id)
+    if not mo:
+        raise NotFoundError("مدل یافت نشد")
+    dup = (await db.execute(select(VehicleSubModel).where(
+        VehicleSubModel.model_id == body.model_id, VehicleSubModel.name == body.name))).scalar_one_or_none()
+    if dup:
+        raise ConflictError("این زیرمدل قبلا ثبت شده است")
+    obj = VehicleSubModel(model_id=body.model_id, name=body.name)
+    db.add(obj)
+    await db.commit()
+    await db.refresh(obj)
+    return {"id": obj.id, "name": obj.name}
+
+
+@router.patch("/vehicle-submodels/{sub_id}")
+async def update_vehicle_sub(sub_id: str, body: NameUpdate,
+                             db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    s = await db.get(VehicleSubModel, sub_id)
+    if not s:
+        raise NotFoundError("زیرمدل یافت نشد")
+    s.name = body.name
+    await db.commit()
+    return {"success": True}
+
+
+@router.delete("/vehicle-submodels/{sub_id}")
+async def delete_vehicle_sub(sub_id: str, db: AsyncSession = Depends(get_db),
+                             user: User = Depends(get_current_user)):
+    s = await db.get(VehicleSubModel, sub_id)
+    if not s:
+        raise NotFoundError("زیرمدل یافت نشد")
+    await db.delete(s)
+    await db.commit()
+    return {"success": True}
