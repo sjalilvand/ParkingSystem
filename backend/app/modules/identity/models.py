@@ -38,7 +38,13 @@ class User(Base, TimestampMixin):
     roles: Mapped[list["Role"]] = relationship(secondary=user_roles, back_populates="users", lazy="selectin")
 
 
-class Role(Base, TimestampMixin):
+    scope_type: Mapped[str] = mapped_column(String(16), default="ALL")   # ALL|TOWER|YARD|PLAN|SELF
+    scope_tower_ids: Mapped[str | None] = mapped_column(Text, nullable=True)   # JSON list
+    scope_yard_ids: Mapped[str | None] = mapped_column(Text, nullable=True)
+    scope_plan_ids: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+ class Role(Base, TimestampMixin):
     __tablename__ = "roles"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
