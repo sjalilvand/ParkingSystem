@@ -114,6 +114,12 @@ export default function BaseData() {
                     <Typography>{b.name_fa}</Typography>
                     <Typography variant="caption" color="text.secondary">{b.name_en ?? ''}</Typography>
                   </Stack>
+                  <IconButton size="small" color="primary" title="ویرایش برند" onClick={async () => {
+                    const nn = window.prompt("نام جدید برند:", b.name_fa ?? "")
+                    if (!nn || !nn.trim()) return
+                    try { await api.patch(`/base-data/brands/${b.id}`, { name_fa: nn.trim() })
+                      window.location.reload() } catch (e) { alert(apiErrorFa(e)) }
+                  }}>{'\u270F\uFE0F'}</IconButton>
                   <IconButton size="small" color="error" onClick={() => delBrand.mutate(b.id)}><Delete /></IconButton>
                 </Stack>
               ))}
