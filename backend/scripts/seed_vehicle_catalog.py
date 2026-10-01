@@ -14,7 +14,9 @@ from app.db.base import Base
 from app.db.session import AsyncSessionLocal, engine
 from app.modules.base_data.models import VehicleBrand, VehicleModel, VehicleSubModel
 
-CSV_CANDIDATES = [
+'CSV_CANDIDATES = [
+    Path(__file__).resolve().parents[1] / "app" / "shared" / "data" / "bama_full_catalog.csv",
+    Path(__file__).resolve().parents[2] / "bama_full_catalog.csv",'
     Path("/app/app/shared/data/bama_full_catalog.csv"),
     Path("/app/bama_full_catalog.csv"),
     Path("/tmp/bama_full_catalog.csv"),
