@@ -44,7 +44,7 @@ class User(Base, TimestampMixin):
     scope_plan_ids: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
- class Role(Base, TimestampMixin):
+class Role(Base, TimestampMixin):
     __tablename__ = "roles"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
