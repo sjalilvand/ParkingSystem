@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 
 from app.api.v1 import auth
+from app.api.v1.roles import router as roles_v2_router
 from app.api.v1.users import roles_router, router as users_router
 from app.modules.access_control.router import router as gate_router
 from app.modules.base_data.router import router as base_data_router
@@ -23,6 +24,7 @@ api_router = APIRouter()
 api_router.include_router(auth.router)
 api_router.include_router(users_router)
 api_router.include_router(roles_router)
+api_router.include_router(roles_v2_router)
 api_router.include_router(complexes_router)
 api_router.include_router(residents_router)
 api_router.include_router(vehicles_router)
