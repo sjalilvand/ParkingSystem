@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_current_user
 from app.core.exceptions import ConflictError, NotFoundError
 from app.db.session import get_db
-from app.modules.base_data.models import PlateRegion, VehicleBrand, VehicleColor
+from app.modules.base_data.models import PlateRegion, VehicleBrand, VehicleColor, VehicleModel, VehicleSubModel
 from app.modules.complexes.models import Tower, Unit
 from app.modules.identity.models import User
 
@@ -188,3 +188,49 @@ async def embed(callback: str = "cb", db: AsyncSession = Depends(get_db)):
     }, ensure_ascii=False)
     cb = "".join(ch for ch in callback if ch.isalnum() or ch in "_.") or "cb"
     return Response(content=cb + "(" + payload + ");", media_type="application/javascript")
+
+
+@router.get("/vehicle-catalog")
+async def vehicle_catalog(db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    """درخت کامل: برند -> مدل -> [زیرمدل‌ها]."""
+    brands = (await db.execute(select(VehicleBrand).where(
+        VehicleBrand.is_active == True).order_by(VehicleBrand.name_fa))).scalars().all()  # noqa: E712
+    models = (await db.execute(select(VehicleModel).where(
+        VehicleModel.is_active == True))).scalars().all()  # noqa: E712
+    subs = (await db.execute(select(VehicleSubModel).where(
+        VehicleSubModel.is_active == True))).scalars().all()  # noqa: E712
+
+    subs_by_model: dict = {}
+    for s in subs:
+        subs_by_model.setdefault(s.model_id, []).append(s.name)
+    models_by_brand: dict = {}
+    for mo in models:
+        models_by_brand.setdefault(mo.brand_id, []).append(
+            {"name": mo.name, "submodels": subs_by_model.get(mo.id, [])})
+
+    return [{"name": b.name_fa, "models": models_by_brand.get(b.id, [])} for b in brands]
+
+
+@router.get("/vehicle-models")
+async def vehicle_models(brand: str, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    b = (await db.execute(select(VehicleBrand).where(VehicleBrand.name_fa == brand))).scalar_one_or_none()
+    if not b:
+        return []
+    rows = (await db.execute(select(VehicleModel).where(
+        VehicleModel.brand_id == b.id, VehicleModel.is_active == True).order_by(VehicleModel.name))).scalars().all()  # noqa: E712
+    return [m.name for m in rows]
+
+
+@router.get("/vehicle-submodels")
+async def vehicle_submodels(brand: str, model: str, db: AsyncSession = Depends(get_db),
+                            user: User = Depends(get_current_user)):
+    b = (await db.execute(select(VehicleBrand).where(VehicleBrand.name_fa == brand))).scalar_one_or_none()
+    if not b:
+        return []
+    mo = (await db.execute(select(VehicleModel).where(
+        VehicleModel.brand_id == b.id, VehicleModel.name == model))).scalar_one_or_none()
+    if not mo:
+        return []
+    rows = (await db.execute(select(VehicleSubModel).where(
+        VehicleSubModel.model_id == mo.id, VehicleSubModel.is_active == True).order_by(VehicleSubModel.name))).scalars().all()  # noqa: E712
+    return [s.name for s in rows]
