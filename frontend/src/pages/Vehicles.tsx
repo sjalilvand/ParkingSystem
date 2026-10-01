@@ -218,6 +218,10 @@ export default function Vehicles() {
           <DialogContent>
             {err && <Alert severity="error" sx={{ mb: 2 }}>{err}</Alert>}
             <PlateInput raw={f.plate} onChange={(raw) => setF((p) => ({ ...p, plate: raw }))} />
+            <Box sx={{ gridColumn: "1 / -1", mt: 1 }}>
+              <CatalogPicker brand={f.brand} model={f.model}
+                onChange={(b, m2) => setF((s) => ({ ...s, brand: b, model: m2 }))} />
+            </Box>
             {f.plate.trim() ? (
               <Stack spacing={1} alignItems="center" my={1.5}>
                 <PlateBox plate={f.plate} />
@@ -231,8 +235,6 @@ export default function Vehicles() {
             ) : null}
 
             <Stack direction="row" spacing={1}>
-              <CatalogPicker brand={f.brand} model={f.model}
-              onChange={(b, m2) => setF((s) => ({ ...s, brand: b, model: m2 }))} />
               <TextField fullWidth label="مدل" value={f.model}
                 onChange={(e) => setF((p) => ({ ...p, model: e.target.value }))} />
             </Stack>

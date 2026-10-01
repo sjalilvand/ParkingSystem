@@ -74,12 +74,12 @@ export default function BaseData() {
   return (
     <Stack spacing={2}>
       <Typography variant="h6" fontWeight={800}>اطلاعات پایه</Typography>
-      <VehicleCatalogManager />
       {err && <Alert severity="error">{err}</Alert>}
       {msg && <Alert severity="success">{msg}</Alert>}
 
       <Tabs value={tab} onChange={(_, v) => setTab(v)} sx={{ bgcolor: '#fff', borderRadius: 2, px: 1 }}>
         <Tab label="برندها" />
+        <Tab label="کاتالوگ خودرو" />
         <Tab label="رنگ‌ها" />
         <Tab label="اشخاص و عکس" />
       </Tabs>
@@ -201,6 +201,7 @@ export default function BaseData() {
           </CardContent></Card>
         </Box>
       )}
+      {tab === 1 && <VehicleCatalogManager />}
     </Stack>
   )
 }
