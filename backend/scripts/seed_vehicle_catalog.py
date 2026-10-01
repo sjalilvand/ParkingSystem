@@ -1,4 +1,4 @@
-"""Seed کاتالوگ خودرو از bama_full_catalog.csv — idempotent."""
+"""Seed کاتالوگ خودرو از bama_full_catalog.csv — idempotent (local + container)."""
 import asyncio
 import sys
 from pathlib import Path
@@ -8,18 +8,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import app.main  # noqa: F401
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.db.base import Base
 from app.db.session import AsyncSessionLocal, engine
 from app.modules.base_data.models import VehicleBrand, VehicleModel, VehicleSubModel
 
-'CSV_CANDIDATES = [
+CSV_CANDIDATES = [
     Path(__file__).resolve().parents[1] / "app" / "shared" / "data" / "bama_full_catalog.csv",
-    Path(__file__).resolve().parents[2] / "bama_full_catalog.csv",'
+    Path(__file__).resolve().parents[2] / "bama_full_catalog.csv",
     Path("/app/app/shared/data/bama_full_catalog.csv"),
-    Path("/app/bama_full_catalog.csv"),
-    Path("/tmp/bama_full_catalog.csv"),
 ]
 
 
@@ -51,7 +49,7 @@ def parse_line(line):
 async def main():
     csv_path = find_csv()
     if not csv_path:
-        print("[X] CSV not found in container")
+        print("[X] CSV not found - place bama_full_catalog.csv in app/shared/data/")
         sys.exit(1)
     print(f"[catalog] CSV: {csv_path}")
 
@@ -110,8 +108,6 @@ async def main():
     print(f"[catalog] DONE: brands+{nb} models+{nm} submodels+{ns}")
     print(f"[catalog] totals: brands={tb} models={tm} submodels={ts}")
 
-
-from sqlalchemy import func  # noqa: E402
 
 if __name__ == "__main__":
     asyncio.run(main())
