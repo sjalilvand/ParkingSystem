@@ -203,11 +203,11 @@ async def vehicle_catalog(db: AsyncSession = Depends(get_db), user: User = Depen
     subs_by_model: dict = {}
     for s in subs:
         if s.name:
-        subs_by_model.setdefault(s.model_id, []).append({"id": s.id, "name": s.name})  # NULLFILTER
+            subs_by_model.setdefault(s.model_id, []).append({"id": s.id, "name": s.name})  # NULLFILTER
     models_by_brand: dict = {}
     for mo in models:
         if mo.name:
-        models_by_brand.setdefault(mo.brand_id, []).append(  # NULLFILTER
+            models_by_brand.setdefault(mo.brand_id, []).append(  # NULLFILTER
             {"name": mo.name, "submodels": subs_by_model.get(mo.id, [])})
 
     return [{"name": b.name_fa, "models": models_by_brand.get(b.id, [])} for b in brands]
