@@ -42,3 +42,5 @@ Desktop.ini
 # gate-agent junk
 gate-agent/agent.db*
 *.db*
+
+*.bak_port

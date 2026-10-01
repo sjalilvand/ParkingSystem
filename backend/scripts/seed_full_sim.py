@@ -1,10 +1,11 @@
 """Seed کامل شبیه‌سازی: ۳ برج × ۱۶۵ واحد، ساکنین، خودروها، جایگاه‌های پارکینگ. idempotent."""
 import asyncio
+from pathlib import Path
 import random
 import sys
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-sys.path.insert(0, "/app")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from sqlalchemy import func, select
 
