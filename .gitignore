@@ -38,3 +38,7 @@ Desktop.ini
 .env.prod
 .env.prod.*
 !.env.prod.example
+
+# gate-agent junk
+gate-agent/agent.db*
+*.db*
