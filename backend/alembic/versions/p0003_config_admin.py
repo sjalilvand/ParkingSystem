@@ -110,9 +110,8 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
     )
-    from scripts.seed_config_defaults import main as _seed_main
-    import asyncio as _asyncio
-    _asyncio.run(_seed_main())
+    from scripts.seed_config_defaults import seed_sync
+    seed_sync(op.get_bind())
 
 def downgrade() -> None:
     op.drop_table("box_settings")
