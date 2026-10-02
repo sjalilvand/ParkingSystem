@@ -22,6 +22,14 @@ PERMS = [
     ("roles.edit",           "roles",      "edit",   "ویرایش نقش و مجوزهای آن"),
     ("roles.delete",         "roles",      "delete", "حذف نقش بلااستفاده"),
     ("user.manage",          "identity",   "manage", "مدیریت کاربران"),
+    ("settings.view",   "settings", "view",   "مشاهده تنظیمات و طراح‌ها"),
+    ("settings.edit",   "settings", "edit",   "ویرایش تنظیمات/قبض/باکس/تعرفه‌پیش‌نویس"),
+    ("settings.publish","settings", "publish","انتشار و بازگشت نسخه تنظیمات"),
+    ("rules.view",      "rules",    "view",   "مشاهده قوانین ورود/خروج"),
+    ("rules.edit",      "rules",    "edit",   "ایجاد و ویرایش قوانین"),
+    ("rules.publish",   "rules",    "publish","تأیید و انتشار قوانین"),
+    ("groups.view",     "groups",   "view",   "مشاهده گروه‌های خودرو"),
+    ("groups.edit",     "groups",   "edit",   "مدیریت گروه‌های خودرو"),
 ]
 
 
@@ -54,3 +62,4 @@ async def main() -> None:
 
 if __name__ == "__main__":
     asyncio.run(main())
+

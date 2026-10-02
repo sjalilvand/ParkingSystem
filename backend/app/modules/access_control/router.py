@@ -123,6 +123,7 @@ async def plate_detected(body: PlateDetectedRequest, db: AsyncSession = Depends(
             confidence=body.confidence,
             raw_payload=body.raw_payload,
             client_decision=body.client_decision,
+            driver_request=body.driver_request,
         )
         await _notify_gate_decision(db, body.gate_code, body.plate_raw, result)
         return result
@@ -139,6 +140,7 @@ async def access_check(body: PlateDetectedRequest, db: AsyncSession = Depends(ge
             source_event_id=body.source_event_id, device_id=body.device_id,
             captured_at=body.captured_at, confidence=body.confidence,
             dry_run=True,
+            driver_request=body.driver_request,
         )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
@@ -221,6 +223,7 @@ async def sync_offline(body: SyncRequest, db: AsyncSession = Depends(get_db), _:
                 captured_at=ev.captured_at, confidence=ev.confidence,
                 raw_payload=ev.raw_payload, offline_created=True,
                 client_decision=ev.client_decision,
+                driver_request=ev.driver_request,
             )
             results.append({"source_event_id": ev.source_event_id, "decision": resp["decision"],
                             "needs_review": resp.get("needs_review", False), "duplicate": resp.get("duplicate", False)})

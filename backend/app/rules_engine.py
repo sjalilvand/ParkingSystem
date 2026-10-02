@@ -81,6 +81,11 @@ async def build_context(db: AsyncSession, *, direction, gate, plate_raw, normali
         ctx["has_debt"] = False
         ctx["debt_amount"] = 0
         ctx["confirmed_violations_count"] = 0
+    # کلیدهای شرطی که مقدار زمینه‌ای مستقل دارند:
+    # time_window → خود op از ساعت جاری استفاده می‌کند (فقط باید فیلد موجود باشد)
+    # plate_in → مقدار = پلاک نرمال‌شده؛ شرط: {"op":"in","value":["پلاک۱",...]}
+    ctx["time_window"] = True
+    ctx["plate_in"] = normalized
     return ctx
 
 

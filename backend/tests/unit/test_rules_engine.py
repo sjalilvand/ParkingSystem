@@ -16,7 +16,7 @@ def test_condition_unknown_field_fails_safe():
 def test_condition_time_window_overnight():
     import datetime as dt
     now = dt.datetime(2026, 10, 2, 23, 30, tzinfo=dt.timezone.utc)
-    ctx = {"now": now.isoformat()}
+    ctx = {"now": now.isoformat(), "time_window": True}
     # پنجره ۲۲:۰۰ تا ۰۶:۰۰ (عبور از نیمه‌شب) — با ساعت جاری مقایسه می‌شود نه ctx
     r = _match_condition({"field": "time_window", "op": "time_window", "value": {"from": "00:00", "to": "23:59"}}, ctx)
     assert r is True
