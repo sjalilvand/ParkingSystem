@@ -39,3 +39,5 @@
 - موج ۵a3: seed پیش‌فرض‌های پیکربندی به اسکریپت مستقل idempotent منتقل شد (منبع واحد برای migration/تست/اجرای دستی)؛ خطای colors NOT NULL رفع؛ تست DB نیز گروه‌ها/باکس‌ها را دارد.
 
 - موج ۵a4: seed به هسته sync منتقل شد (alembic داخل loop async اجراست → asyncio.run ممنوع)؛ منبع واحد: migration/تست/دستی همه seed_sync را صدا می‌زنند.
+
+- موج ۵i: تست yard نیازمند pre-cleanup بود (نشست بازِ رهاشده از تست concurrent قبلی → ALLOW_WITH_WARNING صحیح سیستم) — ایزولاسیون تقویت شد.
