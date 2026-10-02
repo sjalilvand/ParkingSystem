@@ -5,7 +5,7 @@ import {
   DialogTitle, FormControlLabel, IconButton, MenuItem, Stack, Switch, Tab, Tabs,
   TextField, Typography,
 } from '@mui/material'
-import { Add, ArrowDownward, ArrowUpward, Delete, Edit, Rule as RuleIcon, Settings, Tune } from '@mui/icons-material'
+import { Add, ArrowDownward, ArrowUpward, Delete, Edit, Rule as RuleIcon, Save, Settings, Tune } from '@mui/icons-material'
 import { api, apiErrorFa } from '../api/client'
 
 // ---------------- انواع ----------------
@@ -110,9 +110,9 @@ export default function ParkingDesigner() {
     mutationFn: async (p: { id: string; on: boolean }) =>
       p.on ? (await api.post(`/rules/${p.id}/publish`, { reason: 'publish from designer' })).data
            : (await api.post(`/rules/${p.id}/disable`)).data,
-    onSuccess: () => done('وضعیت قانون تغییر کرد'), invalidateAll,
+    onSuccess: () => { done('وضعیت قانون تغییر کرد'); invalidateAll() },
     onError: (e) => setErr(apiErrorFa(e)),
-  } as never)
+  })
 
   // ================= تب ۴–۵: تنظیمات سیاستی =================
   const saveSetting = useMutation({
@@ -146,7 +146,7 @@ export default function ParkingDesigner() {
     onSuccess: () => { setRcDraft(null); done('قالب قبض ذخیره شد'); invalidateAll() },
     onError: (e) => setErr(apiErrorFa(e)),
   })
-  const moveSection = (arr: { key: string; visible: boolean }[], i: number, dir: -1 | 1) => {
+  const moveSection = <T,>(arr: T[], i: number, dir: -1 | 1): T[] => {
     const j = i + dir
     if (j < 0 || j >= arr.length) return arr
     const c = [...arr]; [c[i], c[j]] = [c[j], c[i]]; return c
@@ -413,7 +413,7 @@ export default function ParkingDesigner() {
         <Stack spacing={2}>
           <Stack direction="row" spacing={1} alignItems="center">
             <TextField select size="small" label="باکس" value={boxSide} sx={{ width: 140 }}
-              onChange={(_, v: string) => setBoxSide(v as 'IN' | 'OUT')}>
+              onChange={(e) => setBoxSide(e.target.value as 'IN' | 'OUT')}>
               <MenuItem value="IN">ورود</MenuItem>
               <MenuItem value="OUT">خروج</MenuItem>
             </TextField>
@@ -660,8 +660,8 @@ export default function ParkingDesigner() {
                   <TextField size="small" label="متن پیام" fullWidth value={String(a.params?.text ?? '')}
                     onChange={(e) => setRDlg((p) => p ? { ...p, actions: p.actions.map((x, j) => j === i ? { ...x, params: { ...x.params, text: e.target.value } } : x) } : p)} />
                 )}
-                <IconButton size="small" onClick={() => setRDlg((p) => p ? { ...p, actions: moveSection(p.actions as never, i, -1) } : p)}><ArrowUpward fontSize="small" /></IconButton>
-                <IconButton size="small" onClick={() => setRDlg((p) => p ? { ...p, actions: moveSection(p.actions as never, i, 1) } : p)}><ArrowDownward fontSize="small" /></IconButton>
+                <IconButton size="small" onClick={() => setRDlg((p) => p ? { ...p, actions: moveSection(p.actions, i, -1) } : p)}><ArrowUpward fontSize="small" /></IconButton>
+                <IconButton size="small" onClick={() => setRDlg((p) => p ? { ...p, actions: moveSection(p.actions, i, 1) } : p)}><ArrowDownward fontSize="small" /></IconButton>
                 <IconButton size="small" color="error"
                   onClick={() => setRDlg((p) => p ? { ...p, actions: p.actions.filter((_, j) => j !== i) } : p)}><Delete fontSize="small" /></IconButton>
               </Stack>

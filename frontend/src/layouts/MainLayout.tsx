@@ -10,7 +10,7 @@ import {
   AccountBalance, Apartment, ConfirmationNumber, DirectionsCar,
   Dashboard as DashIcon, LockReset, Logout, LocalParking, ManageAccounts,
   Menu as MenuIcon, Notifications, Payments, ReportProblem, ReceiptLong,
-  SwapHoriz, Tour, Tune, Troubleshoot, VideogameAsset,
+  Settings, SwapHoriz, Tour, Tune, Troubleshoot, VideogameAsset,
 } from '@mui/icons-material'
 import { api, apiErrorFa } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
