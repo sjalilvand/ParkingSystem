@@ -1,5 +1,4 @@
-name: parkingsystem
-
+name: parkingsystem-prod
 services:
   postgres:
     image: postgres:16-alpine
@@ -69,3 +68,4 @@ volumes:
 
 networks:
   psnet:
+
