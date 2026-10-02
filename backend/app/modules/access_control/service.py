@@ -40,7 +40,6 @@ class GateDecisionService:
         gate: Gate,
         extra_warnings: list[str] | None = None,
     ) -> dict:
-        """پاسخ استاندارد برای رویداد تکراری (idempotency) — هم مسیر عادی هم تداخل همزمان."""
         vehicle = await db.get(Vehicle, existing.vehicle_id) if existing.vehicle_id else None
         unit_info = await vehicle_unit_info(db, vehicle) if vehicle else None
         warnings = ["DUPLICATE_EVENT"] + (extra_warnings or [])
@@ -94,8 +93,7 @@ class GateDecisionService:
             select(AccessEvent).where(AccessEvent.idempotency_key == key)
         )).scalar_one_or_none()
         if existing:
-            resp = await GateDecisionService.duplicate_response(db, existing, gate)
-            return resp
+            return await GateDecisionService.duplicate_response(db, existing, gate)
 
         normalized = normalize_plate(plate_raw)
         warnings: list[str] = []
@@ -136,8 +134,6 @@ class GateDecisionService:
                     ).order_by(ParkingSession.entry_at.desc())
                 )).scalars().first()
                 if session:
-                    # --- P0 (سند بخش ۲۳): سیاست خروج با بدهی پرداخت‌نشده ---
-                    # DENY: خروج مسدود (نشست باز می‌ماند) | WARN: خروج آزاد + هشدار | ALLOW: بدون هشدار
                     policy = (getattr(settings, "EXIT_UNPAID_POLICY", "WARN") or "WARN").upper()
                     exit_duration = max(0, int((now - session.entry_at).total_seconds()))
                     blocked = False
@@ -198,7 +194,7 @@ class GateDecisionService:
                         create_new_session = False
                     else:
                         decision, reason = "ALLOW", "VALID_PERMIT"
-                    permit.used_entries += 1
+                        permit.used_entries += 1  # F23: فقط ورود واقعاً جدید شمرده می‌شود
 
         if is_manual:
             event_type = "MANUAL_ENTRY" if direction == "IN" else "MANUAL_EXIT"
@@ -224,59 +220,58 @@ class GateDecisionService:
             synced_at=now if offline_created else None,
         )
         if not dry_run:
-            db.add(event)
-            await db.flush()
-
-            if direction == "IN" and decision in ("ALLOW", "ALLOW_WITH_WARNING") and create_new_session:
-                from app.modules.parking.models import ParkingOccupancy, ParkingSpace
-                session = ParkingSession(
-                    vehicle_id=vehicle.id if vehicle else None,
-                    plate_normalized=normalized,
-                    entry_event_id=event.id,
-                    entry_at=captured_at or now,
-                    status="OPEN",
-                )
-                db.add(session)
-                await db.flush()
-                space = await find_assigned_space(db, vehicle)
-                db.add(ParkingOccupancy(
-                    parking_space_id=space.id if space else None,
-                    vehicle_id=vehicle.id if vehicle else None,
-                    access_event_id=event.id,
-                    occupied_at=captured_at or now,
-                    source="OFFLINE_SYNC" if offline_created else "GATE",
-                ))
-                if space:
-                    # --- P0 (سند بخش ۱۱): قفل ردیف + بررسی وضعیت برای جلوگیری از تخصیص دوگانه ---
-                    locked_space = (await db.execute(
-                        select(ParkingSpace).where(ParkingSpace.id == space.id).with_for_update()
-                    )).scalar_one()
-                    if (locked_space.status or "FREE") != "FREE":
-                        warnings.append("ASSIGNED_SPACE_NOT_FREE")
-                    else:
-                        locked_space.status = "OCCUPIED"
-                    parking_info = {"id": locked_space.id, "code": locked_space.code, "zone": locked_space.zone}
-
-            if direction == "OUT" and decision in ("ALLOW", "ALLOW_WITH_WARNING") and vehicle:
-                from app.modules.parking.models import ParkingOccupancy, ParkingSpace
-                occ = (await db.execute(
-                    select(ParkingOccupancy).where(
-                        ParkingOccupancy.vehicle_id == vehicle.id,
-                        ParkingOccupancy.status == "OCCUPIED",
-                    ).order_by(ParkingOccupancy.occupied_at.desc())
-                )).scalars().first()
-                if occ:
-                    occ.vacated_at = now
-                    occ.status = "VACATED"
-                    if occ.parking_space_id:
-                        space = await db.get(ParkingSpace, occ.parking_space_id)
-                        if space:
-                            space.status = "FREE"
-
-            # --- P0: تداخل همزمان روی کلیدهای یکتا → پاسخ duplicate به‌جای 500 ---
             try:
+                db.add(event)
+                await db.flush()
+
+                if direction == "IN" and decision in ("ALLOW", "ALLOW_WITH_WARNING") and create_new_session:
+                    from app.modules.parking.models import ParkingOccupancy, ParkingSpace
+                    session = ParkingSession(
+                        vehicle_id=vehicle.id if vehicle else None,
+                        plate_normalized=normalized,
+                        entry_event_id=event.id,
+                        entry_at=captured_at or now,
+                        status="OPEN",
+                    )
+                    db.add(session)
+                    await db.flush()
+                    space = await find_assigned_space(db, vehicle)
+                    db.add(ParkingOccupancy(
+                        parking_space_id=space.id if space else None,
+                        vehicle_id=vehicle.id if vehicle else None,
+                        access_event_id=event.id,
+                        occupied_at=captured_at or now,
+                        source="OFFLINE_SYNC" if offline_created else "GATE",
+                    ))
+                    if space:
+                        locked_space = (await db.execute(
+                            select(ParkingSpace).where(ParkingSpace.id == space.id).with_for_update()
+                        )).scalar_one()
+                        if (locked_space.status or "FREE") != "FREE":
+                            warnings.append("ASSIGNED_SPACE_NOT_FREE")
+                        else:
+                            locked_space.status = "OCCUPIED"
+                        parking_info = {"id": locked_space.id, "code": locked_space.code, "zone": locked_space.zone}
+
+                if direction == "OUT" and decision in ("ALLOW", "ALLOW_WITH_WARNING") and vehicle:
+                    from app.modules.parking.models import ParkingOccupancy, ParkingSpace
+                    occ = (await db.execute(
+                        select(ParkingOccupancy).where(
+                            ParkingOccupancy.vehicle_id == vehicle.id,
+                            ParkingOccupancy.status == "OCCUPIED",
+                        ).order_by(ParkingOccupancy.occupied_at.desc())
+                    )).scalars().first()
+                    if occ:
+                        occ.vacated_at = now
+                        occ.status = "VACATED"
+                        if occ.parking_space_id:
+                            space = await db.get(ParkingSpace, occ.parking_space_id)
+                            if space:
+                                space.status = "FREE"
+
                 await db.commit()
             except IntegrityError:
+                # F3/F14: تداخل همزمان (کلید idempotency یا ایندکس نشست OPEN) → پاسخ تمیز
                 await db.rollback()
                 dup = (await db.execute(
                     select(AccessEvent).where(AccessEvent.idempotency_key == key)
@@ -285,6 +280,25 @@ class GateDecisionService:
                     return await GateDecisionService.duplicate_response(
                         db, dup, gate, extra_warnings=["CONCURRENT_CONFLICT"]
                     )
+                if direction == "IN" and normalized:
+                    open_s = (await db.execute(
+                        select(ParkingSession).where(
+                            ParkingSession.plate_normalized == normalized,
+                            ParkingSession.status == "OPEN",
+                        ).order_by(ParkingSession.entry_at.desc())
+                    )).scalars().first()
+                    if open_s is not None:
+                        return {
+                            "decision": "ALLOW_WITH_WARNING",
+                            "decision_reason": "SESSION_ALREADY_OPEN",
+                            "warnings": ["DUPLICATE_EVENT", "CONCURRENT_SESSION_CONFLICT"],
+                            "duplicate": False,
+                            "barrier_action": "OPEN",
+                            "session": {"id": open_s.id},
+                            "gate": {"id": gate.id, "code": gate.code, "name": gate.name},
+                            "plate": {"raw": plate_raw, "normalized": normalized},
+                            "issued_at": now.isoformat(),
+                        }
                 raise
             await db.refresh(event)
 

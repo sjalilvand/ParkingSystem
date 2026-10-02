@@ -47,3 +47,4 @@ gate-agent/agent.db*
 # --- audit artifacts (temporary) ---
 _audit_wave*.txt
 ~$*
+_audit_*.txt
