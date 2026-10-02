@@ -133,3 +133,9 @@
 - REQ-08-01 (ماتریس دسترسی گرافیکی): کامل شد — ویرایشگر نقش/مجوز ماتریسی در Users.tsx (ساخت/ویرایش/حذف نقش، کاتالوگ گروه‌بندی شده)، فیلتر منو بر اساس مجوز (MainLayout)، /auth/me غنیسازی (roles+permissions+is_admin)، seed کاتالوگ با module/action.
 
 - تکمیل موج ۴b/۴c: فیلتر منوی گرافیکی بر اساس مجوز + ویرایشگر ماتریس نقش‌ها فعال شد؛ build فرانت (tsc+vite) سبز؛ تست میدانی UI در انتظار کارفرما (op1 و admin).
+
+## موج ۴k — نقشه نهایی منو↔مجوز (همه انتخابی مدیر)
+| منو | مجوز کنترل‌کننده |
+|---|---|
+| داشبورد | dashboard.view | پنل گیت | gate.view | مرکز عملیات | ops.view | شبیه‌ساز | simulator.view | ساختار مجتمع | structure.view | مسئول محوطه | parking.view | خودروها | vehicles.view | مجوزها | permits.view | تردد | access_events.view | بدهی‌ها | finance.view | تخلفات | violations.view | تعرفه‌ها | finance.view | اطلاعات پایه | base_data.view | کاربران | user.manage |
+- routers باقی‌مانده (complexes/residents→structure.*, devices→field.*) در سطح include گیت شدند؛ 401 قبلی = قفل/توکن نامعتبر کاربر آزمون (unlock+reset حل کرد).
