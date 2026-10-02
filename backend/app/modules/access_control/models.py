@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import JSON, BigInteger, Boolean, DateTime, ForeignKey, String, UniqueConstraint
+from sqlalchemy import JSON, BigInteger, Boolean, DateTime, ForeignKey, Index, String, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, TimestampMixin, new_uuid
@@ -48,6 +48,11 @@ class AccessEvent(Base, TimestampMixin):
 
 class ParkingSession(Base, TimestampMixin):
     __tablename__ = "parking_sessions"
+    # F14 (سند §۱۱): حداکثر یک نشست OPEN برای هر پلاک — هم‌تراز با migration p0001
+    __table_args__ = (
+        Index("uq_open_session_plate", "plate_normalized", unique=True,
+              postgresql_where=text("status = 'OPEN'")),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
     vehicle_id: Mapped[str | None] = mapped_column(ForeignKey("vehicles.id"), nullable=True, index=True)

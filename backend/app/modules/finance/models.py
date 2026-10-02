@@ -21,6 +21,9 @@ class Tariff(Base, TimestampMixin):
     valid_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     priority: Mapped[int] = mapped_column(default=0)
     status: Mapped[str] = mapped_column(String(16), default="ACTIVE", index=True)
+    # Wave-2 (سند §۲۳): جریان تصویب تعرفه
+    approved_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class Charge(Base, TimestampMixin):
@@ -31,6 +34,8 @@ class Charge(Base, TimestampMixin):
     violation_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     charge_type: Mapped[str] = mapped_column(String(16), default="PARKING")
     amount: Mapped[int] = mapped_column(BigInteger)
+    # Wave-2 (F16): مبلغ پرداخت‌شده تجمعی — بدهی واقعی = amount - paid_amount
+    paid_amount: Mapped[int] = mapped_column(BigInteger, default=0)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(16), default="UNPAID", index=True)
 

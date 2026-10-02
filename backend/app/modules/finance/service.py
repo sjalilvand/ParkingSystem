@@ -9,7 +9,8 @@ from app.modules.finance.models import Charge, Tariff
 
 
 def calculate_amounts(tariff: Tariff | None, duration_seconds: int) -> dict:
-    """محاسبه خالص مبلغ (ریال/BIGINT) — قابل تست واحد. سقف روزانه اعمال می‌شود."""
+    """محاسبه خالص مبلغ (ریال/BIGINT) — قابل تست واحد. سقف روزانه اعمال می‌شود.
+    توجه: قواعد گردکردن/سقف/تعرفه شب طبق سند §۲۳ نیازمند تصویب (D2/D3/D4) هستند."""
     if duration_seconds is None or duration_seconds < 0:
         duration_seconds = 0
     if tariff is None:
@@ -32,6 +33,33 @@ def calculate_amounts(tariff: Tariff | None, duration_seconds: int) -> dict:
             warnings.append("DAILY_CAP_APPLIED")
 
     return {"base": int(base), "penalty": 0, "discount": 0, "final": int(base), "warnings": warnings}
+
+
+def initial_tariff_status(require_approval: bool) -> str:
+    """وضعیت اولیه تعرفه جدید — جریان تصویب §۲۳ (F8)."""
+    return "DRAFT" if require_approval else "ACTIVE"
+
+
+def charge_outstanding(charge: Charge) -> int:
+    """مانده واقعی بدهی یک شارژ (F16)."""
+    return max(0, int(charge.amount or 0) - int(getattr(charge, "paid_amount", 0) or 0))
+
+
+def allocate_payment_amounts(unpaid_charges, amount: int) -> tuple[list, int]:
+    """تخصیص خالص مبلغ پرداخت بین شارژهای بدهکار به ترتیب داده‌شده (F16).
+    خروجی: (list[(charge, allocated)], remaining_credit) — بدون اثر جانبی."""
+    remaining = int(amount)
+    allocs: list = []
+    for c in unpaid_charges:
+        if remaining <= 0:
+            break
+        outstanding = charge_outstanding(c)
+        if outstanding <= 0:
+            continue
+        alloc = min(remaining, outstanding)
+        allocs.append((c, alloc))
+        remaining -= alloc
+    return allocs, remaining
 
 
 async def get_active_tariff(db: AsyncSession, now: datetime) -> Tariff | None:

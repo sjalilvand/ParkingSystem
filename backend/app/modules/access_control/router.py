@@ -1,4 +1,5 @@
 import json
+import secrets
 import time
 from datetime import datetime, timezone
 
@@ -10,6 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_current_user
 from app.core.audit import write_audit
 from app.core.config import settings
+from app.core.exceptions import ForbiddenError
+from app.core.permissions import user_has_permission, user_is_admin
 from app.core.security import decode_token
 from app.db.session import get_db
 from app.modules.access_control.models import AccessEvent
@@ -35,7 +38,7 @@ async def require_gate_key(
     x_api_key: str | None = Header(default=None, alias="X-API-Key"),
 ):
     """احراز هویت گیت: کلید دستگاه (X-API-Key) یا توکن کاربر."""
-    if x_api_key == settings.GATE_API_KEY:
+    if x_api_key and secrets.compare_digest(x_api_key, settings.GATE_API_KEY):
         return None
     if credentials is not None:
         try:
@@ -45,6 +48,17 @@ async def require_gate_key(
         except Exception:
             pass
     raise HTTPException(status_code=401, detail="GATE_AUTH_FAILED")
+
+
+async def _enforce_user_permission(db: AsyncSession, user: User, perm_code: str) -> None:
+    """P0 (سند بخش ۸): مجوز عملیات حساس گیت در لایه API.
+    با ENFORCE_GATE_PERMISSIONS=False قابل موقت‌غیرفعال‌سازی است (rollback سریع)."""
+    if not getattr(settings, "ENFORCE_GATE_PERMISSIONS", True):
+        return
+    if await user_is_admin(db, user):
+        return
+    if not await user_has_permission(db, user, perm_code):
+        raise ForbiddenError("دسترسی مجاز نیست")
 
 
 _NOTIFY_DECISIONS = {"DENY", "UNKNOWN_PLATE", "REQUIRE_OPERATOR_APPROVAL", "OFFLINE_REQUIRE_REVIEW"}
@@ -67,6 +81,7 @@ _REASON_FA = {
     "SESSION_ALREADY_OPEN": "جلسه پارکینگ از قبل باز است",
     "DUPLICATE_ENTRY_SESSION_OPEN": "ورود تکراری",
     "NO_OPEN_SESSION_FOR_EXIT": "جلسه بازی برای خروج یافت نشد",
+    "EXIT_UNPAID_BLOCKED": "خروج به‌دلیل بدهی پرداخت‌نشده (سیاست مصوب نشده/فعال)",
     "UNKNOWN_PLATE": "پلاک ناشناس",
 }
 
@@ -131,6 +146,8 @@ async def access_check(body: PlateDetectedRequest, db: AsyncSession = Depends(ge
 
 @router.post("/access/manual")
 async def access_manual(body: ManualAccessRequest, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    # P0 (سند بخش ۸): عملیات دستی گیت نیازمند مجوز است
+    await _enforce_user_permission(db, user, "gate.manual_access")
     direction = "IN" if "ENTRY" in body.event_type else "OUT"
     try:
         return await GateDecisionService.process_plate_event(
@@ -145,6 +162,8 @@ async def access_manual(body: ManualAccessRequest, db: AsyncSession = Depends(ge
 
 @router.post("/barrier/open")
 async def barrier_open(body: BarrierOpenRequest, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    # P0 (سند بخش ۸): بازکردن دستی راهبند نیازمند مجوز است
+    await _enforce_user_permission(db, user, "gate.barrier_open")
     gate = (await db.execute(select(Gate).where(Gate.code == body.gate_code))).scalar_one_or_none()
     if not gate:
         raise HTTPException(status_code=404, detail="GATE_NOT_FOUND")

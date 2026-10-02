@@ -1,5 +1,4 @@
-name: parkingsystem
-
+name: parkingsystem-prod
 services:
   postgres:
     image: postgres:16-alpine
@@ -58,7 +57,7 @@ services:
       context: ./frontend
     restart: unless-stopped
     ports:
-      - "${APP_PORT:-80}:80"
+      - "${APP_PORT:-8880}:80"
     depends_on:
       - backend
     networks: [psnet]
@@ -69,3 +68,4 @@ volumes:
 
 networks:
   psnet:
+

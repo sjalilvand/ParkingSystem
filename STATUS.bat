@@ -1,13 +1,14 @@
 @echo off
 title ParkingSystem - STATUS
-cd /d E:\ParkingSystem
-echo === Containers ===
+set "ROOT=%~dp0"
+cd /d "%ROOT%"
+set "APP_PORT=8880"
+if exist ".env.prod" for /f "usebackq tokens=1,* delims==" %%A in (".env.prod") do if /i "%%A"=="APP_PORT" set "APP_PORT=%%B"
+echo --- PROD containers ---
 docker compose -f docker-compose.prod.yml --env-file .env.prod ps
+echo --- Health (port %APP_PORT%) ---
+curl.exe -s http://localhost:%APP_PORT%/health/live
 echo.
-echo === Health ===
-curl.exe -s http://localhost/health/live
+curl.exe -s http://localhost:%APP_PORT%/health/database
 echo.
-echo.
-echo === Backend last 15 log lines ===
-for /f "tokens=*" %%c in ('docker compose -f docker-compose.prod.yml ps -q backend') do docker logs %%c --tail 15
 pause
