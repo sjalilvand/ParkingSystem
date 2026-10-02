@@ -27,20 +27,20 @@ interface NotifItem {
 }
 
 const menu: { label: string; icon: ReactNode; path: string; perm?: string }[] = [
-  { label: 'داشبورد', icon: <DashIcon />, path: '/' },
-  { label: 'پنل گیت', icon: <SwapHoriz />, path: '/gate' },
-  { label: 'مرکز عملیات', icon: <Troubleshoot />, path: '/ops' },
-  { label: 'شبیه‌ساز', icon: <VideogameAsset />, path: '/simulator' },
+  { label: 'داشبورد', icon: <DashIcon />, path: '/', perm: 'dashboard.view' },
+  { label: 'پنل گیت', icon: <SwapHoriz />, path: '/gate', perm: 'gate.view' },
+  { label: 'مرکز عملیات', icon: <Troubleshoot />, path: '/ops', perm: 'ops.view' },
+  { label: 'شبیه‌ساز', icon: <VideogameAsset />, path: '/simulator', perm: 'simulator.view' },
   { label: 'ساختار مجتمع', icon: <Apartment />, path: '/structure' },
-  { label: 'مسئول محوطه', icon: <Tour />, path: '/field' },
-  { label: 'خودروها', icon: <DirectionsCar />, path: '/vehicles' },
-  { label: 'مجوزها', icon: <ConfirmationNumber />, path: '/permits' },
+  { label: 'مسئول محوطه', icon: <Tour />, path: '/field', perm: 'parking.view' },
+  { label: 'خودروها', icon: <DirectionsCar />, path: '/vehicles', perm: 'vehicles.view' },
+  { label: 'مجوزها', icon: <ConfirmationNumber />, path: '/permits', perm: 'permits.view' },
   { label: 'پارکینگ', icon: <LocalParking />, path: '/parking', perm: 'parking.view' },
-  { label: 'تردد', icon: <ReceiptLong />, path: '/access-events' },
+  { label: 'تردد', icon: <ReceiptLong />, path: '/access-events', perm: 'access_events.view' },
   { label: 'بدهی‌ها', icon: <AccountBalance />, path: '/debts', perm: 'finance.view' },
   { label: 'تخلفات', icon: <ReportProblem />, path: '/violations', perm: 'violations.view' },
   { label: 'تعرفه‌ها', icon: <Payments />, path: '/tariffs', perm: 'finance.view' },
-  { label: 'اطلاعات پایه', icon: <Tune />, path: '/base-data' },
+  { label: 'اطلاعات پایه', icon: <Tune />, path: '/base-data', perm: 'base_data.view' },
   { label: 'کاربران و نقش‌ها', icon: <ManageAccounts />, path: '/users', perm: 'user.manage' },
 ]
 
