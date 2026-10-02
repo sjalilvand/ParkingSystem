@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
 import { Navigate, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
@@ -26,7 +26,7 @@ interface NotifItem {
   created_at?: string | null
 }
 
-const menu = [
+const menu: { label: string; icon: ReactNode; path: string; perm?: string }[] = [
   { label: 'داشبورد', icon: <DashIcon />, path: '/' },
   { label: 'پنل گیت', icon: <SwapHoriz />, path: '/gate' },
   { label: 'مرکز عملیات', icon: <Troubleshoot />, path: '/ops' },
@@ -37,15 +37,15 @@ const menu = [
   { label: 'مجوزها', icon: <ConfirmationNumber />, path: '/permits' },
   { label: 'پارکینگ', icon: <LocalParking />, path: '/parking' },
   { label: 'تردد', icon: <ReceiptLong />, path: '/access-events' },
-  { label: 'بدهی‌ها', icon: <AccountBalance />, path: '/debts' },
-  { label: 'تخلفات', icon: <ReportProblem />, path: '/violations' },
-  { label: 'تعرفه‌ها', icon: <Payments />, path: '/tariffs' },
+  { label: 'بدهی‌ها', icon: <AccountBalance />, path: '/debts', perm: 'finance.view' },
+  { label: 'تخلفات', icon: <ReportProblem />, path: '/violations', perm: 'violations.view' },
+  { label: 'تعرفه‌ها', icon: <Payments />, path: '/tariffs', perm: 'finance.view' },
   { label: 'اطلاعات پایه', icon: <Tune />, path: '/base-data' },
-  { label: 'کاربران و نقش‌ها', icon: <ManageAccounts />, path: '/users' },
+  { label: 'کاربران و نقش‌ها', icon: <ManageAccounts />, path: '/users', perm: 'user.manage' },
 ]
 
 export default function MainLayout() {
-  const { user, logout } = useAuth()
+  const { user, logout, can } = useAuth()
   const nav = useNavigate()
   const { pathname } = useLocation()
   const [open, setOpen] = useState(true)
@@ -146,7 +146,7 @@ export default function MainLayout() {
           <Typography fontWeight={900} fontSize={15}>منوی سامانه</Typography>
         </Box>
         <List sx={{ px: 1.5 }}>
-          {menu.map((m) => {
+          {menu.filter((m) => !m.perm || can(m.perm)).map((m) => {
             const active = pathname === m.path
             return (
               <ListItemButton

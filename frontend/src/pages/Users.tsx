@@ -9,17 +9,25 @@ import {
 } from '@mui/icons-material'
 import { api, apiErrorFa } from '../api/client'
 import { faDate } from '../utils/format'
+import { useAuth } from '../auth/AuthContext'
 
 interface Perm { code: string; title: string; module: string }
-interface RoleDef { id: string; code: string; title: string; description?: string | null; permissions: Perm[] }
+interface RoleDef {
+  id: string; code: string; name?: string; title: string; description?: string | null
+  is_active?: boolean; permissions: Perm[]; users_count: number
+}
 interface UserRow {
   id: string; username: string; full_name: string; mobile?: string | null
   is_active: boolean; is_locked?: boolean; failed_login_count?: number
   last_login_at?: string | null; roles: string[]
 }
+interface RoleEditor {
+  id?: string; code: string; name: string; description: string; perms: string[]
+}
 
 export default function Users() {
   const qc = useQueryClient()
+  const { can } = useAuth()
   const [search, setSearch] = useState('')
   const [err, setErr] = useState('')
   const [msg, setMsg] = useState('')
@@ -34,6 +42,10 @@ export default function Users() {
   const [pwUser, setPwUser] = useState<UserRow | null>(null)
   const [pwVal, setPwVal] = useState('')
 
+  // ---- ماتریس مجوزهای نقش (REQ-08-01) ----
+  const [editor, setEditor] = useState<RoleEditor | null>(null)
+  const [edErr, setEdErr] = useState('')
+
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ['users'] })
     qc.invalidateQueries({ queryKey: ['roles'] })
@@ -46,6 +58,11 @@ export default function Users() {
   const { data: roles } = useQuery({
     queryKey: ['roles'],
     queryFn: async () => (await api.get('/roles')).data as RoleDef[],
+  })
+  const { data: catalog } = useQuery({
+    queryKey: ['perm-catalog'],
+    queryFn: async () => (await api.get('/roles/permissions-catalog')).data as Record<string, { code: string; title: string }[]>,
+    enabled: editor !== null,
   })
 
   const roleTitle = (code: string) => (roles ?? []).find((r) => r.code === code)?.title ?? code
@@ -83,10 +100,43 @@ export default function Users() {
     onError: (e) => setErr(apiErrorFa(e)),
   })
 
+  // ---- ذخیره نقش (ایجاد/ویرایش مجوزها) ----
+  const saveRole = useMutation({
+    mutationFn: async () => {
+      if (editor?.id) {
+        return (await api.patch(`/roles/${editor.id}`, {
+          name: editor.name, description: editor.description || null,
+          permission_codes: editor.perms,
+        })).data
+      }
+      return (await api.post('/roles', {
+        code: editor?.code, name: editor?.name,
+        description: editor?.description || null, permission_codes: editor?.perms ?? [],
+      })).data
+    },
+    onSuccess: () => { setEditor(null); setEdErr(''); setMsg('نقش ذخیره شد'); invalidate() },
+    onError: (e) => setEdErr(apiErrorFa(e)),
+  })
+
+  const deleteRole = useMutation({
+    mutationFn: async (id: string) => (await api.delete(`/roles/${id}`)).data,
+    onSuccess: () => { setErr(''); setMsg('نقش حذف شد'); invalidate() },
+    onError: (e) => setErr(apiErrorFa(e)),
+  })
+
   const submitCreate = (e: FormEvent) => { e.preventDefault(); setErr(''); create.mutate() }
 
   const toggleSel = (list: string[], code: string, setList: (v: string[]) => void) => {
     setList(list.includes(code) ? list.filter((c) => c !== code) : [...list, code])
+  }
+
+  const openEditor = (r?: RoleDef) => {
+    setEdErr('')
+    setEditor(r ? {
+      id: r.id, code: r.code, name: r.title,
+      description: r.description ?? '',
+      perms: r.permissions.map((p) => p.code),
+    } : { code: '', name: '', description: '', perms: [] })
   }
 
   return (
@@ -96,9 +146,14 @@ export default function Users() {
           <ManageAccounts color="primary" />
           <Typography variant="h6" fontWeight={800}>کاربران و نقش‌ها</Typography>
         </Stack>
-        <Button variant="contained" startIcon={<PersonAdd />} onClick={() => { setErr(''); setCreateOpen(true) }}>
-          کاربر جدید
-        </Button>
+        <Stack direction="row" spacing={1}>
+          {can('roles.create') && (
+            <Button variant="outlined" onClick={() => openEditor()}>نقش جدید</Button>
+          )}
+          <Button variant="contained" startIcon={<PersonAdd />} onClick={() => { setErr(''); setCreateOpen(true) }}>
+            کاربر جدید
+          </Button>
+        </Stack>
       </Stack>
 
       {err && <Alert severity="error">{err}</Alert>}
@@ -152,20 +207,34 @@ export default function Users() {
       {usersData?.items?.length === 0 && <Alert severity="info">کاربری یافت نشد.</Alert>}
 
       {/* نقش‌ها و مجوزها */}
-      <Typography variant="h6" fontWeight={800} mt={2}>نقش‌ها و مجوزها</Typography>
+      <Typography variant="h6" fontWeight={800} mt={2}>نقش‌ها و مجوزها (ماتریس دسترسی)</Typography>
       <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' }, gap: 2 }}>
         {(roles ?? []).map((r) => (
           <Card key={r.id}>
             <CardContent sx={{ py: 2 }}>
               <Stack direction="row" justifyContent="space-between" alignItems="center" mb={1}>
                 <Typography fontWeight={800}>{r.title} <Typography component="span" variant="caption" color="text.secondary">({r.code})</Typography></Typography>
-                <Chip size="small" label={`${r.permissions.length} مجوز`} />
+                <Stack direction="row" spacing={0.5} alignItems="center">
+                  <Chip size="small" label={`${r.permissions.length} مجوز`} />
+                  <Chip size="small" variant="outlined" label={`${r.users_count ?? 0} کاربر`} />
+                </Stack>
               </Stack>
               <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>
                 {r.permissions.map((p) => (
                   <Chip key={p.code} size="small" variant="outlined" label={p.code} />
                 ))}
                 {r.permissions.length === 0 && <Typography variant="caption" color="text.secondary">بدون مجوز</Typography>}
+              </Stack>
+              <Stack direction="row" spacing={1} mt={1.5}>
+                {can('roles.edit') && (
+                  <Button size="small" variant="outlined" onClick={() => openEditor(r)}>ویرایش مجوزها</Button>
+                )}
+                {can('roles.delete') && r.code !== 'ADMIN' && (r.users_count ?? 0) === 0 && (
+                  <Button size="small" color="error"
+                    onClick={() => { if (window.confirm(`حذف نقش «${r.title}»؟`)) deleteRole.mutate(r.id) }}>
+                    حذف
+                  </Button>
+                )}
               </Stack>
             </CardContent>
           </Card>
@@ -202,7 +271,7 @@ export default function Users() {
         </form>
       </Dialog>
 
-      {/* دیالوگ ویرایش نقش‌ها */}
+      {/* دیالوگ ویرایش نقش‌های کاربر */}
       <Dialog open={rolesUser !== null} onClose={() => setRolesUser(null)}>
         <DialogTitle>نقش‌های {rolesUser?.username}</DialogTitle>
         <DialogContent>
@@ -239,6 +308,45 @@ export default function Users() {
             onClick={() => pwUser && resetPw.mutate({ id: pwUser.id, new_password: pwVal })}>
             تنظیم رمز جدید
           </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* دیالوگ ماتریس مجوزهای نقش */}
+      <Dialog open={editor !== null} onClose={() => setEditor(null)} maxWidth="md" fullWidth>
+        <DialogTitle>{editor?.id ? `ویرایش نقش «${editor.name}»` : 'نقش جدید'}</DialogTitle>
+        <DialogContent>
+          {edErr && <Alert severity="error" sx={{ mb: 2 }}>{edErr}</Alert>}
+          <Stack direction="row" spacing={2} mt={1}>
+            <TextField size="small" label="کد (لاتین)" value={editor?.code ?? ''} required
+              disabled={!!editor?.id} sx={{ width: 220 }}
+              onChange={(e) => setEditor((p) => p ? { ...p, code: e.target.value } : p)} />
+            <TextField size="small" label="نام نقش" value={editor?.name ?? ''} required fullWidth
+              onChange={(e) => setEditor((p) => p ? { ...p, name: e.target.value } : p)} />
+          </Stack>
+          <TextField fullWidth size="small" label="توضیح (اختیاری)" value={editor?.description ?? ''}
+            onChange={(e) => setEditor((p) => p ? { ...p, description: e.target.value } : p)} margin="normal" />
+          <Typography fontWeight={700} mt={2} mb={1}>مجوزها (کلیک = انتخاب/حذف)</Typography>
+          {Object.entries(catalog ?? {}).map(([module, perms]) => (
+            <Box key={module} mb={2}>
+              <Typography variant="caption" color="text.secondary" fontWeight={800}>{module}</Typography>
+              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mt: 0.5 }}>
+                {perms.map((p) => (
+                  <Chip key={p.code} size="small"
+                    label={`${p.code} — ${p.title}`}
+                    color={(editor?.perms ?? []).includes(p.code) ? 'primary' : 'default'}
+                    onClick={() => setEditor((pp) => pp ? {
+                      ...pp,
+                      perms: pp.perms.includes(p.code) ? pp.perms.filter((c) => c !== p.code) : [...pp.perms, p.code],
+                    } : pp)} />
+                ))}
+              </Box>
+            </Box>
+          ))}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setEditor(null)}>انصراف</Button>
+          <Button variant="contained" disabled={saveRole.isPending || !editor?.code || !editor?.name}
+            onClick={() => saveRole.mutate()}>ذخیره نقش</Button>
         </DialogActions>
       </Dialog>
     </Stack>
