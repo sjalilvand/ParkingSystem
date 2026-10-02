@@ -10,7 +10,7 @@ import {
   AccountBalance, Apartment, ConfirmationNumber, DirectionsCar,
   Dashboard as DashIcon, LockReset, Logout, LocalParking, ManageAccounts,
   Menu as MenuIcon, Notifications, Payments, ReportProblem, ReceiptLong,
-  Settings, SwapHoriz, Tour, Tune, Troubleshoot, VideogameAsset,
+  Science, Settings, SwapHoriz, Tour, Tune, Troubleshoot, VideogameAsset,
 } from '@mui/icons-material'
 import { api, apiErrorFa } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
@@ -42,6 +42,7 @@ const menu: { label: string; icon: ReactNode; path: string; perm?: string }[] = 
   { label: 'تعرفه‌ها', icon: <Payments />, path: '/tariffs', perm: 'finance.view' },
   { label: 'اطلاعات پایه', icon: <Tune />, path: '/base-data', perm: 'base_data.view' },
   { label: 'طراح تنظیمات', icon: <Settings />, path: '/designer', perm: 'settings.view' },
+  { label: 'آزمایش قوانین', icon: <Science />, path: '/rule-tester', perm: 'rules.view' },
   { label: 'کاربران و نقش‌ها', icon: <ManageAccounts />, path: '/users', perm: 'user.manage' },
 ]
 
