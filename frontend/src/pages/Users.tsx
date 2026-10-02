@@ -1,8 +1,8 @@
 import { useState, type FormEvent } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
-  Alert, Box, Button, Card, CardContent, Chip, Dialog, DialogActions, DialogContent,
-  DialogTitle, Stack, TextField, Typography,
+  Alert, Box, Button, Card, CardContent, Checkbox, Chip, Dialog, DialogActions,
+  DialogContent, DialogTitle, FormControlLabel, Stack, TextField, Typography,
 } from '@mui/material'
 import {
   Block, CheckCircle, KeyRounded, LockOpen, ManageAccounts, PersonAdd,
@@ -21,9 +21,34 @@ interface UserRow {
   is_active: boolean; is_locked?: boolean; failed_login_count?: number
   last_login_at?: string | null; roles: string[]
 }
-interface RoleEditor {
-  id?: string; code: string; name: string; description: string; perms: string[]
+interface RoleEditor { id?: string; code: string; name: string; description: string; perms: string[] }
+
+const MODULE_FA: Record<string, string> = {
+  access_events: 'تردد خودروها',
+  audit: 'تاریخچه فعالیت',
+  base_data: 'اطلاعات پایه',
+  complexes: 'ساختار مجتمع',
+  core: 'هسته سیستم (مالی/گیت/پارکینگ/کاربران)',
+  dashboard: 'داشبورد',
+  debts: 'بدهی‌ها',
+  devices: 'تجهیزات',
+  files: 'فایل‌ها',
+  finance: 'مالی',
+  gate: 'گیت و راهبند',
+  identity: 'کاربران',
+  notifications: 'اعلان‌ها',
+  ops: 'مرکز عملیات',
+  parking: 'پارکینگ',
+  permits: 'مجوزهای تردد',
+  reports: 'گزارش‌ها',
+  residents: 'ساکنان',
+  roles: 'نقش‌ها و دسترسی',
+  simulator: 'شبیه‌ساز',
+  vehicles: 'خودروها',
+  violations: 'تخلفات',
 }
+const moduleFa = (m: string) => MODULE_FA[m] ?? m
+const permCode = (p: Perm | string) => (typeof p === 'string' ? p : p.code)
 
 export default function Users() {
   const qc = useQueryClient()
@@ -42,7 +67,6 @@ export default function Users() {
   const [pwUser, setPwUser] = useState<UserRow | null>(null)
   const [pwVal, setPwVal] = useState('')
 
-  // ---- ماتریس مجوزهای نقش (REQ-08-01) ----
   const [editor, setEditor] = useState<RoleEditor | null>(null)
   const [edErr, setEdErr] = useState('')
 
@@ -72,10 +96,7 @@ export default function Users() {
       username: cf.username, password: cf.password, full_name: cf.full_name,
       mobile: cf.mobile || null, role_codes: cRoles,
     })).data,
-    onSuccess: () => {
-      setCreateOpen(false); setCf({}); setCRoles([]); setErr(''); setMsg('کاربر ساخته شد')
-      invalidate()
-    },
+    onSuccess: () => { setCreateOpen(false); setCf({}); setCRoles([]); setErr(''); setMsg('کاربر ساخته شد'); invalidate() },
     onError: (e) => setErr(apiErrorFa(e)),
   })
 
@@ -100,7 +121,6 @@ export default function Users() {
     onError: (e) => setErr(apiErrorFa(e)),
   })
 
-  // ---- ذخیره نقش (ایجاد/ویرایش مجوزها) ----
   const saveRole = useMutation({
     mutationFn: async () => {
       if (editor?.id) {
@@ -135,7 +155,7 @@ export default function Users() {
     setEditor(r ? {
       id: r.id, code: r.code, name: r.title,
       description: r.description ?? '',
-      perms: r.permissions.map((p: Perm | string) => (typeof p === 'string' ? p : p.code)),
+      perms: r.permissions.map(permCode),
     } : { code: '', name: '', description: '', perms: [] })
   }
 
@@ -162,7 +182,6 @@ export default function Users() {
       <TextField size="small" placeholder="جستجو (نام کاربری / نام / موبایل)"
         value={search} onChange={(e) => setSearch(e.target.value)} sx={{ width: 340 }} />
 
-      {/* کاربران */}
       {(usersData?.items ?? []).map((u: UserRow) => (
         <Card key={u.id}>
           <CardContent sx={{ py: 2 }}>
@@ -206,7 +225,6 @@ export default function Users() {
       ))}
       {usersData?.items?.length === 0 && <Alert severity="info">کاربری یافت نشد.</Alert>}
 
-      {/* نقش‌ها و مجوزها */}
       <Typography variant="h6" fontWeight={800} mt={2}>نقش‌ها و مجوزها (ماتریس دسترسی)</Typography>
       <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' }, gap: 2 }}>
         {(roles ?? []).map((r) => (
@@ -221,7 +239,7 @@ export default function Users() {
               </Stack>
               <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>
                 {r.permissions.map((p) => (
-                  <Chip key={typeof p === 'string' ? p : p.code} size="small" variant="outlined" label={typeof p === 'string' ? p : p.code} />
+                  <Chip key={permCode(p)} size="small" variant="outlined" label={permCode(p)} />
                 ))}
                 {r.permissions.length === 0 && <Typography variant="caption" color="text.secondary">بدون مجوز</Typography>}
               </Stack>
@@ -271,7 +289,7 @@ export default function Users() {
         </form>
       </Dialog>
 
-      {/* دیالوگ ویرایش نقش‌های کاربر */}
+      {/* دیالوگ نقش‌های کاربر */}
       <Dialog open={rolesUser !== null} onClose={() => setRolesUser(null)}>
         <DialogTitle>نقش‌های {rolesUser?.username}</DialogTitle>
         <DialogContent>
@@ -311,10 +329,17 @@ export default function Users() {
         </DialogActions>
       </Dialog>
 
-      {/* دیالوگ ماتریس مجوزهای نقش */}
+      {/* دیالوگ ماتریس مجوزهای نقش — گرافیکی، فارسی، چک‌باکسی */}
       <Dialog open={editor !== null} onClose={() => setEditor(null)} maxWidth="md" fullWidth>
-        <DialogTitle>{editor?.id ? `ویرایش نقش «${editor.name}»` : 'نقش جدید'}</DialogTitle>
-        <DialogContent>
+        <DialogTitle>
+          {editor?.id ? `ویرایش مجوزهای «${editor.name}»` : 'تعریف نقش جدید'}
+          {editor && (
+            <Typography component="div" variant="caption" color="primary" fontWeight={800}>
+              {editor.perms.length} مجوز انتخاب شده
+            </Typography>
+          )}
+        </DialogTitle>
+        <DialogContent dividers>
           {edErr && <Alert severity="error" sx={{ mb: 2 }}>{edErr}</Alert>}
           <Stack direction="row" spacing={2} mt={1}>
             <TextField size="small" label="کد (لاتین)" value={editor?.code ?? ''} required
@@ -325,23 +350,56 @@ export default function Users() {
           </Stack>
           <TextField fullWidth size="small" label="توضیح (اختیاری)" value={editor?.description ?? ''}
             onChange={(e) => setEditor((p) => p ? { ...p, description: e.target.value } : p)} margin="normal" />
-          <Typography fontWeight={700} mt={2} mb={1}>مجوزها (کلیک = انتخاب/حذف)</Typography>
-          {Object.entries(catalog ?? {}).map(([module, perms]) => (
-            <Box key={module} mb={2}>
-              <Typography variant="caption" color="text.secondary" fontWeight={800}>{module}</Typography>
-              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mt: 0.5 }}>
-                {perms.map((p) => (
-                  <Chip key={p.code} size="small"
-                    label={`${p.code} — ${p.title}`}
-                    color={(editor?.perms ?? []).includes(p.code) ? 'primary' : 'default'}
-                    onClick={() => setEditor((pp) => pp ? {
-                      ...pp,
-                      perms: pp.perms.includes(p.code) ? pp.perms.filter((c) => c !== p.code) : [...pp.perms, p.code],
-                    } : pp)} />
-                ))}
+
+          <Typography fontWeight={800} mt={2} mb={1}>سطح دسترسی — روی تیک هر مورد کلیک کنید</Typography>
+
+          {Object.entries(catalog ?? {}).map(([mod, perms]) => {
+            const selected = perms.filter((x) => editor?.perms.includes(x.code)).length
+            const allSel = perms.length > 0 && selected === perms.length
+            return (
+              <Box key={mod} sx={{ border: '1px solid #E3EAF2', borderRadius: 2, mb: 1.5, overflow: 'hidden' }}>
+                <Stack direction="row" justifyContent="space-between" alignItems="center"
+                  sx={{ bgcolor: '#F0F4F8', px: 2, py: 1 }}>
+                  <Typography fontWeight={800} fontSize={14}>{moduleFa(mod)}</Typography>
+                  <Stack direction="row" spacing={1} alignItems="center">
+                    <Chip size="small" label={`${selected}/${perms.length}`}
+                      color={selected > 0 ? 'primary' : 'default'} />
+                    <Button size="small"
+                      onClick={() => setEditor((p) => {
+                        if (!p) return p
+                        const codes = perms.map((x) => x.code)
+                        const next = allSel
+                          ? p.perms.filter((c) => !codes.includes(c))
+                          : Array.from(new Set([...p.perms, ...codes]))
+                        return { ...p, perms: next }
+                      })}>
+                      {allSel ? 'هیچ‌کدام' : 'انتخاب همه'}
+                    </Button>
+                  </Stack>
+                </Stack>
+                <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' }, px: 1.5, py: 0.5 }}>
+                  {perms.map((p) => (
+                    <FormControlLabel key={p.code}
+                      control={
+                        <Checkbox size="small"
+                          checked={(editor?.perms ?? []).includes(p.code)}
+                          onChange={() => setEditor((pp) => pp ? {
+                            ...pp,
+                            perms: pp.perms.includes(p.code)
+                              ? pp.perms.filter((c) => c !== p.code)
+                              : [...pp.perms, p.code],
+                          } : pp)} />
+                      }
+                      label={p.title}
+                      sx={{ m: 0, py: 0.25, '& .MuiTypography-root': { fontSize: 13 } }} />
+                  ))}
+                </Box>
               </Box>
-            </Box>
-          ))}
+            )
+          })}
+          {catalog && Object.keys(catalog).length === 0 && (
+            <Alert severity="info">موردی در کاتالوگ مجوزها ثبت نشده است.</Alert>
+          )}
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setEditor(null)}>انصراف</Button>
