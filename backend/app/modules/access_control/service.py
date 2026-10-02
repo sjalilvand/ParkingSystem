@@ -82,6 +82,7 @@ class GateDecisionService:
         idempotency_key: str | None = None,
         client_decision: str | None = None,
         dry_run: bool = False,
+        driver_request: str | None = None,
     ) -> dict:
         now = datetime.now(timezone.utc)
         gate = (await db.execute(select(Gate).where(Gate.code == gate_code))).scalar_one_or_none()
@@ -202,6 +203,26 @@ class GateDecisionService:
                             decision, reason = "ALLOW", "VALID_PERMIT"
                             permit.used_entries += 1  # F23 + capacity gate REQ-09-03
 
+        # --- Wave5a: موتور قوانین (opt-in؛ مسیر پیش‌فرض بدون قانون دست‌نخورده) ---
+        rule_trace = None
+        rule_overrides: dict = {}
+        try:
+            from app.rules_engine import apply_rules_for_event
+            rule_overrides, rule_trace = await apply_rules_for_event(
+                db, direction=direction, gate=gate, plate_raw=plate_raw,
+                normalized=normalized, vehicle=vehicle, permit=permit,
+                decision=decision, reason=reason, warnings=warnings,
+                driver_request=driver_request,
+                now=datetime.now(timezone.utc),
+            )
+            if rule_overrides.get("decision"):
+                decision = rule_overrides["decision"]
+                reason = rule_overrides.get("reason", reason)
+            if rule_overrides.get("warnings"):
+                warnings.extend(rule_overrides["warnings"])
+        except Exception:
+            warnings.append("RULES_ENGINE_ERROR")
+
         if is_manual:
             event_type = "MANUAL_ENTRY" if direction == "IN" else "MANUAL_EXIT"
         else:
@@ -319,6 +340,16 @@ class GateDecisionService:
         if confidence is not None:
             response["plate"]["confidence"] = confidence
         response["event_type"] = event_type
+        if rule_trace is not None:
+            response["rule_trace"] = rule_trace
+        if rule_overrides.get("message"):
+            response["message"] = rule_overrides["message"]
+        if rule_overrides.get("require_driver_selection"):
+            response["require_driver_selection"] = True
+        if rule_overrides.get("notify_field_op"):
+            response["notify_field_op"] = True
+        if rule_overrides.get("issue_receipt"):
+            response["issue_receipt"] = True
         if closed_session_info:
             response["session"] = closed_session_info
 

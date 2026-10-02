@@ -139,3 +139,10 @@
 |---|---|
 | داشبورد | dashboard.view | پنل گیت | gate.view | مرکز عملیات | ops.view | شبیه‌ساز | simulator.view | ساختار مجتمع | structure.view | مسئول محوطه | parking.view | خودروها | vehicles.view | مجوزها | permits.view | تردد | access_events.view | بدهی‌ها | finance.view | تخلفات | violations.view | تعرفه‌ها | finance.view | اطلاعات پایه | base_data.view | کاربران | user.manage |
 - routers باقی‌مانده (complexes/residents→structure.*, devices→field.*) در سطح include گیت شدند؛ 401 قبلی = قفل/توکن نامعتبر کاربر آزمون (unlock+reset حل کرد).
+
+## موج ۵a — طراح قوانین و تنظیمات (بنیان)
+- گروه‌های خودرو (۵ گروه seed) + vehicles.vehicle_group_id + sessions.usage_type
+- موتور قوانین واقعی (whitelist، بدون eval) متصل به process_plate_event؛ بدون قانون فعال=رفتار قبلی دست‌نخورده؛ نرم‌کردن محافظت‌ها (RESTRICTED/INACTIVE) مسدود
+- API: /vehicle-groups, /rules(+publish/disable), /app-settings(+history), /receipt-templates, /box-settings
+- اقلام نیازمند تصمیم با _needs_decision علامت‌گذاری شدند (مقادیر مرجع §۵ = پیش‌نویس، نه مصوب)
+- تست: DRAFT بی‌اثر→publish→اثر زنده با rule_trace→disable→قطع اثر + dry-run بدون نشست + 403 تنظیمات
