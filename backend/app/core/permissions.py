@@ -18,6 +18,20 @@ async def user_is_admin(db: AsyncSession, user: User) -> bool:
     return result.scalar_one_or_none() is not None
 
 
+async def user_permission_codes(db: AsyncSession, user: User) -> list[str]:
+    """کدهای مجوز مؤثر کاربر — ادمین: کل کاتالوگ (سند §۸)."""
+    if await user_is_admin(db, user):
+        rows = await db.execute(select(Permission.code))
+        return sorted(set(rows.scalars().all()))
+    result = await db.execute(
+        select(Permission.code)
+        .join(role_permissions, role_permissions.c.permission_id == Permission.id)
+        .join(user_roles, user_roles.c.role_id == role_permissions.c.role_id)
+        .where(user_roles.c.user_id == user.id)
+    )
+    return sorted(set(result.scalars().all()))
+
+
 async def user_has_permission(db: AsyncSession, user: User, perm_code: str) -> bool:
     if await user_is_admin(db, user):
         return True
