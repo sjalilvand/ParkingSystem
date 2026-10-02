@@ -31,7 +31,7 @@ const menu: { label: string; icon: ReactNode; path: string; perm?: string }[] = 
   { label: 'پنل گیت', icon: <SwapHoriz />, path: '/gate', perm: 'gate.view' },
   { label: 'مرکز عملیات', icon: <Troubleshoot />, path: '/ops', perm: 'ops.view' },
   { label: 'شبیه‌ساز', icon: <VideogameAsset />, path: '/simulator', perm: 'simulator.view' },
-  { label: 'ساختار مجتمع', icon: <Apartment />, path: '/structure' },
+  { label: 'ساختار مجتمع', icon: <Apartment />, path: '/structure', perm: 'structure.view' },
   { label: 'مسئول محوطه', icon: <Tour />, path: '/field', perm: 'parking.view' },
   { label: 'خودروها', icon: <DirectionsCar />, path: '/vehicles', perm: 'vehicles.view' },
   { label: 'مجوزها', icon: <ConfirmationNumber />, path: '/permits', perm: 'permits.view' },
