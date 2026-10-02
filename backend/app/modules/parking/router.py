@@ -264,3 +264,25 @@ async def unit_parking(unit_id: str, db: AsyncSession = Depends(get_db), user: U
     )
     return [ParkingSpaceOut.model_validate(s).model_dump() for s in result.scalars().all()]
 
+
+
+@router.post("/parking/map-coordinates")
+async def save_map_coordinates(body: dict, db: AsyncSession = Depends(get_db), user: User = Depends(_perm("parking.manage"))):
+    """موج ۵h: ذخیرهٔ گروهی مختصات نقاط روی تصویر نقشه (درصد×۱۰۰، یعنی 0..10000)."""
+    points = body.get("points") or []
+    if not isinstance(points, list):
+        raise ConflictError("points باید آرایه باشد")
+    updated = 0
+    for p in points:
+        sp = await db.get(ParkingSpace, p.get("space_id"))
+        if not sp:
+            continue
+        sp.map_x = int(p.get("x", 0))
+        sp.map_y = int(p.get("y", 0))
+        updated += 1
+    if user:
+        await write_audit(db, user_id=user.id, action="MAP_COORDS_SAVE", module="parking",
+                          entity_type="parking", entity_id="map",
+                          new_values={"count": updated})
+    await db.commit()
+    return {"success": True, "updated": updated}

@@ -28,6 +28,8 @@ class ParkingSpaceOut(BaseModel):
     parking_type: str
     status: str
     is_active: bool
+    map_x: int | None = None
+    map_y: int | None = None
 
 
 class ParkingAssignmentCreate(BaseModel):
