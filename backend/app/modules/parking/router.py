@@ -227,11 +227,14 @@ async def vacate(occupancy_id: str, db: AsyncSession = Depends(get_db), user: Us
 
 @router.get("/parking/capacity-status")
 async def capacity_status(db: AsyncSession = Depends(get_db), user: User = Depends(require_any_permission("parking.view"))):
-    """REQ-11-05/§۹: ظرفیت اعلامی در برابر حضور فیزیکی تأییدشده."""
-    declared = getattr(settings, "YARD_CAPACITY_TOTAL", None)
+    """REQ-11-05/§۹ + موج ۵i: ظرفیت از تنظیمات طراح (یا env) در برابر حضور واقعی."""
+    from app.capacity import count_yard_spaces, get_declared_yard_capacity
+    declared, source = await get_declared_yard_capacity(db)
     confirmed = await count_confirmed_occupancy(db)
+    yard_count = await count_yard_spaces(db)
     ok, reason = yard_capacity_decision(declared, confirmed)
-    return {"declared_capacity": declared, "confirmed_presence": confirmed,
+    return {"declared_capacity": declared, "capacity_source": source,
+            "registered_yard_count": yard_count, "confirmed_presence": confirmed,
             "available": (declared - confirmed) if (declared or 0) > 0 else None,
             "accepting": ok, "reason": reason}
 
@@ -286,3 +289,60 @@ async def save_map_coordinates(body: dict, db: AsyncSession = Depends(get_db), u
                           new_values={"count": updated})
     await db.commit()
     return {"success": True, "updated": updated}
+
+
+@router.post("/parking/yard-spaces")
+async def create_yard_spaces(body: dict, db: AsyncSession = Depends(get_db), user: User = Depends(require_any_permission("parking.manage"))):
+    """موج ۵i (§۳/§۱۱): ثبت دسته‌ای جایگاه‌های محوطه با شماره‌گذاری.
+    ورودی: {"count": N, "prefix": "Y"} یا {"codes": ["Y-1", ...]} — idempotent (کدهای موجود رد می‌شوند)."""
+    codes_in = body.get("codes")
+    if not codes_in and body.get("count"):
+        prefix = str(body.get("prefix") or "Y").strip() or "Y"
+        n = int(body.get("count") or 0)
+        if n < 1 or n > 500:
+            raise ConflictError("تعداد باید بین ۱ تا ۵۰۰ باشد")
+        width = max(2, len(str(n)))
+        codes_in = [f"{prefix}-{str(i).zfill(width)}" for i in range(1, n + 1)]
+    if not isinstance(codes_in, list) or not [c for c in codes_in if str(c).strip()]:
+        raise ConflictError("کدها یا تعداد الزامی است")
+    created, skipped = [], []
+    for raw in codes_in:
+        code = str(raw).strip()
+        if not code:
+            continue
+        dup = (await db.execute(select(ParkingSpace).where(ParkingSpace.code == code))).scalar_one_or_none()
+        if dup:
+            skipped.append(code)
+            continue
+        db.add(ParkingSpace(code=code, parking_type="YARD", zone="YARD", floor=0, is_active=True))
+        created.append(code)
+    if user:
+        await write_audit(db, user_id=user.id, action="YARD_SPACES_BULK", module="parking",
+                          entity_type="parking", entity_id="yard",
+                          new_values={"created": created, "skipped": skipped})
+    await db.commit()
+    return {"success": True, "created": created, "skipped_existing": skipped}
+
+
+@router.delete("/parking/yard-spaces/{space_id}")
+async def delete_yard_space(space_id: str, db: AsyncSession = Depends(get_db), user: User = Depends(require_any_permission("parking.manage"))):
+    """موج ۵i: حذف جایگاه محوطه — فقط آزاد و بدون تخصیص فعال (سند §۱۱: حفظ تاریخچه)."""
+    sp = await db.get(ParkingSpace, space_id)
+    if not sp:
+        raise NotFoundError("جایگاه یافت نشد")
+    if sp.parking_type != "YARD":
+        raise ConflictError("این جایگاه از نوع محوطه نیست")
+    if sp.status == "OCCUPIED":
+        raise ConflictError("جایگاه اشغال است — قابل حذف نیست")
+    asg = (await db.execute(select(ParkingAssignment).where(
+        ParkingAssignment.parking_space_id == sp.id,
+        ParkingAssignment.status == "ACTIVE"))).scalars().first()
+    if asg:
+        raise ConflictError("جایگاه تخصیص فعال دارد — ابتدا تخصیص را ببندید")
+    await db.delete(sp)
+    if user:
+        await write_audit(db, user_id=user.id, action="YARD_SPACE_DELETE", module="parking",
+                          entity_type="parking_space", entity_id=sp.id,
+                          old_values={"code": sp.code})
+    await db.commit()
+    return {"success": True}

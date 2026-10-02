@@ -9,6 +9,7 @@ import { Add, ArrowDownward, ArrowUpward, Delete, Edit, Rule as RuleIcon, Save, 
 import { api, apiErrorFa } from '../api/client'
 import JalaliDatePicker from '../components/JalaliDatePicker'
 import MapDesigner from '../components/MapDesigner'
+import YardManager from '../components/YardManager'
 
 // ---------------- انواع ----------------
 interface VGroup { id: string; code: string; title: string; description?: string | null; membership_kind: string; is_active: boolean; sort_order: number; default_tariff_id?: string | null }
@@ -196,7 +197,7 @@ export default function ParkingDesigner() {
   })
 
   const tabNames = ['گروه‌های خودرو', 'قوانین ورود', 'قوانین خروج', 'تعرفه و تخفیف', 'تخلفات',
-    'باکس ورود/خروج', 'طراح قبض', 'نقشه پارکینگ', 'شبیه‌سازی', 'تاریخچه تغییرات']
+    'باکس ورود/خروج', 'طراح قبض', 'نقشه پارکینگ', 'شبیه‌سازی', 'تاریخچه تغییرات', 'پارکینگ محوطه']
 
   const ruleList = (direction: string) => (rules ?? []).filter((r) => r.direction === direction || r.direction === 'ANY')
 
@@ -571,6 +572,9 @@ export default function ParkingDesigner() {
           {(history ?? []).length === 0 && <Alert severity="info">تغییری ثبت نشده است.</Alert>}
         </Stack>
       )}
+
+      {/* ===== ۱۰: پارکینگ محوطه ===== */}
+      {tab === 10 && <YardManager />}
 
       {/* ===== دیالوگ گروه ===== */}
       <Dialog open={gDlg !== null} onClose={() => setGDlg(null)}>
