@@ -49,6 +49,7 @@ class Settings(BaseSettings):
     EXIT_UNPAID_POLICY: str = "WARN"
     TARIFF_REQUIRE_APPROVAL: bool = True
     ENFORCE_GATE_PERMISSIONS: bool = True
+    ENFORCE_FINANCE_PERMISSIONS: bool = True
 
 
 _INSECURE_DEFAULTS = {"change-me-in-production", "gate-dev-key"}
@@ -82,4 +83,5 @@ def get_settings() -> Settings:
 
 
 settings = get_settings()
+
 
