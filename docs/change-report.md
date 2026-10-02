@@ -13,3 +13,5 @@
 - کد: `git revert <commit>` یا بازگشت به `audit/baseline-20261002-0805`
 - DB: `docker exec -i parking-postgres psql -U parking -d parking_db < logs/db-backup-<stamp>.sql`
 - Alembic: `alembic downgrade p0001_open_session_uq` (فقط p0002)
+
+| wave4g | ۴ | api/v1/roles.py (بازنویسی), test_roles.py | F25: CRUD نقش‌ها واقعاً کارا شد |
