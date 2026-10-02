@@ -163,6 +163,14 @@ async def _seed_perms():
 
 run(_seed_perms())
 
+
+
+async def _seed_config():
+    from scripts.seed_config_defaults import main as _m
+    await _m()
+
+run(_seed_config())
+
 @atexit.register
 def _cleanup():
     """dispose روی همان loop پایدار — جلوگیری از نویز closed-loop هنگام خروج."""
