@@ -50,6 +50,8 @@ class Settings(BaseSettings):
     TARIFF_REQUIRE_APPROVAL: bool = True
     ENFORCE_GATE_PERMISSIONS: bool = True
     ENFORCE_FINANCE_PERMISSIONS: bool = True
+    ENFORCE_VIOLATIONS_PERMISSIONS: bool = True
+    ENFORCE_PARKING_PERMISSIONS: bool = True
 
 
 _INSECURE_DEFAULTS = {"change-me-in-production", "gate-dev-key"}
@@ -83,5 +85,6 @@ def get_settings() -> Settings:
 
 
 settings = get_settings()
+
 
 

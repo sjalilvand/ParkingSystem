@@ -33,4 +33,11 @@ def offline_decide(snapshot: dict | None, plate_normalized: str | None,
         except Exception:
             pass
 
+    # F22 (§۴/§ح): سقف ورود مجوز در حالت آفلاین هم رعایت شود (محافظه‌کارانه:
+    # سقف پرشده => نیاز به بررسی، نه عبور قطعی)
+    max_entries = permit.get("max_entries")
+    used_entries = permit.get("used_entries") or 0
+    if max_entries is not None and used_entries >= max_entries:
+        return {"decision": "OFFLINE_REQUIRE_REVIEW", "decision_reason": "PERMIT_MAX_ENTRIES_REACHED", "barrier_action": "KEEP_CLOSED"}
+
     return {"decision": "OFFLINE_ALLOW", "decision_reason": "PLATE_IN_LOCAL_SNAPSHOT", "barrier_action": "OPEN"}

@@ -5,9 +5,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
-from app.core.exceptions import NotFoundError
+from app.core.audit import write_audit
+from app.core.config import settings
+from app.core.exceptions import ConflictError, NotFoundError
+from app.core.permissions import require_any_permission
 from app.db.session import get_db
-from app.modules.complexes.models import Tower
+from app.modules.complexes.models import Tower, Unit
 from app.modules.identity.models import User
 from app.modules.parking.models import ParkingAssignment, ParkingOccupancy, ParkingSpace
 from app.modules.parking.schemas import (
@@ -19,6 +22,13 @@ from app.modules.parking.schemas import (
 from app.modules.vehicles.models import Vehicle
 
 router = APIRouter(tags=["Parking"])
+
+
+def _perm(*codes: str):
+    """F9: کنترل مجوز عملیات نوشتن پارکینگ — با ENFORCE_PARKING_PERMISSIONS قابل تعلیق."""
+    if not getattr(settings, "ENFORCE_PARKING_PERMISSIONS", True):
+        return get_current_user
+    return require_any_permission(*codes)
 
 
 @router.get("/parking/map")
@@ -105,7 +115,7 @@ async def list_spaces(zone: str | None = None, status: str | None = None, db: As
 
 
 @router.post("/parking-spaces")
-async def create_space(body: ParkingSpaceCreate, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+async def create_space(body: ParkingSpaceCreate, db: AsyncSession = Depends(get_db), user: User = Depends(_perm("parking.manage"))):
     obj = ParkingSpace(**body.model_dump())
     db.add(obj)
     await db.commit()
@@ -122,7 +132,7 @@ async def get_space(space_id: str, db: AsyncSession = Depends(get_db), user: Use
 
 
 @router.patch("/parking-spaces/{space_id}")
-async def update_space(space_id: str, body: ParkingSpaceUpdate, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+async def update_space(space_id: str, body: ParkingSpaceUpdate, db: AsyncSession = Depends(get_db), user: User = Depends(_perm("parking.manage"))):
     obj = await db.get(ParkingSpace, space_id)
     if not obj:
         raise NotFoundError("پارکینگ یافت نشد")
@@ -134,20 +144,55 @@ async def update_space(space_id: str, body: ParkingSpaceUpdate, db: AsyncSession
 
 
 @router.post("/parking-assignments")
-async def create_assignment(body: ParkingAssignmentCreate, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+async def create_assignment(body: ParkingAssignmentCreate, db: AsyncSession = Depends(get_db), user: User = Depends(_perm("parking.manage"))):
+    """F17 (§۱۱): تخصیص با اعتبارسنجی کامل — فضای موجود و بدون تخصیص فعال دیگر."""
+    space = (await db.execute(
+        select(ParkingSpace).where(ParkingSpace.id == body.parking_space_id).with_for_update()
+    )).scalar_one_or_none()
+    if not space:
+        raise NotFoundError("پارکینگ یافت نشد")
+    if not space.is_active:
+        raise ConflictError("این جایگاه غیرفعال است")
+
+    dup = (await db.execute(
+        select(ParkingAssignment).where(
+            ParkingAssignment.parking_space_id == body.parking_space_id,
+            ParkingAssignment.status == "ACTIVE",
+        )
+    )).scalars().first()
+    if dup:
+        raise ConflictError("این جایگاه تخصیص فعال دارد",
+                           details={"assignment_id": dup.id})
+
+    if body.vehicle_id:
+        v = await db.get(Vehicle, body.vehicle_id)
+        if not v:
+            raise NotFoundError("خودرو یافت نشد")
+    if body.unit_id:
+        u = await db.get(Unit, body.unit_id)
+        if not u:
+            raise NotFoundError("واحد یافت نشد")
+
     obj = ParkingAssignment(**body.model_dump())
     db.add(obj)
+    if user:
+        await write_audit(db, user_id=user.id, action="PARKING_ASSIGN", module="parking",
+                          entity_type="parking_assignment", entity_id=obj.id,
+                          new_values=body.model_dump())
     await db.commit()
     await db.refresh(obj)
     return {"id": obj.id, "status": obj.status}
 
 
 @router.post("/parking-assignments/{assignment_id}/close")
-async def close_assignment(assignment_id: str, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+async def close_assignment(assignment_id: str, db: AsyncSession = Depends(get_db), user: User = Depends(_perm("parking.manage"))):
     obj = await db.get(ParkingAssignment, assignment_id)
     if not obj:
         raise NotFoundError("تخصیص یافت نشد")
     obj.status = "CLOSED"
+    if user:
+        await write_audit(db, user_id=user.id, action="PARKING_ASSIGN_CLOSE", module="parking",
+                          entity_type="parking_assignment", entity_id=obj.id)
     await db.commit()
     return {"success": True}
 
@@ -162,7 +207,7 @@ async def list_occupancies(status: str = "OCCUPIED", db: AsyncSession = Depends(
 
 
 @router.post("/parking-occupancies/{occupancy_id}/vacate")
-async def vacate(occupancy_id: str, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+async def vacate(occupancy_id: str, db: AsyncSession = Depends(get_db), user: User = Depends(_perm("parking.manage"))):
     obj = await db.get(ParkingOccupancy, occupancy_id)
     if not obj:
         raise NotFoundError("اشغال یافت نشد")
@@ -172,6 +217,9 @@ async def vacate(occupancy_id: str, db: AsyncSession = Depends(get_db), user: Us
         space = await db.get(ParkingSpace, obj.parking_space_id)
         if space:
             space.status = "FREE"
+    if user:
+        await write_audit(db, user_id=user.id, action="PARKING_VACATE", module="parking",
+                          entity_type="parking_occupancy", entity_id=obj.id)
     await db.commit()
     return {"success": True}
 
