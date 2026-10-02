@@ -33,7 +33,7 @@ def _perm(*codes: str):
 
 
 @router.get("/parking/map")
-async def parking_map(db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+async def parking_map(db: AsyncSession = Depends(get_db), user: User = Depends(require_any_permission("parking.view"))):
     """نقشه پارکینگ: برج‌ها → طبقات → جایگاه‌ها (با پلاک خودروی حاضر)."""
     spaces = (await db.execute(
         select(ParkingSpace).where(ParkingSpace.is_active.is_(True))
@@ -105,7 +105,7 @@ async def parking_map(db: AsyncSession = Depends(get_db), user: User = Depends(g
 
 
 @router.get("/parking-spaces")
-async def list_spaces(zone: str | None = None, status: str | None = None, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+async def list_spaces(zone: str | None = None, status: str | None = None, db: AsyncSession = Depends(get_db), user: User = Depends(require_any_permission("parking.view"))):
     query = select(ParkingSpace)
     if zone:
         query = query.where(ParkingSpace.zone == zone)
@@ -125,7 +125,7 @@ async def create_space(body: ParkingSpaceCreate, db: AsyncSession = Depends(get_
 
 
 @router.get("/parking-spaces/{space_id}")
-async def get_space(space_id: str, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+async def get_space(space_id: str, db: AsyncSession = Depends(get_db), user: User = Depends(require_any_permission("parking.view"))):
     obj = await db.get(ParkingSpace, space_id)
     if not obj:
         raise NotFoundError("پارکینگ یافت نشد")
@@ -199,7 +199,7 @@ async def close_assignment(assignment_id: str, db: AsyncSession = Depends(get_db
 
 
 @router.get("/parking-occupancies")
-async def list_occupancies(status: str = "OCCUPIED", db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+async def list_occupancies(status: str = "OCCUPIED", db: AsyncSession = Depends(get_db), user: User = Depends(require_any_permission("parking.view"))):
     result = await db.execute(select(ParkingOccupancy).where(ParkingOccupancy.status == status).limit(500))
     return [{
         "id": o.id, "parking_space_id": o.parking_space_id, "vehicle_id": o.vehicle_id,
@@ -226,7 +226,7 @@ async def vacate(occupancy_id: str, db: AsyncSession = Depends(get_db), user: Us
 
 
 @router.get("/parking/capacity-status")
-async def capacity_status(db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+async def capacity_status(db: AsyncSession = Depends(get_db), user: User = Depends(require_any_permission("parking.view"))):
     """REQ-11-05/§۹: ظرفیت اعلامی در برابر حضور فیزیکی تأییدشده."""
     declared = getattr(settings, "YARD_CAPACITY_TOTAL", None)
     confirmed = await count_confirmed_occupancy(db)
@@ -237,7 +237,7 @@ async def capacity_status(db: AsyncSession = Depends(get_db), user: User = Depen
 
 
 @router.post("/parking/capacity-mismatch")
-async def capacity_mismatch(body: dict, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+async def capacity_mismatch(body: dict, db: AsyncSession = Depends(get_db), user: User = Depends(require_any_permission("parking.view"))):
     """REQ-11-05: ثبت مغایرت ظرفیت از سمت مسئول محوطه (اعلام انسانی) + اعلان."""
     observed = body.get("observed")
     system_count = await count_confirmed_occupancy(db)
@@ -256,7 +256,7 @@ async def capacity_mismatch(body: dict, db: AsyncSession = Depends(get_db), user
     return {"success": True, "system_count": system_count}
 
 @router.get("/units/{unit_id}/parking-spaces")
-async def unit_parking(unit_id: str, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+async def unit_parking(unit_id: str, db: AsyncSession = Depends(get_db), user: User = Depends(require_any_permission("parking.view"))):
     result = await db.execute(
         select(ParkingSpace)
         .join(ParkingAssignment, ParkingAssignment.parking_space_id == ParkingSpace.id)
