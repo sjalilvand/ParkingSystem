@@ -10,6 +10,7 @@ from app.modules.devices.models import Gate
 from app.modules.vehicles.models import Vehicle
 from app.modules.vehicles.service import VehicleService
 from app.parking_helpers import find_assigned_space, vehicle_unit_info
+from app.capacity import check_yard_capacity
 from app.realtime.manager import manager
 from app.shared.plate import normalize_plate
 
@@ -193,8 +194,13 @@ class GateDecisionService:
                         decision, reason = "ALLOW_WITH_WARNING", "DUPLICATE_ENTRY_SESSION_OPEN"
                         create_new_session = False
                     else:
-                        decision, reason = "ALLOW", "VALID_PERMIT"
-                        permit.used_entries += 1  # F23: فقط ورود واقعاً جدید شمرده می‌شود
+                        cap_ok, cap_reason = await check_yard_capacity(db, settings)
+                        if not cap_ok:
+                            decision, reason = "REQUIRE_OPERATOR_APPROVAL", cap_reason
+                            warnings.append(cap_reason)
+                        else:
+                            decision, reason = "ALLOW", "VALID_PERMIT"
+                            permit.used_entries += 1  # F23 + capacity gate REQ-09-03
 
         if is_manual:
             event_type = "MANUAL_ENTRY" if direction == "IN" else "MANUAL_EXIT"

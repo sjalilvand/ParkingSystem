@@ -20,6 +20,7 @@ from app.modules.parking.schemas import (
     ParkingSpaceUpdate,
 )
 from app.modules.vehicles.models import Vehicle
+from app.capacity import count_confirmed_occupancy, yard_capacity_decision
 
 router = APIRouter(tags=["Parking"])
 
@@ -224,6 +225,36 @@ async def vacate(occupancy_id: str, db: AsyncSession = Depends(get_db), user: Us
     return {"success": True}
 
 
+@router.get("/parking/capacity-status")
+async def capacity_status(db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    """REQ-11-05/§۹: ظرفیت اعلامی در برابر حضور فیزیکی تأییدشده."""
+    declared = getattr(settings, "YARD_CAPACITY_TOTAL", None)
+    confirmed = await count_confirmed_occupancy(db)
+    ok, reason = yard_capacity_decision(declared, confirmed)
+    return {"declared_capacity": declared, "confirmed_presence": confirmed,
+            "available": (declared - confirmed) if (declared or 0) > 0 else None,
+            "accepting": ok, "reason": reason}
+
+
+@router.post("/parking/capacity-mismatch")
+async def capacity_mismatch(body: dict, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    """REQ-11-05: ثبت مغایرت ظرفیت از سمت مسئول محوطه (اعلام انسانی) + اعلان."""
+    observed = body.get("observed")
+    system_count = await count_confirmed_occupancy(db)
+    from app.modules.notifications.service import push_notification
+    await push_notification(
+        db, recipient_user_id=None,
+        title="Capacity mismatch reported",
+        message=f"observed={observed} system={system_count} note={body.get('note') or ''}",
+        payload={"type": "CAPACITY_MISMATCH", "observed": observed, "system_count": system_count},
+    )
+    if user:
+        await write_audit(db, user_id=user.id, action="CAPACITY_MISMATCH_REPORT", module="parking",
+                          entity_type="parking", entity_id="yard",
+                          new_values={"observed": observed, "system_count": system_count})
+    await db.commit()
+    return {"success": True, "system_count": system_count}
+
 @router.get("/units/{unit_id}/parking-spaces")
 async def unit_parking(unit_id: str, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
     result = await db.execute(
@@ -232,3 +263,4 @@ async def unit_parking(unit_id: str, db: AsyncSession = Depends(get_db), user: U
         .where(ParkingAssignment.unit_id == unit_id, ParkingAssignment.status == "ACTIVE")
     )
     return [ParkingSpaceOut.model_validate(s).model_dump() for s in result.scalars().all()]
+
