@@ -1,8 +1,7 @@
 @echo off
 title ParkingSystem - STOP
-cd /d E:\ParkingSystem
-echo Stopping ParkingSystem containers (data is KEPT)...
+set "ROOT=%~dp0"
+cd /d "%ROOT%"
 docker compose -f docker-compose.prod.yml --env-file .env.prod down
-echo.
-echo Stopped. (To start again: double-click START-SYSTEM.bat)
+echo PROD stack stopped (volumes preserved).
 pause
