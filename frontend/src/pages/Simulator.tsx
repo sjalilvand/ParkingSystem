@@ -114,7 +114,7 @@ export default function Simulator() {
         {simEvents.length === 0 && <Typography color="text.secondary">شروع کنید...</Typography>}
         <Stack spacing={1}>
           {simEvents.map((e) => {
-            const d = e.data as SimEvent
+            const d = e.data as unknown as SimEvent
             return (
               <Stack key={e.event_id} direction={{ xs: 'column', sm: 'row' }} spacing={1.2}
                 alignItems={{ sm: 'center' }} sx={{ border: '1px solid #E3EAF2', borderRadius: 2.5, p: 1.2 }}>

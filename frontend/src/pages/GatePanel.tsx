@@ -306,7 +306,7 @@ export default function GatePanel() {
     const sim = events.filter((e) => e.event === 'simulator.event')
     let changed = false
     for (const e of sim) {
-      const d = e.data as LiveEvt
+      const d = e.data as unknown as LiveEvt
       if (!d?.gate) continue
       if (lastByGate.current[d.gate]?.id !== e.event_id) {
         lastByGate.current[d.gate] = {
