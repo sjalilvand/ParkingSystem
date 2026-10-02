@@ -14,7 +14,7 @@ import { useAuth } from '../auth/AuthContext'
 interface Perm { code: string; title: string; module: string }
 interface RoleDef {
   id: string; code: string; name?: string; title: string; description?: string | null
-  is_active?: boolean; permissions: Perm[]; users_count: number
+  is_active?: boolean; permissions: (Perm | string)[]; users_count: number
 }
 interface UserRow {
   id: string; username: string; full_name: string; mobile?: string | null
@@ -135,7 +135,7 @@ export default function Users() {
     setEditor(r ? {
       id: r.id, code: r.code, name: r.title,
       description: r.description ?? '',
-      perms: r.permissions.map((p) => p.code),
+      perms: r.permissions.map((p: Perm | string) => (typeof p === 'string' ? p : p.code)),
     } : { code: '', name: '', description: '', perms: [] })
   }
 
@@ -221,7 +221,7 @@ export default function Users() {
               </Stack>
               <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>
                 {r.permissions.map((p) => (
-                  <Chip key={p.code} size="small" variant="outlined" label={p.code} />
+                  <Chip key={typeof p === 'string' ? p : p.code} size="small" variant="outlined" label={typeof p === 'string' ? p : p.code} />
                 ))}
                 {r.permissions.length === 0 && <Typography variant="caption" color="text.secondary">بدون مجوز</Typography>}
               </Stack>
