@@ -44,3 +44,6 @@ gate-agent/agent.db*
 *.db*
 
 *.bak_port
+# --- audit artifacts (temporary) ---
+_audit_wave*.txt
+~$*
