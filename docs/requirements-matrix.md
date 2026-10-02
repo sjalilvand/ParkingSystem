@@ -146,3 +146,6 @@
 - API: /vehicle-groups, /rules(+publish/disable), /app-settings(+history), /receipt-templates, /box-settings
 - اقلام نیازمند تصمیم با _needs_decision علامت‌گذاری شدند (مقادیر مرجع §۵ = پیش‌نویس، نه مصوب)
 - تست: DRAFT بی‌اثر→publish→اثر زنده با rule_trace→disable→قطع اثر + dry-run بدون نشست + 403 تنظیمات
+
+## موج ۵h — طراح نقشه کلیکمحور
+- بارگذاری تصویر نقشه (ذخیره در تنظیمات نسخه‌بندی‌شده parking_map) + کلیک روی تصویر → اتصال نقطه به شناسه جایگاه (map_x/map_y موجود در مدل، بدون migration) + رنگ نقطه از وضعیت واقعی + حذف/جابه‌جایی نقطه + چاپ برگه راهنما

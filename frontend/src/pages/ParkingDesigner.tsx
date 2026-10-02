@@ -8,6 +8,7 @@ import {
 import { Add, ArrowDownward, ArrowUpward, Delete, Edit, Rule as RuleIcon, Save, Settings, Tune } from '@mui/icons-material'
 import { api, apiErrorFa } from '../api/client'
 import JalaliDatePicker from '../components/JalaliDatePicker'
+import MapDesigner from '../components/MapDesigner'
 
 // ---------------- انواع ----------------
 interface VGroup { id: string; code: string; title: string; description?: string | null; membership_kind: string; is_active: boolean; sort_order: number; default_tariff_id?: string | null }
@@ -534,15 +535,7 @@ export default function ParkingDesigner() {
       )}
 
       {/* ===== ۷: نقشه پارکینگ ===== */}
-      {tab === 7 && (
-        <Stack spacing={2}>
-          <Card><CardContent>
-            <Typography fontWeight={800} mb={1}>وضعیت ظرفیت (از داده واقعی)</Typography>
-            <Typography>ظرفیت اعلامی: {String(capacity?.declared_capacity ?? '—')} — حضور تأییدشده: {String(capacity?.confirmed_presence ?? '—')} — پذیرش: {capacity?.accepting ? 'باز' : 'پر'}</Typography>
-            <Typography variant="caption" color="text.secondary">نقشه کامل و جایگاه‌ها در صفحه «مسئول محوطه/پارکینگ» است؛ رنگ دستی روی تصویر به‌عنوان وضعیت قطعی اشغال استفاده نمی‌شود.</Typography>
-          </CardContent></Card>
-        </Stack>
-      )}
+      {tab === 7 && <MapDesigner />}
 
       {/* ===== ۸: شبیه‌سازی ===== */}
       {tab === 8 && (
