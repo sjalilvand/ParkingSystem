@@ -22,7 +22,7 @@ def test_yard_bulk_delete_and_capacity_via_setting():
             r = await ac.post("/api/v1/parking/yard-spaces", headers=h,
                               json={"count": 3, "prefix": "YT"})
             j = r.json()
-            assert r.status_code == 200 and j["created"] == ["YT-01", "YT-02", "YT-03"], j
+            assert r.status_code == 200 and j["created"] == ["YT-0001", "YT-0002", "YT-0003"], j
             r2 = await ac.post("/api/v1/parking/yard-spaces", headers=h,
                                json={"count": 3, "prefix": "YT"})
             assert r2.json()["created"] == [] and len(r2.json()["skipped_existing"]) == 3
@@ -59,7 +59,7 @@ def test_yard_bulk_delete_and_capacity_via_setting():
 
             # حذف جایگاه آزاد مجاز، 403 برای بدون مجوز
             spaces = (await ac.get("/api/v1/parking-spaces", headers=h)).json()
-            yt = [s for s in spaces if s["code"] == "YT-01"][0]
+            yt = [s for s in spaces if s["code"] == "YT-0001"][0]
             d = await ac.delete(f"/api/v1/parking/yard-spaces/{yt['id']}", headers=h)
             assert d.status_code == 200, d.text
             tok2 = await login(ac, "op1", "Op@123456")
