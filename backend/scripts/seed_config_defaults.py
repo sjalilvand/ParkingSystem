@@ -1,6 +1,4 @@
-"""Seed پیش‌فرض‌های پیکربندی — idempotent، منبع واحد.
-هسته sync (seed_sync) برای: migration alembic (بدون loop) و پوشش async برای اجرای دستی/تست.
-اجرای دستی: python -m scripts.seed_config_defaults"""
+"""Seed پیش‌فرض‌های پیکربندی — idempotent، منبع واحد (migration/تست/دستی)."""
 import json
 
 from sqlalchemy import text
@@ -16,59 +14,19 @@ GROUPS = [
 
 BOXES = [
     ("22222222-2222-4222-8222-222222222201", "IN",
-     [{"key": "yard_request", "label": "درخواست پارک در محوطه", "visible": True},
+     [{"key": "submit", "label": "ارسال رویداد دوربین", "visible": True},
+      {"key": "yard_request", "label": "درخواست پارک در محوطه", "visible": True},
       {"key": "own_parking", "label": "پارکینگ خودم", "visible": True},
       {"key": "help", "label": "کمک نگهبان", "visible": True}],
      {"welcome": "خوش آمدید — پلاک خود را وارد یا منتظر بمانید", "error": "خطا — به نگهبان مراجعه کنید"},
      {"primary": "#1565C0", "text": "#1A1A1A"}),
     ("22222222-2222-4222-8222-222222222202", "OUT",
-     [{"key": "pay", "label": "پرداخت و خروج", "visible": True},
+     [{"key": "submit", "label": "ارسال رویداد دوربین", "visible": True},
+      {"key": "pay", "label": "ثبت پرداخت", "visible": True},
       {"key": "help", "label": "درخواست کمک نگهبان", "visible": True}],
      {"welcome": "خروج — هزینه نمایش داده می‌شود", "error": "پرداخت تأیید نشد"},
      {"primary": "#2E7D32", "text": "#1A1A1A"}),
 ]
-
-
-def seed_sync(bind: Connection) -> tuple[int, int, int]:
-    """هسته sync — بدون commit (تراکنش با فراخواننده)."""
-    g_created = 0
-    for gid, code, title, kind in GROUPS:
-        if bind.execute(text("SELECT 1 FROM vehicle_groups WHERE code=:c"), {"c": code}).scalar() is None:
-            bind.execute(text(
-                "INSERT INTO vehicle_groups (id, code, title, membership_kind, is_active, sort_order) "
-                "VALUES (:i,:c,:t,:k,true,:s)"),
-                {"i": gid, "c": code, "t": title, "k": kind, "s": g_created})
-            g_created += 1
-    b_created = 0
-    for bid, side, buttons, messages, colors in BOXES:
-        if bind.execute(text("SELECT 1 FROM box_settings WHERE side=:s"), {"s": side}).scalar() is None:
-            bind.execute(text(
-                "INSERT INTO box_settings (id, side, is_active, buttons, messages, font_scale, colors) "
-                "VALUES (:i,:s,true,:b,:m,1.0,:c)"),
-                {"i": bid, "s": side,
-                 "b": json.dumps(buttons, ensure_ascii=False),
-                 "m": json.dumps(messages, ensure_ascii=False),
-                 "c": json.dumps(colors, ensure_ascii=False)})
-            b_created += 1
-    r_created = 0
-    for rid, name, active, width, sections, header, footer in RECEIPTS:
-        if bind.execute(text("SELECT 1 FROM receipt_templates WHERE id=:i"), {"i": rid}).scalar() is None:
-            bind.execute(text(
-                "INSERT INTO receipt_templates (id, name, is_active, paper_width_mm, sections, header_text, footer_text, show_trial_badge) "
-                "VALUES (:i,:n,:a,:w,:sec,:h,:f,true)"),
-                {"i": rid, "n": name, "a": active, "w": width,
-                 "sec": json.dumps(sections, ensure_ascii=False), "h": header, "f": footer})
-            r_created += 1
-    return g_created, b_created, r_created
-
-
-async def main() -> None:
-    from app.db.session import AsyncSessionLocal
-    async with AsyncSessionLocal() as db:
-        created = await db.run_sync(lambda s: seed_sync(s.connection()))
-        await db.commit()
-        print(f"groups={created[0]} boxes={created[1]} receipts={created[2]}")
-
 
 RECEIPTS = [
     ("33333333-3333-4333-8333-333333333301", "قبض پیش‌فرض ورود/خروج", True, 80,
@@ -82,5 +40,46 @@ RECEIPTS = [
 
 
 def seed_sync(bind: Connection) -> tuple[int, int, int]:
+    """هسته sync — بدون commit (تراکنش با فراخواننده)."""
+    g = 0
+    for gid, code, title, kind in GROUPS:
+        if bind.execute(text("SELECT 1 FROM vehicle_groups WHERE code=:c"), {"c": code}).scalar() is None:
+            bind.execute(text(
+                "INSERT INTO vehicle_groups (id, code, title, membership_kind, is_active, sort_order) "
+                "VALUES (:i,:c,:t,:k,true,:s)"),
+                {"i": gid, "c": code, "t": title, "k": kind, "s": g})
+            g += 1
+    b = 0
+    for bid, side, buttons, messages, colors in BOXES:
+        if bind.execute(text("SELECT 1 FROM box_settings WHERE side=:s"), {"s": side}).scalar() is None:
+            bind.execute(text(
+                "INSERT INTO box_settings (id, side, is_active, buttons, messages, font_scale, colors) "
+                "VALUES (:i,:s,true,:b,:m,1.0,:c)"),
+                {"i": bid, "s": side,
+                 "b": json.dumps(buttons, ensure_ascii=False),
+                 "m": json.dumps(messages, ensure_ascii=False),
+                 "c": json.dumps(colors, ensure_ascii=False)})
+            b += 1
+    r = 0
+    for rid, name, active, width, sections, header, footer in RECEIPTS:
+        if bind.execute(text("SELECT 1 FROM receipt_templates WHERE id=:i"), {"i": rid}).scalar() is None:
+            bind.execute(text(
+                "INSERT INTO receipt_templates (id, name, is_active, paper_width_mm, sections, header_text, footer_text, show_trial_badge) "
+                "VALUES (:i,:n,:a,:w,:sec,:h,:f,true)"),
+                {"i": rid, "n": name, "a": active, "w": width,
+                 "sec": json.dumps(sections, ensure_ascii=False), "h": header, "f": footer})
+            r += 1
+    return g, b, r
+
+
+async def main() -> None:
+    from app.db.session import AsyncSessionLocal
+    async with AsyncSessionLocal() as db:
+        created = await db.run_sync(lambda s: seed_sync(s.connection()))
+        await db.commit()
+        print(f"groups={created[0]} boxes={created[1]} receipts={created[2]}")
+
+
+if __name__ == "__main__":
     import asyncio
     asyncio.run(main())
