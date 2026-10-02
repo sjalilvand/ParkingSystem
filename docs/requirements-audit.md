@@ -44,3 +44,5 @@
 ## زیرساخت تست (درس ممیزی)
 - تستهای integration روی Postgres واقعی ایزوله (parking_test_db) با یک event loop پایدار اجرا میشوند؛ علت اولیه شکستهای ناپایدار، تداخل event loop بود (باگ محیط تست، نه اپ).
 - وضعیت نهایی سوییت: 69 passed (63 unit + 6 integration) + 4/4 agent + migration/data test PASS — کامیت نهایی موج۳a: 0da62f8 (F24)
+
+| F25 | P0 | §۸ | router v2 نقش‌ها با اسکیمای ناموجود (Role.name/Role.is_active/Permission.action) → تمام /roles* از ابتدا 500؛ UI جدید آن را آشکار کرد | بازنویسی کامل بر اسکیمای واقعی (title/module) با حفظ قرارداد فرانت + تست چرخه کامل + smoke زنده | ✅ موج۴g |
