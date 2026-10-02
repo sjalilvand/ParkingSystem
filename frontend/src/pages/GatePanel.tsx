@@ -104,6 +104,16 @@ function GateSide({ direction, live, defaultPlate }: { direction: 'IN' | 'OUT'; 
 
   const gateCode = isEntry ? 'GATE-IN-01' : 'GATE-OUT-01'
   const accent = isEntry ? '#2E7D32' : '#C62828'
+  const [boxCfg, setBoxCfg] = useState<{
+    buttons: { key: string; label: string; visible: boolean }[]
+    messages: Record<string, string>
+    font_scale: number
+    colors: Record<string, string>
+  } | null>(null)
+  const [driverReq, setDriverReq] = useState<string | null>(null)
+  useEffect(() => {
+    api.get(`/box-settings/${isEntry ? 'IN' : 'OUT'}`).then((r) => setBoxCfg(r.data)).catch(() => {})
+  }, [isEntry])
 
   // کلید گیت از سرور (چون در production با dev-key فرق دارد)
   useEffect(() => {
@@ -164,8 +174,10 @@ function GateSide({ direction, live, defaultPlate }: { direction: 'IN' | 'OUT'; 
       const r = await api.post('/gate/events/plate-detected', {
         gate_code: gateCode, direction, plate_raw: plate,
         source_event_id: crypto.randomUUID(), confidence: 97.5,
+        driver_request: driverReq || undefined,
       }, { headers: { 'X-API-Key': gateKey.current } })
       setResult(r.data)
+      setDriverReq(null)
     } catch (err) {
       setError(apiErrorFa(err))
     } finally { setBusy(false) }
@@ -207,7 +219,7 @@ function GateSide({ direction, live, defaultPlate }: { direction: 'IN' | 'OUT'; 
     } catch (err) { setError(apiErrorFa(err)) } finally { setBusy(false) }
   }
 
-  const color = result ? (decisionColors[result.decision] ?? '#757575') : accent
+  const color = result ? (decisionColors[result.decision] ?? '#757575') : (boxCfg?.colors?.primary ?? accent)
 
   return (
     <Card sx={{ borderTop: `6px solid ${color}` }}>
@@ -218,6 +230,9 @@ function GateSide({ direction, live, defaultPlate }: { direction: 'IN' | 'OUT'; 
           <Chip size="small" label={gateCode} variant="outlined" />
         </Stack>
 
+        {boxCfg?.messages?.welcome && !result && (
+          <Alert severity="info" sx={{ mb: 2 }} icon={false}>{boxCfg.messages.welcome}</Alert>
+        )}
         {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
         {msg && <Alert severity="success" sx={{ mb: 2 }}>{msg}</Alert>}
 
@@ -228,14 +243,34 @@ function GateSide({ direction, live, defaultPlate }: { direction: 'IN' | 'OUT'; 
           <IdentityStrip info={lookup} />
           <Button fullWidth variant="contained" color={isEntry ? 'primary' : 'secondary'}
             startIcon={<CameraAlt />} type="submit" disabled={busy} sx={{ mt: 1.5, py: 1.2 }}>
-            ارسال رویداد دوربین
+            {boxCfg?.buttons?.find((b) => b.key === 'submit')?.label ?? 'ارسال رویداد دوربین'}
           </Button>
+          {(boxCfg?.buttons ?? []).filter((b) => b.visible && (isEntry
+            ? ['yard_request', 'own_parking', 'help'].includes(b.key)
+            : b.key === 'help')).map((b) => (
+            <Button key={b.key} fullWidth variant="outlined" sx={{ mt: 1 }}
+              onClick={async () => {
+                if (b.key === 'help') {
+                  try { await api.post('/gate/barrier/open', { gate_code: gateCode, reason: 'GUARD_HELP_REQUEST' }); setMsg('درخواست کمک نگهبان ارسال شد ✔') } catch (err) { setError(apiErrorFa(err)) }
+                  return
+                }
+                setDriverReq(b.key === 'yard_request' ? 'YARD' : 'OWN_PARKING')
+              }}>
+              {b.label}
+            </Button>
+          ))}
         </form>
+        {driverReq && (
+          <Alert severity="info" sx={{ mt: 1 }}
+            action={<Button size="small" onClick={() => setDriverReq(null)}>لغو</Button>}>
+            درخواست انتخاب‌شده: {driverReq === 'YARD' ? 'پارک در محوطه' : 'پارکینگ خودم'} — اکنون دکمه ارسال رویداد را بزنید.
+          </Alert>
+        )}
 
         {result && (
           <Box sx={{ mt: 2, bgcolor: color, borderRadius: 3, p: 2, color: '#fff' }}>
             <Stack alignItems="center" mb={1}><PlateBox plate={plate} size="lg" /></Stack>
-            <Typography variant="h4" fontWeight={900} textAlign="center" mb={0.5}>
+            <Typography variant="h4" fontWeight={900} textAlign="center" mb={0.5} style={{ fontSize: `${2.125 * (boxCfg?.font_scale ?? 1)}rem` }}>
               {decisionFa[result.decision] ?? result.decision}
             </Typography>
             <Stack direction="row" spacing={1} justifyContent="center" mb={1} flexWrap="wrap" useFlexGap>
@@ -271,7 +306,7 @@ function GateSide({ direction, live, defaultPlate }: { direction: 'IN' | 'OUT'; 
               )}
               {result.session && result.session.payment_status === 'UNPAID' && (result.session.final_amount ?? 0) > 0 && !paid && (
                 <Button fullWidth variant="contained" color="warning" startIcon={<Payments />} onClick={payNow} disabled={busy}>
-                  ثبت پرداخت {money(result.session.final_amount)}
+                  {boxCfg?.buttons?.find((b) => b.key === 'pay')?.label ?? 'ثبت پرداخت'} {money(result.session.final_amount)}
                 </Button>
               )}
               {(result.decision === 'DENY' || result.decision === 'UNKNOWN_PLATE' || result.decision === 'REQUIRE_OPERATOR_APPROVAL') && !fined && (
