@@ -110,24 +110,9 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
     )
-    import json as _json
-    _bind = op.get_bind()
-    _bind.execute(sa.text(
-        "INSERT INTO box_settings (id, side, buttons, messages) VALUES (:i, :s, :b, :m)"), [
-        {"i": "22222222-2222-4222-8222-222222222201", "s": "IN",
-         "b": _json.dumps([
-             {"key": "yard_request", "label": "درخواست پارک در محوطه", "visible": True},
-             {"key": "own_parking", "label": "پارکینگ خودم", "visible": True},
-             {"key": "help", "label": "کمک نگهبان", "visible": True}], ensure_ascii=False),
-         "m": _json.dumps({"welcome": "خوش آمدید — پلاک خود را وارد یا منتظر بمانید",
-                           "error": "خطا — به نگهبان مراجعه کنید"}, ensure_ascii=False)},
-        {"i": "22222222-2222-4222-8222-222222222202", "s": "OUT",
-         "b": _json.dumps([
-             {"key": "pay", "label": "پرداخت و خروج", "visible": True},
-             {"key": "help", "label": "درخواست کمک نگهبان", "visible": True}], ensure_ascii=False),
-         "m": _json.dumps({"welcome": "خروج — هزینه نمایش داده می‌شود",
-                           "error": "پرداخت تأیید نشد"}, ensure_ascii=False)},
-    ])
+    from scripts.seed_config_defaults import main as _seed_main
+    import asyncio as _asyncio
+    _asyncio.run(_seed_main())
 
 def downgrade() -> None:
     op.drop_table("box_settings")
