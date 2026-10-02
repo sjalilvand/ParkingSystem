@@ -9,7 +9,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
- from sqlalchemy.dialects import postgresql
+from sqlalchemy.dialects import postgresql
 
 revision: str = 'ae1f830b6c93'
 down_revision: Union[str, None] = '9929acb7931d'
