@@ -301,8 +301,8 @@ async def create_yard_spaces(body: dict, db: AsyncSession = Depends(get_db), use
         n = int(body.get("count") or 0)
         if n < 1 or n > 500:
             raise ConflictError("تعداد باید بین ۱ تا ۵۰۰ باشد")
-        width = max(2, len(str(n)))
-        codes_in = [f"{prefix}-{str(i).zfill(width)}" for i in range(1, n + 1)]
+        # Wave5j: فرمت پارکینگ شماره 0001 به بالا (۴ رقم با صفر پیشرو)
+        codes_in = [f"{prefix}-{str(i).zfill(4)}" for i in range(1, n + 1)]
     if not isinstance(codes_in, list) or not [c for c in codes_in if str(c).strip()]:
         raise ConflictError("کدها یا تعداد الزامی است")
     created, skipped = [], []
