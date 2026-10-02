@@ -52,6 +52,7 @@ class Settings(BaseSettings):
     ENFORCE_FINANCE_PERMISSIONS: bool = True
     ENFORCE_VIOLATIONS_PERMISSIONS: bool = True
     ENFORCE_PARKING_PERMISSIONS: bool = True
+    YARD_CAPACITY_TOTAL: int | None = None  # REQ-09-03; None/0 = unlimited
 
 
 _INSECURE_DEFAULTS = {"change-me-in-production", "gate-dev-key"}
@@ -85,6 +86,7 @@ def get_settings() -> Settings:
 
 
 settings = get_settings()
+
 
 
 
