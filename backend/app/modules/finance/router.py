@@ -228,51 +228,61 @@ async def create_payment(body: PaymentCreate, db: AsyncSession = Depends(get_db)
             v = (await db.execute(select(Vehicle).where(Vehicle.plate_normalized == plate_norm))).scalars().first()
             vehicle_id = v.id if v else None
 
-    payment = Payment(
-        reference_number=reference, vehicle_id=vehicle_id, plate_normalized=plate_norm,
-        amount=body.amount, payment_method=body.payment_method,
-        paid_at=datetime.now(timezone.utc), operator_id=user.id if user else None,
-        notes=body.notes,
-    )
-    db.add(payment)
-    await db.flush()
+    plate_norm2 = plate_norm
+    vehicle_id2 = vehicle_id
 
-    unpaid = (await db.execute(_build_allocation_query(plate_norm))).scalars().all()
-    allocs, remaining = allocate_payment_amounts(unpaid, body.amount)
-    allocations = []
-    for charge, alloc in allocs:
-        db.add(PaymentAllocation(payment_id=payment.id, charge_id=charge.id, amount=alloc))
-        charge.paid_amount = int(charge.paid_amount or 0) + alloc
-        if charge_outstanding(charge) <= 0:
-            charge.status = "PAID"
-        allocations.append({"charge_id": charge.id, "amount": alloc, "charge_type": charge.charge_type})
+    async def _do():
+        payment = Payment(
+            reference_number=reference, vehicle_id=vehicle_id2, plate_normalized=plate_norm2,
+            amount=body.amount, payment_method=body.payment_method,
+            paid_at=datetime.now(timezone.utc), operator_id=user.id if user else None,
+            notes=body.notes,
+        )
+        db.add(payment)
+        # F24: کل عملیات (flush→allocations→audit→commit) درون یک try — تداخل همزمان => duplicate
+        try:
+            await db.flush()
+            unpaid = (await db.execute(_build_allocation_query(plate_norm2))).scalars().all()
+            allocs, remaining = allocate_payment_amounts(unpaid, body.amount)
+            allocations = []
+            for charge, alloc in allocs:
+                db.add(PaymentAllocation(payment_id=payment.id, charge_id=charge.id, amount=alloc))
+                charge.paid_amount = int(charge.paid_amount or 0) + alloc
+                if charge_outstanding(charge) <= 0:
+                    charge.status = "PAID"
+                allocations.append({"charge_id": charge.id, "amount": alloc, "charge_type": charge.charge_type})
 
-    warnings = []
-    if not plate_norm and not vehicle_id:
-        warnings.append("NO_PLATE_GLOBAL_ALLOCATION")  # رفتار فعلی: تخصیص به قدیمی‌ترین بدهی‌ها
+            warnings = []
+            if not plate_norm2 and not vehicle_id2:
+                warnings.append("NO_PLATE_GLOBAL_ALLOCATION")
 
-    if user:
-        await write_audit(db, user_id=user.id, action="PAYMENT_CREATE", module="finance",
-                          entity_type="payment", entity_id=payment.id,
-                          new_values={"amount": body.amount, "reference": reference,
-                                      "allocations": allocations, "remaining_credit": remaining})
-    # F3-پرداخت: تداخل همزمان روی reference یکتا => پاسخ duplicate به‌جای 500
-    try:
-        await db.commit()
-    except IntegrityError:
-        await db.rollback()
-        dup = (await db.execute(
-            select(Payment).where(Payment.reference_number == reference)
-        )).scalar_one_or_none()
-        if dup is not None:
-            return {"id": dup.id, "reference_number": dup.reference_number,
-                    "amount": dup.amount, "duplicate": True, "warnings": ["CONCURRENT_CONFLICT"]}
-        raise
+            if user:
+                await write_audit(db, user_id=user.id, action="PAYMENT_CREATE", module="finance",
+                                  entity_type="payment", entity_id=payment.id,
+                                  new_values={"amount": body.amount, "reference": reference,
+                                              "allocations": allocations, "remaining_credit": remaining})
+            await db.commit()
+            return payment, allocations, remaining, warnings
+        except IntegrityError:
+            await db.rollback()
+            dup = (await db.execute(
+                select(Payment).where(Payment.reference_number == reference)
+            )).scalar_one_or_none()
+            if dup is not None:
+                return "DUP", dup, None, None
+            raise
+
+    result = await _do()
+    if isinstance(result, tuple) and result and result[0] == "DUP":
+        _, dup, _, _ = result
+        return {"id": dup.id, "reference_number": dup.reference_number,
+                "amount": dup.amount, "duplicate": True, "warnings": ["CONCURRENT_CONFLICT"]}
+
+    payment, allocations, remaining, warnings = result
     await db.refresh(payment)
     return {"id": payment.id, "reference_number": payment.reference_number, "amount": payment.amount,
             "allocations": allocations, "remaining_credit": remaining, "duplicate": False,
             "warnings": warnings}
-
 
 @router.get("/payments/{payment_id}")
 async def get_payment(payment_id: str, db: AsyncSession = Depends(get_db), user: User = Depends(_perm("finance.view"))):
@@ -326,3 +336,5 @@ async def approve_adjustment(adj_id: str, db: AsyncSession = Depends(get_db), us
                           new_values={"amount": obj.amount, "self_approval": bool(self_approval)})
     await db.commit()
     return {"success": True, "self_approval": bool(self_approval)}
+
+

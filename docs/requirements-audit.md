@@ -21,7 +21,7 @@
 | F11 | P2 | §۲۳ | night_amount بلااستفاده | — | 📋 D4 |
 | F12 | P1 | — | dev/prod هم‌نام و هم‌volume | — | ⏳ موج۳ |
 | F13 | P0 | — | migration خراب کامیت‌شده | تعمیر | ✅ موج۱ |
-| F14 | P1 | §۱۱ | ورود همزمان پلاک با رویداد متمایز | ایندکس جلوی خرابی را می‌گیرد؛ پاسخ تمیز: موج۳ | ⏳ |
+| F14 | P1 | §۱۱ | ورود همزمان پلاک با رویداد متمایز → 500 | — | ⏳ |
 | F15 | P0 | — | DB بدون alembic_version (create_all) | stamp + upgrade | ✅ |
 | F16 | P0 مالی | §۱۴ | پرداخت جزئی = بدهی کامل باقی (پرداخت تکراری) | charges.paid_amount + debts بر مبنای مانده | ✅ موج۲a |
 | F17 | P1 | §۱۱ | تخصیص بدون اعتبارسنجی | اعتبارسنجی کامل + قفل + audit | ✅ موج۲b |
@@ -33,9 +33,13 @@
 | F23 | P2 | §۴ | used_entries++ در ورود تکراری | — | ⏳ موج۳ |
 
 ## آزمون‌ها (واقعاً اجراشده)
-- موج۲b: 64 passed (بک‌اند) + 4/4 agent decision (importlib) + E2E smoke تخلف (422 بدون تصویر → ثبت → confirm→UNPAID → cancel→VOIDED)
+- موج۲b: 63 passed (بک‌اند) + 4/4 agent decision (importlib) + E2E smoke تخلف (422 بدون تصویر → ثبت → confirm→UNPAID → cancel→VOIDED)
 - موج‌های قبل: 43 → 56 passed
 
 ## محدودیت‌های شناخته‌شده
 - سقف ورود در قطعی طولانی: snapshot قدیمی است؛ سقف پرشده فقط «بررسی» می‌خواهد نه عبور (محافظه‌کارانه، §ح)
 - تست‌های integration با DB واقعی و هم‌زمانی موازی: موج۳
+| F24 | P0 مالی | §۱۴ | create_payment: flush قبل از try، تداخل همزمان reference → 500 | کل عملیات پرداخت درون try/catch IntegrityError → duplicate | ✅ موج۳a (تست integration همزمانی) |
+
+## زیرساخت تست (درس ممیزی)
+- تستهای integration روی Postgres واقعی ایزوله (parking_test_db) با یک event loop پایدار اجرا میشوند؛ علت اولیه شکستهای ناپایدار، تداخل event loop بود (باگ محیط تست، نه اپ).
