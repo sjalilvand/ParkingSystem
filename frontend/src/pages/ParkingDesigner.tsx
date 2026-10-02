@@ -7,6 +7,7 @@ import {
 } from '@mui/material'
 import { Add, ArrowDownward, ArrowUpward, Delete, Edit, Rule as RuleIcon, Save, Settings, Tune } from '@mui/icons-material'
 import { api, apiErrorFa } from '../api/client'
+import JalaliDateTime from '../components/JalaliDateTime'
 
 // ---------------- انواع ----------------
 interface VGroup { id: string; code: string; title: string; description?: string | null; membership_kind: string; is_active: boolean; sort_order: number; default_tariff_id?: string | null }
@@ -365,8 +366,8 @@ export default function ParkingDesigner() {
           <Card><CardContent>
             <Typography fontWeight={800} mb={1}>ماشین‌حساب آزمایشی (بر اساس سیاست بالا — بدون ثبت داده)</Typography>
             <Stack direction="row" spacing={2} flexWrap="wrap" useFlexGap>
-              <TextField size="small" type="datetime-local" label="زمان ورود" value={calcIn} onChange={(e) => setCalcIn(e.target.value)} />
-              <TextField size="small" type="datetime-local" label="زمان خروج" value={calcOut} onChange={(e) => setCalcOut(e.target.value)} />
+              <JalaliDateTime label="زمان ورود" value={calcIn} onChange={(iso) => setCalcIn(iso)} />
+              <JalaliDateTime label="زمان خروج" value={calcOut} onChange={(iso) => setCalcOut(iso)} />
               <Button variant="outlined" disabled={!calc} onClick={() => calc && calcPreview.mutate(calc.sec)}>تأیید با سرور</Button>
             </Stack>
             {calc && (
@@ -626,14 +627,14 @@ export default function ParkingDesigner() {
             </TextField>
             <TextField size="small" type="number" label="اولویت" value={String((rDlg as RuleDraft | null)?.priority ?? 100)} sx={{ width: 110 }}
               onChange={(e) => setRDlg((p) => p ? { ...p, priority: Number(e.target.value) } : p)} />
-            <TextField size="small" type="datetime-local" label="تاریخ اجرا" value={(rDlg as RuleDraft | null)?.effective_from ?? ''}
-              onChange={(e) => setRDlg((p) => p ? { ...p, effective_from: e.target.value } : p)} />
+            <JalaliDateTime label="تاریخ اجرا" value={(rDlg as RuleDraft | null)?.effective_from ?? ''}
+              onChange={(iso) => setRDlg((p) => p ? { ...p, effective_from: iso } : p)} />
             <FormControlLabel control={<Switch checked={Boolean((rDlg as RuleDraft | null)?.enabled)} />} label="فعال"
               onChange={(_, ck: boolean) => setRDlg((p) => p ? { ...p, enabled: ck } : p)} />
           </Stack>
 
           <Typography fontWeight={800} mt={2}>اگر (شرایط)</Typography>
-          <TextField select size="small" label="ترکیب شرایط" value={(rDlg as RuleDraft | null)?.condition_mode ?? 'ALL'} sx={{ width: 220 }} mb={1}
+          <TextField select size="small" label="ترکیب شرایط" value={(rDlg as RuleDraft | null)?.condition_mode ?? 'ALL'} sx={{ width: 220, mb: 1 }}
             onChange={(e) => setRDlg((p) => p ? { ...p, condition_mode: e.target.value } : p)}>
             <MenuItem value="ALL">همه شرایط برقرار باشد</MenuItem>
             <MenuItem value="ANY">حداقل یکی برقرار باشد</MenuItem>
