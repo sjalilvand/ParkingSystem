@@ -128,3 +128,6 @@
 
 ## بهروزرسانی موج ۴a
 - REQ-09-03 (گارد ظرفیت محوطه) و REQ-11-05 (ثبت مغایرت ظرفیت): پیادهسازی شد — app/capacity.py + YARD_CAPACITY_TOTAL + /parking/capacity-status و /parking/capacity-mismatch. در ظرفیت کامل تصمیم => REQUIRE_OPERATOR_APPROVAL (اپراتور تصمیم میگیرد، بستن خودکار ممنوع).
+
+## بهروزرسانی موج ۴b
+- REQ-08-01 (ماتریس دسترسی گرافیکی): کامل شد — ویرایشگر نقش/مجوز ماتریسی در Users.tsx (ساخت/ویرایش/حذف نقش، کاتالوگ گروه‌بندی شده)، فیلتر منو بر اساس مجوز (MainLayout)، /auth/me غنیسازی (roles+permissions+is_admin)، seed کاتالوگ با module/action.
