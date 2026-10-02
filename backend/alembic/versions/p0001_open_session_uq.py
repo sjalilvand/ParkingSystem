@@ -8,7 +8,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision = "p0001_open_session_uq"
-down_revision = "__DOWN_REVISION__"
+down_revision = "ae1f830b6c93"
 branch_labels = None
 depends_on = None
 
@@ -43,3 +43,4 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_index("uq_open_session_plate", table_name="parking_sessions")
+
