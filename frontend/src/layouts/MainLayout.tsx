@@ -35,7 +35,7 @@ const menu: { label: string; icon: ReactNode; path: string; perm?: string }[] = 
   { label: 'مسئول محوطه', icon: <Tour />, path: '/field' },
   { label: 'خودروها', icon: <DirectionsCar />, path: '/vehicles' },
   { label: 'مجوزها', icon: <ConfirmationNumber />, path: '/permits' },
-  { label: 'پارکینگ', icon: <LocalParking />, path: '/parking' },
+  { label: 'پارکینگ', icon: <LocalParking />, path: '/parking', perm: 'parking.view' },
   { label: 'تردد', icon: <ReceiptLong />, path: '/access-events' },
   { label: 'بدهی‌ها', icon: <AccountBalance />, path: '/debts', perm: 'finance.view' },
   { label: 'تخلفات', icon: <ReportProblem />, path: '/violations', perm: 'violations.view' },
@@ -144,6 +144,7 @@ export default function MainLayout() {
             <LocalParking fontSize="small" />
           </Box>
           <Typography fontWeight={900} fontSize={15}>منوی سامانه</Typography>
+          <Chip size="small" variant="outlined" color="primary" label="UI ۴.۹" />
         </Box>
         <List sx={{ px: 1.5 }}>
           {menu.filter((m) => !m.perm || can(m.perm)).map((m) => {
