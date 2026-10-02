@@ -29,7 +29,7 @@ BOXES = [
 ]
 
 
-def seed_sync(bind: Connection) -> tuple[int, int]:
+def seed_sync(bind: Connection) -> tuple[int, int, int]:
     """هسته sync — بدون commit (تراکنش با فراخواننده)."""
     g_created = 0
     for gid, code, title, kind in GROUPS:
@@ -50,7 +50,16 @@ def seed_sync(bind: Connection) -> tuple[int, int]:
                  "m": json.dumps(messages, ensure_ascii=False),
                  "c": json.dumps(colors, ensure_ascii=False)})
             b_created += 1
-    return g_created, b_created
+    r_created = 0
+    for rid, name, active, width, sections, header, footer in RECEIPTS:
+        if bind.execute(text("SELECT 1 FROM receipt_templates WHERE id=:i"), {"i": rid}).scalar() is None:
+            bind.execute(text(
+                "INSERT INTO receipt_templates (id, name, is_active, paper_width_mm, sections, header_text, footer_text, show_trial_badge) "
+                "VALUES (:i,:n,:a,:w,:sec,:h,:f,true)"),
+                {"i": rid, "n": name, "a": active, "w": width,
+                 "sec": json.dumps(sections, ensure_ascii=False), "h": header, "f": footer})
+            r_created += 1
+    return g_created, b_created, r_created
 
 
 async def main() -> None:
@@ -58,9 +67,20 @@ async def main() -> None:
     async with AsyncSessionLocal() as db:
         created = await db.run_sync(lambda s: seed_sync(s.connection()))
         await db.commit()
-        print(f"groups_created={created[0]} boxes_created={created[1]}")
+        print(f"groups={created[0]} boxes={created[1]} receipts={created[2]}")
 
 
-if __name__ == "__main__":
+RECEIPTS = [
+    ("33333333-3333-4333-8333-333333333301", "قبض پیش‌فرض ورود/خروج", True, 80,
+     [{"key": "complex_name", "visible": True}, {"key": "receipt_id", "visible": True},
+      {"key": "plate", "visible": True}, {"key": "entry_time", "visible": True},
+      {"key": "parking_spot", "visible": True}, {"key": "tariff_summary", "visible": True},
+      {"key": "trial_badge", "visible": True}, {"key": "qr", "visible": False},
+      {"key": "guide_text", "visible": True}],
+     "مجتمع مسکونی ارکیده", "لطفاً پیش از خروج تسویه کنید."),
+]
+
+
+def seed_sync(bind: Connection) -> tuple[int, int, int]:
     import asyncio
     asyncio.run(main())
