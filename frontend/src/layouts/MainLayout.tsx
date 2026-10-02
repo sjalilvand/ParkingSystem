@@ -41,6 +41,7 @@ const menu: { label: string; icon: ReactNode; path: string; perm?: string }[] = 
   { label: 'تخلفات', icon: <ReportProblem />, path: '/violations', perm: 'violations.view' },
   { label: 'تعرفه‌ها', icon: <Payments />, path: '/tariffs', perm: 'finance.view' },
   { label: 'اطلاعات پایه', icon: <Tune />, path: '/base-data', perm: 'base_data.view' },
+  { label: 'طراح تنظیمات', icon: <Settings />, path: '/designer', perm: 'settings.view' },
   { label: 'کاربران و نقش‌ها', icon: <ManageAccounts />, path: '/users', perm: 'user.manage' },
 ]
 
