@@ -266,3 +266,53 @@ async def put_box(side: str, body: dict, db: AsyncSession = Depends(get_db), use
                           entity_type="box_setting", entity_id=side)
     await db.commit()
     return {"success": True}
+
+
+@router.get("/receipts/render/{session_id}")
+async def render_receipt(session_id: str, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    """رندر قبض نشست بر اساس قالب فعال طراح (موج ۵f) — مقادیر از داده واقعی جلسه."""
+    from app.modules.access_control.models import ParkingSession
+    from app.modules.finance.models import Tariff
+    from app.modules.parking.models import ParkingOccupancy, ParkingSpace
+
+    sess = await db.get(ParkingSession, session_id)
+    if not sess:
+        raise NotFoundError("نشست یافت نشد")
+    tpls = (await db.execute(select(ReceiptTemplate).where(ReceiptTemplate.is_active.is_(True)))).scalars().all()
+    tpl = tpls[0] if tpls else None
+    sections = (tpl.sections if tpl else None) or DEFAULT_SECTIONS
+    spot_code = spot_zone = None
+    if sess.entry_event_id:
+        occ = (await db.execute(select(ParkingOccupancy).where(
+            ParkingOccupancy.access_event_id == sess.entry_event_id))).scalars().first()
+        if occ and occ.parking_space_id:
+            sp = await db.get(ParkingSpace, occ.parking_space_id)
+            if sp:
+                spot_code, spot_zone = sp.code, sp.zone
+    tariff_summary = None
+    if sess.tariff_id:
+        t = await db.get(Tariff, sess.tariff_id)
+        if t:
+            tariff_summary = f"{t.free_minutes} دقیقه رایگان — ساعتی {t.hourly_amount:,} ریال"
+    data = {
+        "receipt_id": f"RC-{sess.id[:8].upper()}",
+        "plate": sess.plate_normalized,
+        "entry_time": sess.entry_at.isoformat() if sess.entry_at else None,
+        "exit_time": sess.exit_at.isoformat() if sess.exit_at else None,
+        "duration_seconds": sess.duration_seconds,
+        "parking_spot": (spot_code or "—") + (f" — {spot_zone}" if spot_zone else ""),
+        "tariff_summary": tariff_summary or "بدون تعرفه فعال",
+        "final_amount": sess.final_amount,
+        "payment_status": sess.payment_status,
+    }
+    return {
+        "template": {
+            "name": tpl.name if tpl else "پیش‌فرض",
+            "paper_width_mm": tpl.paper_width_mm if tpl else 80,
+            "sections": sections,
+            "header_text": tpl.header_text if tpl else "مجتمع مسکونی ارکیده",
+            "footer_text": tpl.footer_text if tpl else "لطفاً پیش از خروج تسویه کنید.",
+            "show_trial_badge": tpl.show_trial_badge if tpl else True,
+        },
+        "data": data,
+    }

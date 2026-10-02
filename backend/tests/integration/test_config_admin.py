@@ -96,3 +96,32 @@ def test_rule_publish_and_live_effect_and_simulate():
             r403 = await ac.put("/api/v1/app-settings/tariff_policy", headers=auth(tok2), json={"value": {}})
             assert r403.status_code == 403
     run(go())
+
+
+def test_receipt_render_from_closed_session():
+    async def go():
+        from datetime import datetime, timedelta, timezone as tz
+        from app.modules.access_control.models import ParkingSession
+        from app.db.session import AsyncSessionLocal
+        async with AsyncSessionLocal() as db:
+            ps = ParkingSession(plate_normalized="12B345IR67",
+                                entry_at=datetime.now(tz.utc) - timedelta(hours=2),
+                                exit_at=datetime.now(tz.utc), duration_seconds=7200,
+                                status="CLOSED", final_amount=150_000, payment_status="UNPAID")
+            db.add(ps)
+            await db.commit()
+            sid = ps.id
+        async with api_client() as ac:
+            tok = await login(ac, "admin", "Admin@1234")
+            r = await ac.get(f"/api/v1/receipts/render/{sid}", headers=auth(tok))
+            assert r.status_code == 200, r.text
+            j = r.json()
+            assert j["template"]["paper_width_mm"] == 80, j
+            keys = [x["key"] for x in j["template"]["sections"]]
+            assert "plate" in keys and "trial_badge" in keys
+            assert j["data"]["receipt_id"].startswith("RC-")
+            assert j["data"]["final_amount"] == 150_000
+            # 404 برای نشست ناموجود
+            r2 = await ac.get("/api/v1/receipts/render/nope", headers=auth(tok))
+            assert r2.status_code == 404
+    run(go())

@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import {
-  Alert, Box, Button, Card, CardContent, Chip, List, ListItem, ListItemText,
-  Stack, TextField, Typography,
+  Alert, Box, Button, Card, CardContent, Chip, Dialog, DialogActions,
+  DialogContent, DialogTitle, List, ListItem, ListItemText, Stack, TextField,
+  Typography,
 } from '@mui/material'
 import {
   CameraAlt, Login as EntryIcon, Logout as ExitIcon, Payments,
@@ -13,6 +14,7 @@ import { decisionColors, decisionFa, reasonFa } from '../app/theme'
 import PlateBox from '../components/PlateBox'
 import { parsePlateRaw } from '../components/PlateInput'
 import { durationFa, faDate, money } from '../utils/format'
+import { formatJalali } from '../components/JalaliDateTime'
 
 const eventFa: Record<string, string> = {
   'plate.detected': 'پلاک شناسایی شد',
@@ -40,7 +42,7 @@ interface DecisionResult {
   barrier_action: string; warnings?: string[]
   unit?: { tower?: string; unit_number?: string } | null
   parking?: { code?: string; zone?: string } | null; duplicate?: boolean
-  session?: { duration_seconds?: number; base_amount?: number; final_amount?: number; payment_status?: string } | null
+  session?: { id?: string; duration_seconds?: number; base_amount?: number; final_amount?: number; payment_status?: string; preview_only?: boolean } | null
 }
 interface LiveEvt { id: string; gate: string; direction: 'IN' | 'OUT'; plate: string
   kind?: string; decision?: string; reason?: string; barrier?: string
@@ -111,6 +113,10 @@ function GateSide({ direction, live, defaultPlate }: { direction: 'IN' | 'OUT'; 
     colors: Record<string, string>
   } | null>(null)
   const [driverReq, setDriverReq] = useState<string | null>(null)
+  const [receipt, setReceipt] = useState<null | {
+    template: { name: string; paper_width_mm: number; sections: { key: string; visible: boolean }[]; header_text?: string | null; footer_text?: string | null; show_trial_badge: boolean }
+    data: Record<string, string | number | null>
+  }>(null)
   useEffect(() => {
     api.get(`/box-settings/${isEntry ? 'IN' : 'OUT'}`).then((r) => setBoxCfg(r.data)).catch(() => {})
   }, [isEntry])
@@ -203,6 +209,15 @@ function GateSide({ direction, live, defaultPlate }: { direction: 'IN' | 'OUT'; 
       })
       setPaid(true)
       setMsg(`پرداخت ثبت شد — رسید ${r.data.reference_number}`)
+    } catch (err) { setError(apiErrorFa(err)) } finally { setBusy(false) }
+  }
+
+  const openReceipt = async () => {
+    if (!result?.session?.id) return
+    setBusy(true)
+    try {
+      const r = await api.get(`/receipts/render/${result.session.id}`)
+      setReceipt(r.data)
     } catch (err) { setError(apiErrorFa(err)) } finally { setBusy(false) }
   }
 
@@ -316,9 +331,52 @@ function GateSide({ direction, live, defaultPlate }: { direction: 'IN' | 'OUT'; 
               )}
               {fined && <Alert severity="warning" sx={{ bgcolor: '#fff' }}>جریمه برای این پلاک صادر شد ✔</Alert>}
               {paid && <Alert severity="success" sx={{ bgcolor: '#fff' }}>پرداخت انجام شد ✔</Alert>}
+              {result.session?.id && result.decision === 'ALLOW' && !result.session.preview_only && (
+                <Button fullWidth variant="outlined" sx={{ bgcolor: '#fff' }} onClick={openReceipt} disabled={busy}>
+                  {'\u{1F9FE}'} چاپ قبض
+                </Button>
+              )}
             </Stack>
           </Box>
         )}
+      <Dialog open={!!receipt} onClose={() => setReceipt(null)} maxWidth="xs" fullWidth>
+        <DialogTitle>پیش‌نمایش قبض</DialogTitle>
+        <DialogContent>
+          {receipt && (
+            <Box className="receipt-print" sx={{ mx: 'auto', p: 1.5, bgcolor: '#fff', color: '#000',
+                width: receipt.template.paper_width_mm * 3.4, border: '1px solid #ccc' }}>
+              {receipt.template.header_text && (
+                <Typography fontWeight={900} textAlign="center" mb={1}>{receipt.template.header_text}</Typography>
+              )}
+              {(receipt.template.sections ?? []).filter((sec) => sec.visible).map((sec) => (
+                <Box key={sec.key} sx={{ py: 0.4, borderBottom: '1px dotted #bbb', fontSize: 12 }}>
+                  {{
+                    complex_name: receipt.template.header_text ?? 'مجتمع مسکونی ارکیده',
+                    receipt_id: `شناسه قبض: ${receipt.data.receipt_id}`,
+                    plate: `پلاک: ${receipt.data.plate}`,
+                    entry_time: `ورود: ${receipt.data.entry_time ? formatJalali(new Date(String(receipt.data.entry_time))) : '—'}`,
+                    exit_time: `خروج: ${receipt.data.exit_time ? formatJalali(new Date(String(receipt.data.exit_time))) : '—'}`,
+                    duration: `مدت: ${durationFa(Number(receipt.data.duration_seconds ?? 0))}`,
+                    parking_spot: `محل: ${receipt.data.parking_spot ?? '—'}`,
+                    tariff_summary: `تعرفه: ${receipt.data.tariff_summary ?? '—'}`,
+                    trial_badge: receipt.template.show_trial_badge ? '★ طرح آزمایشی — رایگان ★' : '',
+                    qr: '[QR — نیازمند چاپگر پشتیبان]',
+                    guide_text: receipt.template.footer_text ?? '',
+                  }[sec.key] ?? sec.key}
+                </Box>
+              ))}
+              <Typography fontWeight={800} mt={1}>
+                مبلغ: {money(Number(receipt.data.final_amount ?? 0))} — {receipt.data.payment_status === 'PAID' ? 'پرداخت‌شده' : receipt.data.payment_status === 'FREE' ? 'رایگان' : 'پرداخت‌نشده'}
+              </Typography>
+            </Box>
+          )}
+          <style>{'@media print { body * { visibility: hidden !important } .receipt-print, .receipt-print * { visibility: visible !important } .receipt-print { position: fixed; top: 0; right: 0; width: 80mm; } }'}</style>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setReceipt(null)}>بستن</Button>
+          <Button variant="contained" onClick={() => window.print()}>چاپ آزمایشی</Button>
+        </DialogActions>
+      </Dialog>
       </CardContent>
     </Card>
   )
