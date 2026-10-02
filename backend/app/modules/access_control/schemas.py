@@ -13,6 +13,7 @@ class PlateDetectedRequest(BaseModel):
     confidence: float | None = None
     raw_payload: dict | None = None
     client_decision: str | None = None
+    driver_request: str | None = None
 
 
 class ManualAccessRequest(BaseModel):

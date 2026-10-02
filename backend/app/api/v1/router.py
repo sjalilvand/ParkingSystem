@@ -11,6 +11,7 @@ from app.modules.notifications.router import router as notifications_router
 from app.modules.ops.router import router as ops_router
 from app.modules.simulator.router import router as simulator_router
 from app.modules.parking.cad_router import router as cad_router
+from app.modules.config_admin.router import router as config_router
 from app.modules.complexes.router import router as complexes_router
 from app.modules.devices.router import router as devices_router
 from app.modules.files.router import router as files_router
@@ -45,6 +46,7 @@ api_router.include_router(ops_router, dependencies=[Depends(require_any_permissi
 api_router.include_router(simulator_router, dependencies=[Depends(require_any_permission("simulator.create", "simulator.view"))])
 
 
+api_router.include_router(config_router)
 @api_router.get("/ping", tags=["System"])
 async def ping():
     return {"message": "pong"}

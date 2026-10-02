@@ -70,6 +70,7 @@ _fresh_schema()
 
 from app.db.base import Base  # noqa: E402
 from app.core import system_models  # noqa: E402,F401
+from app.modules.config_admin import models as _cfg  # noqa: E402,F401
 from app.modules.access_control import models as _ac  # noqa: E402,F401
 from app.modules.base_data import models as _bd  # noqa: E402,F401
 from app.modules.complexes import models as _cx  # noqa: E402,F401
