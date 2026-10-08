@@ -9,6 +9,7 @@ from app.core.audit import write_audit
 from app.core.exceptions import ConflictError, NotFoundError
 from app.core.permissions import require_any_permission
 from app.db.session import get_db
+import app.main  # noqa - resolve all FK models
 from app.modules.access_control.models import AccessEvent, ParkingSession, PlateRecognitionEvent
 from app.modules.complexes.models import Complex, Tower, Unit
 from app.modules.finance.models import Charge, Payment, PaymentAllocation
@@ -19,6 +20,9 @@ from app.modules.vehicles.models import AccessPermit, Vehicle, VehicleRestrictio
 from app.modules.violations.models import Violation, ViolationAppeal
 from app.modules.identity.models import Role, Permission, role_permissions
 from app.modules.config_admin.models import EntryExitRule
+from app.modules.devices.models import Device
+from app.modules.identity.models import RefreshToken
+from app.core.system_models import AuditLog, Notification, OutboxEvent, FileRecord
 from app.modules.identity.models import User as _U
 
 router = APIRouter(prefix="/scenario", tags=["Scenario"])
@@ -30,7 +34,13 @@ ASSOCIATION_TABLES = {
 }
 
 PURGE_MAP = {
+        "audit_logs":       [AuditLog, Notification, OutboxEvent, FileRecord],
+    "refresh_tokens":   [RefreshToken],
+    "devices":          [Device],
+    
+    # ترتیب بر اساس وابستگی FK: تخصیص‌ها قبل از خودرو/واحد/جایگاه
     "events_sessions": [ParkingOccupancy, ParkingSession, AccessEvent, PlateRecognitionEvent],
+    "parking_spaces":  [ParkingAssignment, ParkingSpace],
     "finance":         [PaymentAllocation, Payment, Charge],
     "violations":      [ViolationAppeal, Violation],
     "vehicles":        [AccessPermit, VehicleRestriction, Vehicle],
@@ -38,7 +48,6 @@ PURGE_MAP = {
     "units":           [Unit],
     "towers":          [Tower],
     "complexes":       [Complex],
-    "parking_spaces":  [ParkingAssignment, ParkingSpace],
     "users":           [_U],
     "rules":           [EntryExitRule],
 }
@@ -79,7 +88,11 @@ async def purge(body: PurgeBody, db: AsyncSession = Depends(get_db), user: User 
     if user:
         await write_audit(db, user_id=user.id, action="SCENARIO_PURGE", module="scenario",
                           entity_type="scenario", entity_id="purge", new_values=counts)
-    await db.commit()
+    try:
+        await db.commit()
+    except Exception as exc:
+        await db.rollback()
+        raise ConflictError(f"پاکسازی ناموفق (وابستگی FK): {exc.orig if hasattr(exc, 'orig') else exc}")
     return {"success": True, "deleted": counts}
 
 
@@ -291,6 +304,9 @@ async def setup_default(db: AsyncSession = Depends(get_db), user: User = Depends
                       conditions=[{"field": "has_valid_permit", "op": "false"}],
                       actions=[{"action": "refer_to_guard"}], status="DRAFT"),
     ]
+    # حذف قوانین قبلی (اگر از قبل موجود باشد) تا تکراری نشود
+    from sqlalchemy import delete as _del
+    await db.execute(_del(EntryExitRule))
     for r in rules_seed:
         db.add(r)
     result["rules_created"] = len(rules_seed)
