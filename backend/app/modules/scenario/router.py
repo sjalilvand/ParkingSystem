@@ -1,7 +1,8 @@
-"""موج ۶ — سناریوساز: پاکسازی انتخابی، بارگذاری ساختار، اجرای سناریو."""
+"""موج ۶ — سناریوساز: پاکسازی انتخابی، بارگذاری ساختار، سناریوی پیش‌فرض."""
+import asyncio
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
-from sqlalchemy import select, delete as sqldel, text
+from sqlalchemy import select, delete as sqldel, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
@@ -10,56 +11,55 @@ from app.core.exceptions import ConflictError, NotFoundError
 from app.core.permissions import require_any_permission
 from app.db.session import get_db
 import app.main  # noqa - resolve all FK models
-from app.modules.access_control.models import AccessEvent, ParkingSession, PlateRecognitionEvent
-from app.modules.complexes.models import Complex, Tower, Unit
-from app.modules.finance.models import Charge, Payment, PaymentAllocation
-from app.modules.identity.models import RefreshToken, User, user_roles
-from app.modules.parking.models import ParkingAssignment, ParkingOccupancy, ParkingSpace
-from app.modules.residents.models import Person, UnitOccupancy
-from app.modules.vehicles.models import AccessPermit, Vehicle, VehicleRestriction
-from app.modules.violations.models import Violation, ViolationAppeal
-from app.modules.identity.models import Role, Permission, role_permissions
-from app.modules.config_admin.models import EntryExitRule
+
+from app.modules.access_control.models import (
+    ParkingSession, AccessEvent, PlateRecognitionEvent,
+)
+from app.modules.parking.models import (
+    ParkingOccupancy, ParkingAssignment, ParkingSpace,
+)
+from app.modules.finance.models import PaymentAllocation, Payment, Charge
+from app.modules.violations.models import ViolationAppeal, Violation
+from app.modules.vehicles.models import AccessPermit, VehicleRestriction, Vehicle
+from app.modules.residents.models import UnitOccupancy, Person
+from app.modules.complexes.models import Unit, Tower, Complex
+from app.modules.identity.models import (
+    Role, User, user_roles, RefreshToken,
+)
 from app.modules.devices.models import Device
-from app.modules.identity.models import RefreshToken
 from app.core.system_models import AuditLog, Notification, OutboxEvent, FileRecord
-from app.modules.identity.models import User as _U
+from app.modules.config_admin.models import EntryExitRule
 
 router = APIRouter(prefix="/scenario", tags=["Scenario"])
 
-# ترتیب حذف بر اساس وابستگی FK (اول فرزند، آخر پدر)
-ASSOCIATION_TABLES = {
-    # users: user_roles در حلقهٔ مدل _U به‌تفکیک برای هر کاربر غیرادمین حذف می‌شود
-    # تا لینک ادمین به نقش ADMIN حفظ شود (باگ قبلی: حذف گروهی → ادمین بی‌نقش → 403)
+# ترتیب حذف بر اساس FK (اول فرزند، آخر پدر) — complexes نگه داشته می‌شود (gates وابسته)
+PURGE_MAP = {
+    "audit_notifications_files": [AuditLog, Notification, OutboxEvent, FileRecord],
+    "refresh_tokens":            [RefreshToken],
+    "events_sessions":           [ParkingOccupancy, ParkingSession, AccessEvent, PlateRecognitionEvent],
+    "parking_spaces":            [ParkingAssignment, ParkingSpace],
+    "finance":                   [PaymentAllocation, Payment, Charge],
+    "violations":                [ViolationAppeal, Violation],
+    "vehicles":                  [AccessPermit, VehicleRestriction, Vehicle],
+    "persons":                   [UnitOccupancy, Person],
+    "units":                     [Unit],
+    "towers":                    [Tower],
+    # complexes نگه داشته می‌شود (gates به آن FK دارد)
+    "users":                     [User],
+    "rules":                     [EntryExitRule],
 }
 
-PURGE_MAP = {
-        "audit_logs":       [AuditLog, Notification, OutboxEvent, FileRecord],
-    "refresh_tokens":   [RefreshToken],
-    "devices":          [Device],
-    
-    # ترتیب بر اساس وابستگی FK: تخصیص‌ها قبل از خودرو/واحد/جایگاه
-    "events_sessions": [ParkingOccupancy, ParkingSession, AccessEvent, PlateRecognitionEvent],
-    "parking_spaces":  [ParkingAssignment, ParkingSpace],
-    "finance":         [PaymentAllocation, Payment, Charge],
-    "violations":      [ViolationAppeal, Violation],
-    "vehicles":        [AccessPermit, VehicleRestriction, Vehicle],
-    "persons":         [UnitOccupancy, Person],
-    "units":           [Unit],
-    "towers":          [Tower],
-    "complexes":       [Complex],
-    "users":           [_U],
-    "rules":           [EntryExitRule],
-}
+
+def _orig(e):
+    return e.orig if hasattr(e, "orig") else e
 
 
 class PurgeBody(BaseModel):
-    categories: list[str] = Field(default_factory=list)  # خالی = همه
+    categories: list[str] = Field(default_factory=list)
 
 
 @router.post("/purge")
 async def purge(body: PurgeBody, db: AsyncSession = Depends(get_db), user: User = Depends(require_any_permission("settings.publish"))):
-    """موج ۶: پاکسازی انتخابی دسته‌ها. ادمین را حذف نمی‌کند."""
     cats = body.categories or list(PURGE_MAP.keys())
     unknown = [c for c in cats if c not in PURGE_MAP]
     if unknown:
@@ -67,23 +67,20 @@ async def purge(body: PurgeBody, db: AsyncSession = Depends(get_db), user: User 
     counts = {}
     for cat in cats:
         n = 0
-        for tbl in ASSOCIATION_TABLES.get(cat, []):
-            res = await db.execute(sqldel(tbl))
-            n += res.rowcount or 0
         for model in PURGE_MAP[cat]:
-            if model is _U:
-                users = (await db.execute(select(_U).where(_U.username != "admin"))).scalars().all()
+            if model is User:
+                users = (await db.execute(select(User).where(User.username != "admin"))).scalars().all()
                 for u in users:
                     await db.execute(sqldel(user_roles).where(user_roles.c.user_id == u.id))
-                    await db.execute(sqldel(RefreshToken).where(RefreshToken.user_id == u.id))  # fix-dependents
-                    from app.core.system_models import Notification
+                    await db.execute(sqldel(RefreshToken).where(RefreshToken.user_id == u.id))
                     await db.execute(sqldel(Notification).where(Notification.recipient_user_id == u.id))
                     await db.delete(u)
                     n += 1
                 continue
             rows = (await db.execute(select(model))).scalars().all()
             for r in rows:
-                await db.delete(r); n += 1
+                await db.delete(r)
+                n += 1
         counts[cat] = n
     if user:
         await write_audit(db, user_id=user.id, action="SCENARIO_PURGE", module="scenario",
@@ -92,7 +89,7 @@ async def purge(body: PurgeBody, db: AsyncSession = Depends(get_db), user: User 
         await db.commit()
     except Exception as exc:
         await db.rollback()
-        raise ConflictError(f"پاکسازی ناموفق (وابستگی FK): {exc.orig if hasattr(exc, 'orig') else exc}")
+        raise ConflictError(f"پاکسازی ناموفق (FK): {_orig(exc)}")
     return {"success": True, "deleted": counts}
 
 
@@ -108,7 +105,8 @@ class UnitBody(BaseModel):
 async def add_unit(body: UnitBody, db: AsyncSession = Depends(get_db), user: User = Depends(require_any_permission("structure.edit", "settings.edit"))):
     cx = (await db.execute(select(Complex))).scalars().first()
     if cx is None:
-        cx = Complex(code="ORKID", name="مجتمع ارکیده"); db.add(cx); await db.flush()
+        cx = Complex(code="ORKID", name="مجتمع ارکیده")
+        db.add(cx); await db.flush()
     tw = (await db.execute(select(Tower).where(Tower.code == body.tower_code))).scalars().first()
     if tw is None:
         tw = Tower(complex_id=cx.id, code=body.tower_code, name=body.tower_name,
@@ -134,7 +132,7 @@ class ResidentBody(BaseModel):
     last_name: str
     mobile: str | None = None
     national_code: str | None = None
-    person_type: str = "OWNER"   # OWNER / TENANT
+    person_type: str = "OWNER"
     is_primary: bool = True
 
 
@@ -143,13 +141,14 @@ async def add_resident(body: ResidentBody, db: AsyncSession = Depends(get_db), u
     unit = await db.get(Unit, body.unit_id)
     if not unit:
         raise NotFoundError("واحد یافت نشد")
+    import datetime as _dt
     p = Person(first_name=body.first_name, last_name=body.last_name,
                mobile=body.mobile, national_code=body.national_code,
                person_type=body.person_type)
     db.add(p); await db.flush()
     occ = UnitOccupancy(unit_id=unit.id, person_id=p.id,
                         occupancy_type=body.person_type, is_primary=body.is_primary,
-                        start_date=__import__("datetime").date.today())
+                        start_date=_dt.date.today())
     db.add(occ)
     if user:
         await write_audit(db, user_id=user.id, action="SCENARIO_RESIDENT_ADD", module="scenario",
@@ -188,11 +187,11 @@ async def add_vehicle(body: VehicleBody, db: AsyncSession = Depends(get_db), use
                 vehicle_type=body.vehicle_type, plate_type=body.plate_type, is_active=True)
     db.add(v); await db.flush()
     if body.grant_permit:
-        from datetime import datetime, timedelta, timezone as tz
+        import datetime as _dt
         db.add(AccessPermit(vehicle_id=v.id, plate_normalized=norm, status="ACTIVE",
                             permit_type="PERMANENT",
-                            valid_from=datetime.now(tz.utc) - timedelta(hours=1),
-                            valid_until=datetime.now(tz.utc) + timedelta(days=body.permit_days),
+                            valid_from=_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(hours=1),
+                            valid_until=_dt.datetime.now(_dt.timezone.utc) + _dt.timedelta(days=body.permit_days),
                             max_entries=None, used_entries=0))
     if user:
         await write_audit(db, user_id=user.id, action="SCENARIO_VEHICLE_ADD", module="scenario",
@@ -203,24 +202,23 @@ async def add_vehicle(body: VehicleBody, db: AsyncSession = Depends(get_db), use
 
 @router.post("/setup-default")
 async def setup_default(db: AsyncSession = Depends(get_db), user: User = Depends(require_any_permission("settings.publish"))):
-    """سناریوی پیش‌فرض کارفرما:
-    ۲ ساکن × ۳ ماشین (اولی=پارکینگ خودش، دومی=محوطه، سومی=دفنی) + ۲ خودروی غریبه."""
+    """سناریوی پیش‌فرض کارفرما: ۲ ساکن × ۳ ماشین + ۲ غریبه."""
+    import datetime as _dt
     from app.shared.plate import normalize_plate
-    from datetime import datetime, timedelta, timezone as tz
     from app.modules.parking.models import ParkingSpace
 
-    result: dict = {"units": [], "residents": [], "vehicles": [], "yard_spaces": [], "buried_spaces": []}
+    result: dict = {"units": [], "residents": [], "vehicles": [], "buried_spaces": []}
 
     cx = (await db.execute(select(Complex))).scalars().first()
     if cx is None:
-        cx = Complex(code="ORKID", name="مجتمع ارکیده"); db.add(cx); await db.flush()
+        cx = Complex(code="ORKID", name="مجتمع ارکیده")
+        db.add(cx); await db.flush()
     tw = (await db.execute(select(Tower).where(Tower.code == "T1"))).scalars().first()
     if tw is None:
         tw = Tower(complex_id=cx.id, code="T1", name="برج ۱", floor_count=10, is_active=True)
         db.add(tw); await db.flush()
 
     persons_and_vehicles = [
-        # (ساکن، پلاک‌ها) — پلاک سوم هر ساکن = خودروی دفنی
         ("علی", "رضایی",  "12ب345ایران11", "22د456ایران22", "32و567ایران33"),
         ("مریم", "کریمی", "43ه678ایران44", "54ز789ایران55", "65ح890ایران66"),
     ]
@@ -232,7 +230,7 @@ async def setup_default(db: AsyncSession = Depends(get_db), user: User = Depends
         person = Person(first_name=first, last_name=last, person_type="OWNER", is_active=True)
         db.add(person); await db.flush()
         occ = UnitOccupancy(unit_id=unit.id, person_id=person.id, occupancy_type="OWNER",
-                            is_primary=True, start_date=__import__("datetime").date.today())
+                            is_primary=True, start_date=_dt.date.today())
         db.add(occ)
         result["units"].append(unit.unit_number)
         result["residents"].append(f"{first} {last}")
@@ -242,49 +240,36 @@ async def setup_default(db: AsyncSession = Depends(get_db), user: User = Depends
             v = Vehicle(owner_person_id=person.id, unit_id=unit.id,
                         plate_raw=plate, plate_normalized=norm, is_active=True)
             db.add(v); await db.flush()
-            if location == "own":
-                # مجوز ورود به پارکینگ خودش (مسقف)
+            if location in ("own", "buried"):
                 db.add(AccessPermit(vehicle_id=v.id, plate_normalized=norm, status="ACTIVE",
                                     permit_type="PERMANENT",
-                                    valid_from=datetime.now(tz.utc) - timedelta(hours=1),
-                                    valid_until=datetime.now(tz.utc) + timedelta(days=365)))
-                # تخصیص به جایگاه مسقف ثابت
-                sp = ParkingSpace(code=f"P-{unit_number}-{location}", parking_type="PRIVATE",
-                                  zone="COVERED", floor=1, status="FREE", is_active=True)
+                                    valid_from=_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(hours=1),
+                                    valid_until=_dt.datetime.now(_dt.timezone.utc) + _dt.timedelta(days=365)))
+                sp = ParkingSpace(code=f"{'P' if location == 'own' else 'B'}-{unit_number}-{location}",
+                                  parking_type="PRIVATE",
+                                  zone=("COVERED" if location == "own" else "BURIED"),
+                                  floor=(1 if location == "own" else -1),
+                                  status="FREE", is_active=True)
                 db.add(sp); await db.flush()
                 db.add(ParkingAssignment(parking_space_id=sp.id, unit_id=unit.id, vehicle_id=v.id,
                                          assignment_type="PERMANENT", status="ACTIVE"))
-            elif location == "yard":
-                # ساکن متقاضی محوطه — مجوز بدون گیت خاص (در همهٔ گیت‌ها معتبر)
+                if location == "buried":
+                    result["buried_spaces"].append(norm)
+            else:
                 db.add(AccessPermit(vehicle_id=v.id, plate_normalized=norm, status="ACTIVE",
                                     permit_type="TEMPORARY",
-                                    valid_from=datetime.now(tz.utc) - timedelta(hours=1),
-                                    valid_until=datetime.now(tz.utc) + timedelta(days=30)))
-                result["yard_spaces"].append(norm)
-            else:
-                # دفنی — مجوز مسقف دیگر (طبقه پایین)
-                db.add(AccessPermit(vehicle_id=v.id, plate_normalized=norm, status="ACTIVE",
-                                    permit_type="PERMANENT",
-                                    valid_from=datetime.now(tz.utc) - timedelta(hours=1),
-                                    valid_until=datetime.now(tz.utc) + timedelta(days=365)))
-                sp = ParkingSpace(code=f"B-{unit_number}-{location}", parking_type="PRIVATE",
-                                  zone="BURIED", floor=-1, status="FREE", is_active=True)
-                db.add(sp); await db.flush()
-                db.add(ParkingAssignment(parking_space_id=sp.id, unit_id=unit.id, vehicle_id=v.id,
-                                         assignment_type="PERMANENT", status="ACTIVE"))
-                result["buried_spaces"].append(norm)
+                                    valid_from=_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(hours=1),
+                                    valid_until=_dt.datetime.now(_dt.timezone.utc) + _dt.timedelta(days=30)))
             result["vehicles"].append({"plate": norm, "location": location, "owner": f"{first} {last}"})
 
-    # ۲ خودروی غریبه (بدون مجوز)
-    # غریبه = پلاک شناخته‌شده ولی بدون مجوز (فعال) تا قانون بتواند تصمیم بگیرد؛
-    # is_active=False می‌شد VEHICLE_INACTIVE و محافظ نرم‌کردن جلوی قانون را می‌گرفت.
     for plate in ("77ط123ایران77", "88ظ456ایران88"):
         norm = normalize_plate(plate) or plate
-        v = Vehicle(plate_raw=plate, plate_normalized=norm, is_active=True)
+        v = Vehicle(plate_raw=plate, plate_normalized=norm, is_active=True)  # فعال بدون مجوز
         db.add(v); await db.flush()
         result["vehicles"].append({"plate": norm, "location": "unknown", "owner": "غریبه"})
 
-    # قوانین نمونه (DRAFT — کارفرما از UI منتشر می‌کند)
+    # حذف قوانین قبلی تا تکراری نشوند
+    await db.execute(sqldel(EntryExitRule))
     rules_seed = [
         EntryExitRule(name="ساکن → پارکینگ خودش", direction="IN", priority=10,
                       condition_mode="ALL",
@@ -304,30 +289,26 @@ async def setup_default(db: AsyncSession = Depends(get_db), user: User = Depends
                       conditions=[{"field": "has_valid_permit", "op": "false"}],
                       actions=[{"action": "refer_to_guard"}], status="DRAFT"),
     ]
-    # حذف قوانین قبلی (اگر از قبل موجود باشد) تا تکراری نشود
-    from sqlalchemy import delete as _del
-    await db.execute(_del(EntryExitRule))
     for r in rules_seed:
         db.add(r)
     result["rules_created"] = len(rules_seed)
 
     if user:
         await write_audit(db, user_id=user.id, action="SCENARIO_DEFAULT_SETUP", module="scenario",
-                          entity_type="scenario", entity_id="default", new_values={"units": 2, "vehicles": 8})
+                          entity_type="scenario", entity_id="default",
+                          new_values={"units": 2, "vehicles": 8})
     await db.commit()
     return {"success": True, **result}
 
 
 @router.get("/summary")
 async def summary(db: AsyncSession = Depends(get_db), user: User = Depends(require_any_permission("settings.view"))):
-    """شمارش کلید‌ها برای نمایش وضعیت فعلی."""
-    from sqlalchemy import func
     counts = {}
     for name, model in [
         ("complexes", Complex), ("towers", Tower), ("units", Unit),
         ("residents", Person), ("vehicles", Vehicle), ("permits", AccessPermit),
         ("parking_spaces", ParkingSpace), ("sessions", ParkingSession),
-        ("rules", EntryExitRule), ("users", _U),
+        ("rules", EntryExitRule), ("users", User),
     ]:
         counts[name] = int(await db.scalar(select(func.count()).select_from(model)) or 0)
     return counts
