@@ -4,11 +4,12 @@ import shutil
 import time
 from pathlib import Path
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Header
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
+from app.core.config import settings
 from app.core.exceptions import NotFoundError
 from app.db.session import get_db
 from app.modules.config_admin.models import AppSetting
@@ -64,7 +65,25 @@ async def load_cameras_cache(db: AsyncSession):
 
 
 @router.get("/snapshot/{side}")
-async def snapshot(side: str, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+async def snapshot(side: str, db: AsyncSession = Depends(get_db),
+                   x_api_key: str = Header(default=None, alias="X-API-Key"),
+                   authorization: str = Header(default=None, alias="Authorization"),
+                   api_key: str = None):
+    """احراز: X-API-Key (برای img tag) یا Bearer token."""
+    import secrets as _secrets
+    api_key_ok = x_api_key and _secrets.compare_digest(x_api_key, settings.GATE_API_KEY)
+    if not api_key_ok and api_key:
+        api_key_ok = _secrets.compare_digest(api_key, settings.GATE_API_KEY)
+    if not api_key_ok:
+        if not (authorization and authorization.startswith("Bearer ")):
+            from fastapi import HTTPException
+            raise HTTPException(status_code=401, detail="camera auth failed")
+        from app.core.security import decode_token
+        try:
+            decode_token(authorization.replace("Bearer ", ""))
+        except Exception:
+            from fastapi import HTTPException
+            raise HTTPException(status_code=401, detail="invalid token")
     """فریم لحظه‌ای دوربین (JPEG) — با کش TTL دو ثانیه."""
     side = side.upper()
     if side not in ("IN", "OUT"):
