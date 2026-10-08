@@ -225,10 +225,19 @@ async def setup_default(db: AsyncSession = Depends(get_db), user: User = Depends
 
     for first, last, p1, p2, p3 in persons_and_vehicles:
         unit_number = f"{first}-{last}"[:12]
+        existing_unit = (await db.execute(select(Unit).where(
+            Unit.tower_id == tw.id, Unit.unit_number == unit_number))).scalars().first()
+        if existing_unit:
+            result["units"].append(unit_number)
+            result["residents"].append(f"{first} {last}")
+            continue  # این ساکن از قبل ساخته شده — skip
         unit = Unit(tower_id=tw.id, unit_number=unit_number, floor_number=1, is_active=True)
         db.add(unit); await db.flush()
-        person = Person(first_name=first, last_name=last, person_type="OWNER", is_active=True)
-        db.add(person); await db.flush()
+        person = (await db.execute(select(Person).where(
+            Person.first_name == first, Person.last_name == last))).scalars().first()
+        if person is None:
+            person = Person(first_name=first, last_name=last, person_type="OWNER", is_active=True)
+            db.add(person); await db.flush()
         occ = UnitOccupancy(unit_id=unit.id, person_id=person.id, occupancy_type="OWNER",
                             is_primary=True, start_date=_dt.date.today())
         db.add(occ)
@@ -237,6 +246,12 @@ async def setup_default(db: AsyncSession = Depends(get_db), user: User = Depends
 
         for plate, location in ((p1, "own"), (p2, "yard"), (p3, "buried")):
             norm = normalize_plate(plate) or plate
+            existing_v = (await db.execute(select(Vehicle).where(
+                Vehicle.plate_normalized == norm))).scalars().first()
+            if existing_v:
+                result["vehicles"].append({"plate": norm, "location": location,
+                                           "owner": f"{first} {last}", "skipped": True})
+                continue
             v = Vehicle(owner_person_id=person.id, unit_id=unit.id,
                         plate_raw=plate, plate_normalized=norm, is_active=True)
             db.add(v); await db.flush()
@@ -264,8 +279,11 @@ async def setup_default(db: AsyncSession = Depends(get_db), user: User = Depends
 
     for plate in ("77ط123ایران77", "88ظ456ایران88"):
         norm = normalize_plate(plate) or plate
-        v = Vehicle(plate_raw=plate, plate_normalized=norm, is_active=True)  # فعال بدون مجوز
-        db.add(v); await db.flush()
+        existing_v = (await db.execute(select(Vehicle).where(
+            Vehicle.plate_normalized == norm))).scalars().first()
+        if existing_v is None:
+            v = Vehicle(plate_raw=plate, plate_normalized=norm, is_active=True)
+            db.add(v); await db.flush()
         result["vehicles"].append({"plate": norm, "location": "unknown", "owner": "غریبه"})
 
     # حذف قوانین قبلی تا تکراری نشوند
