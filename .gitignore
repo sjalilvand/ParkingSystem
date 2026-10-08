@@ -48,3 +48,14 @@ gate-agent/agent.db*
 _audit_wave*.txt
 ~$*
 _audit_*.txt
+fix-*.ps1
+setup-env.ps1
+run-dev.ps1
+wave*.ps1
+start-app.ps1
+_direct_purge*.py
+_reset_admin*.py
+STOP-APP.bat
+START-APP.bat
+test.ps1
+fix-prod.ps1
