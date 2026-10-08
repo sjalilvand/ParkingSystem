@@ -113,6 +113,11 @@ function GateSide({ direction, live, defaultPlate }: { direction: 'IN' | 'OUT'; 
     colors: Record<string, string>
   } | null>(null)
   const [driverReq, setDriverReq] = useState<string | null>(null)
+  const [camTick, setCamTick] = useState(0)
+  useEffect(() => {
+    const t = setInterval(() => setCamTick((x) => x + 1), 2500)
+    return () => clearInterval(t)
+  }, [])
   const [receipt, setReceipt] = useState<null | {
     template: { name: string; paper_width_mm: number; sections: { key: string; visible: boolean }[]; header_text?: string | null; footer_text?: string | null; show_trial_badge: boolean }
     data: Record<string, string | number | null>
@@ -247,7 +252,7 @@ function GateSide({ direction, live, defaultPlate }: { direction: 'IN' | 'OUT'; 
 
         {boxCfg?.messages?.welcome && !result && (
           <Alert severity="info" sx={{ mb: 2 }} icon={false}>{boxCfg.messages.welcome}</Alert>
-        )}
+                )}
         {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
         {msg && <Alert severity="success" sx={{ mb: 2 }}>{msg}</Alert>}
 
@@ -275,6 +280,16 @@ function GateSide({ direction, live, defaultPlate }: { direction: 'IN' | 'OUT'; 
             </Button>
           ))}
         </form>
+        <Box sx={{ mb: 2, borderRadius: 2, overflow: 'hidden', border: '2px solid #E3EAF2', position: 'relative' }}>
+            <img
+              src={`http://localhost:8000/api/v1/camera/snapshot/${isEntry ? 'IN' : 'OUT'}?t=${camTick}&api_key=gate-dev-key`}
+              alt={isEntry ? 'دوربین ورود' : 'دوربین خروج'}
+              style={{ width: '100%', display: 'block', aspectRatio: '16/6', objectFit: 'cover', backgroundColor: '#111' }}
+              onError={(e) => { (e.target as HTMLImageElement).style.opacity = '0.3' }}
+            />
+            <Chip size="small" label={isEntry ? '📹 دوربین ورود — زنده' : '📹 دوربین خروج — زنده'}
+              sx={{ position: 'absolute', top: 8, right: 8, bgcolor: 'rgba(0,0,0,.55)', color: '#fff' }} />
+          </Box>
         {driverReq && (
           <Alert severity="info" sx={{ mt: 1 }}
             action={<Button size="small" onClick={() => setDriverReq(null)}>لغو</Button>}>
