@@ -18,6 +18,7 @@ import Ops from '../pages/Ops'
 import Simulator from '../pages/Simulator'
 import ParkingDesigner from '../pages/ParkingDesigner'
 import RuleTester from '../pages/RuleTester'
+import ScenarioBuilder from '../pages/ScenarioBuilder'
 
 export default function App() {
   return (
@@ -31,6 +32,7 @@ export default function App() {
         <Route path="/base-data" element={<BaseData />} />
         <Route path="/users" element={<Users />} />
         <Route path="/designer" element={<ParkingDesigner />} />
+        <Route path="/scenario" element={<ScenarioBuilder />} />
         <Route path="/rule-tester" element={<RuleTester />} />
         <Route path="/vehicles" element={<Vehicles />} />
         <Route path="/permits" element={<Permits />} />

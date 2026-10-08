@@ -43,6 +43,7 @@ const menu: { label: string; icon: ReactNode; path: string; perm?: string }[] = 
   { label: 'اطلاعات پایه', icon: <Tune />, path: '/base-data', perm: 'base_data.view' },
   { label: 'طراح تنظیمات', icon: <Settings />, path: '/designer', perm: 'settings.view' },
   { label: 'آزمایش قوانین', icon: <Science />, path: '/rule-tester', perm: 'rules.view' },
+  { label: 'سناریوساز', icon: <Science />, path: '/scenario', perm: 'settings.view' },
   { label: 'کاربران و نقش‌ها', icon: <ManageAccounts />, path: '/users', perm: 'user.manage' },
 ]
 
