@@ -136,6 +136,28 @@ async def long_stays(min_hours: int = 24, db: AsyncSession = Depends(get_db), us
     return items
 
 
+@router.get("/financial-summary")
+async def financial_summary(
+    voided: str | None = None,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """D10: خلاصه گزارش‌های مالی با تکلیف شارژهای VOIDED.
+
+    voided=SEPARATE (پیش‌فرض): شارژهای VOIDED جدا نمایش داده می‌شوند و در جمع فعال نیستند.
+    voided=EXCLUDE: شارژهای VOIDED کاملاً از گزارش حذف می‌شوند.
+    منبع مقدار: پارامتر URL > app_settings (report_policy) > env (VOIDED_REPORT_MODE).
+    """
+    from app.core.runtime_settings import resolve_voided_report_mode
+    from app.modules.finance.service import summarize_charges_for_report
+
+    mode = (voided or "").upper() or await resolve_voided_report_mode(db)
+    rows = (await db.execute(select(Charge).order_by(Charge.created_at.desc()).limit(10000))).scalars().all()
+    summary = summarize_charges_for_report(rows, mode)
+    summary["generated_at"] = datetime.now(timezone.utc).isoformat()
+    return summary
+
+
 @router.get("/devices")
 async def devices_report(db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
     gates = (await db.execute(select(Gate))).scalars().all()

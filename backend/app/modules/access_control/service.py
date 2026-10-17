@@ -19,11 +19,13 @@ try:
         calculate_amounts,
         close_session_amounts,
         get_active_tariff,
+        settle_exit_with_prepaid_credit,
     )
 except ImportError:  # pragma: no cover
     close_session_amounts = None
     get_active_tariff = None
     calculate_amounts = None
+    settle_exit_with_prepaid_credit = None
 
 
 class GateDecisionService:
@@ -136,12 +138,26 @@ class GateDecisionService:
                     ).order_by(ParkingSession.entry_at.desc())
                 )).scalars().first()
                 if session:
-                    policy = (getattr(settings, "EXIT_UNPAID_POLICY", "WARN") or "WARN").upper()
+                    # D1: سیاست خروج با بدهی — از تنظیمات زمان-اجرا (app_settings → env → WARN)
+                    try:
+                        from app.core.runtime_settings import (
+                            resolve_exit_policy,
+                            resolve_tariff_policy,
+                            tariff_calc_kwargs,
+                        )
+                        policy = await resolve_exit_policy(db)
+                    except Exception:
+                        policy = (getattr(settings, "EXIT_UNPAID_POLICY", "WARN") or "WARN").upper()
                     exit_duration = max(0, int((now - session.entry_at).total_seconds()))
                     blocked = False
                     if policy == "DENY" and get_active_tariff is not None and calculate_amounts is not None:
                         _tariff = await get_active_tariff(db, now)
-                        _preview = calculate_amounts(_tariff, exit_duration)
+                        try:
+                            _tpol = await resolve_tariff_policy(db)
+                            _calc_kwargs = tariff_calc_kwargs(_tpol)
+                        except Exception:
+                            _calc_kwargs = {}
+                        _preview = calculate_amounts(_tariff, exit_duration, entry_at=session.entry_at, **_calc_kwargs)
                         if _preview.get("final", 0) > 0:
                             blocked = True
                     if blocked:
@@ -163,6 +179,23 @@ class GateDecisionService:
                             warnings.extend(amounts.get("warnings", []))
                         session.status = "CLOSED"
                         session.payment_status = "FREE" if session.final_amount == 0 else "UNPAID"
+                        # D7: مهلت خروج پس از پرداخت — اعتبارِ پرداخت‌های اخیرِ همان پلاک
+                        # به شارژ تازه‌ساز خروج تخصیص می‌یابد (پرداخت قبل از خروج معتبر می‌ماند)
+                        if close_session_amounts and session.payment_status == "UNPAID":
+                            try:
+                                from app.core.runtime_settings import get_policy_setting
+                                _grace = await get_policy_setting(
+                                    db, "tariff_policy", "EXIT_GRACE_MINUTES",
+                                    default=20, cast=int, aliases=["exit_grace_minutes"])
+                                settle = await settle_exit_with_prepaid_credit(
+                                    db, session, now, int(_grace or 0)) if settle_exit_with_prepaid_credit else None
+                                if settle and settle.get("settled"):
+                                    session.payment_status = "PAID"
+                                    warnings.append("EXIT_SETTLED_WITHIN_GRACE")
+                                elif settle:
+                                    warnings.append("PREPAID_CREDIT_PARTIALLY_APPLIED")
+                            except Exception:
+                                warnings.append("GRACE_SETTLEMENT_ERROR")
                         decision, reason = "ALLOW", "EXIT_SESSION_CLOSED"
                         if session.final_amount > 0 and session.payment_status == "UNPAID" and policy != "ALLOW":
                             warnings.append("UNPAID_EXIT")

@@ -35,6 +35,12 @@ MATRIX = {
     "ops":           ["view", "create", "edit"],
     "simulator":     ["view", "create"],
     "audit":         ["view", "export"],
+    # D6: ماژول‌های فاقد کد مجوز در کاتالوگ قبلی — روترهای finance و config_admin
+    # به این کدها وابسته‌اند؛ بدون seed آن‌ها فقط ADMIN (bypass) کار می‌کرد.
+    "finance":       ["view", "pay", "manage"],
+    "settings":      ["view", "edit", "publish"],
+    "rules":         ["view", "edit", "publish"],
+    "groups":        ["view", "edit"],
 }
 
 ACTION_FA = {"view": "مشاهده", "create": "ایجاد", "edit": "ویرایش", "delete": "حذف",
@@ -46,28 +52,40 @@ MODULE_FA = {"dashboard": "داشبورد", "gate": "پنل گیت", "structure"
              "parking": "پارکینگ", "access_events": "تردد", "debts": "بدهی‌ها",
              "violations": "تخلفات", "tariffs": "تعرفه‌ها", "base_data": "اطلاعات پایه",
              "reports": "گزارش‌ها", "users": "کاربران", "roles": "نقش‌ها",
-             "ops": "مرکز عملیات", "simulator": "شبیه‌ساز", "audit": "تاریخچه فعالیت"}
+             "ops": "مرکز عملیات", "simulator": "شبیه‌ساز", "audit": "تاریخچه فعالیت",
+             "finance": "مالی", "settings": "تنظیمات", "rules": "قوانین ورود/خروج",
+             "groups": "گروه‌های خودرو"}
+
+ACTION_FA["pay"] = "ثبت پرداخت"
+ACTION_FA["manage"] = "مدیریت"
 
 ROLES = {
     "ADMIN": {"name": "ادمین", "desc": "دسترسی کامل", "perms": None},  # None = همه
-    "GUARD_IN": {"name": "نگهبان ورودی", "desc": "ثبت ورود/خروج در گیت",
+    "GUARD_IN": {"name": "نگهبان ورودی", "desc": "ثبت ورود/خروج در گیت + وصول پرداخت",
                  "perms": ["gate.view", "gate.create", "gate.edit",
                            "access_events.view", "access_events.create",
-                           "vehicles.view", "dashboard.view"]},
+                           "vehicles.view", "dashboard.view",
+                           # D6: عملیات مالی در گیت — دید بدهی و ثبت پرداخت نقدی
+                           "finance.view", "finance.pay"]},
     "YARD_MANAGER": {"name": "مسئول محوطه", "desc": "مدیریت محوطه‌های اختصاصی",
                      "perms": ["dashboard.view", "field.view", "field.create", "field.edit",
                                "parking.view", "access_events.view",
-                               "vehicles.view", "violations.view", "violations.create"]},
+                               "vehicles.view", "violations.view", "violations.create",
+                               # D6: دید بدهی برای پیگیری محوطه
+                               "finance.view"]},
     "BUILDING_OBSERVER": {"name": "ناظر بیرونی - مدیر ساختمان", "desc": "مشاهده و پیگیری ساختمان‌های اختصاصی",
                           "perms": ["dashboard.view", "reports.view", "reports.export",
                                     "access_events.view", "violations.view",
                                     "vehicles.view", "debts.view",
-                                    "field.view", "field.approve", "field.reject"]},
+                                    "field.view", "field.approve", "field.reject",
+                                    # D6: صفحه بدهی‌ها به finance.view وابسته است
+                                    "finance.view"]},
     "PLAN_MANAGER": {"name": "مدیر طرح", "desc": "گزارش تجمیعی طرح",
                      "perms": ["dashboard.view", "reports.view", "reports.export",
                                "access_events.view", "debts.view", "violations.view",
                                "vehicles.view", "parking.view",
-                               "field.view", "field.approve", "field.reject"]},
+                               "field.view", "field.approve", "field.reject",
+                               "finance.view"]},
 }
 
 
