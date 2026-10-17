@@ -207,17 +207,22 @@ def _classical_detect(bgr) -> list[tuple]:
         cv2.inRange(hsv, np.array((95, 60, 60)), np.array((135, 255, 255))),  # آبی (دیپلمات/تشریفات)
     ]
     boxes: list[tuple] = []
-    min_h, max_h = int(h * 0.030), int(h * 0.35)
+    # نکته: حداکثر ارتفاع ۰٫۹۲ — در عکس‌های نزدیک (دست/موبایل) پلاک ممکن است
+    # بیشترِ کادر را بگیرد؛ سقف ۰٫۳۵ باعث می‌شد تشخیص شکست بخورد و مسیر
+    # گرانِ OCR کل-تصویر (۱۰ تا ۴۰ ثانیه روی CPU) اجرا شود.
+    min_h, max_h = int(h * 0.030), int(h * 0.92)
     for m in masks:
         closed = cv2.morphologyEx(m, cv2.MORPH_CLOSE,
                                   cv2.getStructuringElement(cv2.MORPH_RECT, (21, 5)))
         cnts, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         for c in cnts:
             x, y, cw, ch = cv2.boundingRect(c)
-            if not (min_h <= ch <= max_h) or cw < ch * 1.8:
+            if not (min_h <= ch <= max_h) or cw < ch * 1.5:
                 continue
+            # نسبت ۱٫۸ تا ۸٫۵ — در نمای نزدیک پلاک ممکن است از کادر بیرون بزند
+            # و نسبت به‌مراتب کمتر از ۴٫۵ استاندارد شود
             aspect = cw / float(ch)
-            if not (2.2 <= aspect <= 7.5):
+            if not (1.8 <= aspect <= 8.5):
                 continue
             area_ratio = cw * ch / float(w * h)
             if area_ratio < 0.002:
@@ -227,13 +232,189 @@ def _classical_detect(bgr) -> list[tuple]:
                 continue
             boxes.append((x / scale, y / scale, (x + cw) / scale, (y + ch) / scale))
 
-    # حذف جعبه‌های هم‌پوشان
+    # حذف جعبه‌های هم‌پوشان (سقف ۴ — تشخیص‌گر گرادیانی مکملِ این تابع است)
     boxes.sort(key=lambda b: (b[2] - b[0]) * (b[3] - b[1]), reverse=True)
     keep: list[tuple] = []
     for b in boxes:
         if all(_iou(b, k) < 0.30 for k in keep):
             keep.append(b)
-    return keep[:6]
+    return keep[:4]
+
+
+def _text_detect(bgr) -> list[tuple]:
+    """تشخیص با گروه‌بندی نویسه + قاب پلاک — مکمل ماسک رنگ.
+
+    دو شکست واقعی ماسک رنگ:
+      * پلاک سفید روی بدنهٔ سفید — ماسک سفید کل بدنه را می‌گیرد؛
+      * پلاک کوچک در صحنه — پس از بستن مورفولوژی به بدنه می‌چسبد.
+    دو سیگنال مستقل:
+      ۱) قاب پلاک: کانتور توخالی (حلقهٔ تیره) با داخل روشن و نسبت عریض؛
+      ۲) نویسه‌ها: بلاب‌های کوچک تیره که در یک خط افقی گروه می‌شوند
+         (با رشد لنگردار برای پلاک کج/ناقص).
+    خروجی: جعبه‌های کاندید پلاک (x1, y1, x2, y2).
+    """
+    if not HAS_CV2 or bgr is None or bgr.size == 0:
+        return []
+    H, W = bgr.shape[:2]
+    gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY) if bgr.ndim == 3 else bgr
+    th = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                               cv2.THRESH_BINARY_INV, 25, 11)
+    cnts, hier = cv2.findContours(th, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
+    if hier is None:
+        return []
+    hier = hier[0]
+
+    # ---------- ۱) قاب پلاک: کانتور دارای سوراخ بزرگ با داخل روشن ----------
+    frame_boxes: list[tuple] = []
+    group_boxes: list[tuple] = []
+    for i, c in enumerate(cnts):
+        child = hier[i][2]
+        if child == -1:
+            continue
+        # قاب پلاک چند سوراخ دارد (زمینهٔ داخلی + نویسه‌های چسبیده) —
+        # بیشینهٔ مساحت سوراخ‌ها ملاک است، نه فقط اولین فرزند
+        hole_max = 0.0
+        ch_it = child
+        while ch_it != -1:
+            hole_max = max(hole_max, cv2.contourArea(cnts[ch_it]))
+            ch_it = hier[ch_it][0]
+        x, y, cw, ch = cv2.boundingRect(c)
+        if not (10 <= ch <= H * 0.60):
+            continue
+        ar = cw / float(ch)
+        if not (2.2 <= ar <= 9.0):
+            continue
+        if cw * ch < 0.0015 * W * H:
+            continue
+        if hole_max < 0.30 * cw * ch:
+            continue
+        inner = gray[int(y + 0.25 * ch):int(y + 0.75 * ch),
+                     int(x + 0.15 * cw):int(x + 0.85 * cw)]
+        if inner.size == 0 or float(inner.mean()) < 130:
+            continue
+        frame_boxes.append((x, y, x + cw, y + ch))
+
+    # ---------- ۲) نویسه‌های کاندید ----------
+    chars: list[tuple] = []
+    for c in cnts:
+        x, y, cw, ch = cv2.boundingRect(c)
+        if not (5 <= ch <= H * 0.55):
+            continue
+        ar = cw / float(ch)
+        if not (0.12 <= ar <= 1.45):
+            continue
+        if cv2.contourArea(c) < 0.18 * cw * ch:
+            continue
+        pad = 3
+        roi = gray[max(0, y - pad):min(H, y + ch + pad),
+                   max(0, x - pad):min(W, x + cw + pad)]
+        if roi.size == 0 or float(roi.mean()) < 100:
+            continue
+        chars.append((x, y, x + cw, y + ch))
+
+    # ---------- ۳) گروه‌بندی خطی نویسه‌ها ----------
+    chars.sort(key=lambda b: (b[1], b[0]))
+    used = [False] * len(chars)
+    groups: list[list[int]] = []
+    for i, s in enumerate(chars):
+        if used[i]:
+            continue
+        group = [s]
+        used[i] = True
+        changed = True
+        while changed:
+            changed = False
+            gx1 = min(g[0] for g in group); gx2 = max(g[2] for g in group)
+            gy1 = min(g[1] for g in group); gy2 = max(g[3] for g in group)
+            gh = max(1, gy2 - gy1)
+            for j, t in enumerate(chars):
+                if used[j]:
+                    continue
+                tx1, ty1, tx2, ty2 = t
+                thh = ty2 - ty1
+                if min(gy2, ty2) - max(gy1, ty1) < 0.30 * min(gh, thh):
+                    continue          # هم‌ترازی عمودی
+                if not (0.35 <= thh / float(gh) <= 2.8):
+                    continue          # ارتفاع مشابه (پلاک کج)
+                if max(tx1 - gx2, gx1 - tx2, -1) > 1.6 * max(gh, thh):
+                    continue          # فاصلهٔ افقی منطقی
+                group.append(t)
+                used[j] = True
+                changed = True
+        if len(group) >= 4:
+            groups.append([min(g[0] for g in group), min(g[1] for g in group),
+                           max(g[2] for g in group), max(g[3] for g in group)])
+
+    # ادغام گروه‌های هم‌خط (مثلاً گروه ارقام + گروه کد استان)
+    merged = True
+    while merged:
+        merged = False
+        for i in range(len(groups)):
+            for j in range(i + 1, len(groups)):
+                a, b = groups[i], groups[j]
+                ah, bh = a[3] - a[1], b[3] - b[1]
+                if min(a[3], b[3]) - max(a[1], b[1]) > 0.25 * min(ah, bh) and \
+                        max(b[0] - a[2], a[0] - b[2], -1) < 2.0 * max(ah, bh):
+                    groups[i] = [min(a[0], b[0]), min(a[1], b[1]),
+                                 max(a[2], b[2]), max(a[3], b[3])]
+                    groups.pop(j)
+                    merged = True
+                    break
+            if merged:
+                break
+
+    # رشد لنگردار — نویسه‌های کج/کم‌کنتراستِ اطراف گروه هم جذب می‌شوند
+    for _ in range(3):
+        grown = False
+        for gi, box in enumerate(groups):
+            x1, y1, x2, y2 = box
+            gh = max(1, y2 - y1)
+            cx1, cx2 = x1 - 1.3 * gh, x2 + 1.3 * gh
+            cy1, cy2 = y1 - 0.8 * gh, y2 + 0.8 * gh
+            for t in chars:
+                tcx, tcy = (t[0] + t[2]) / 2.0, (t[1] + t[3]) / 2.0
+                if cx1 <= tcx <= cx2 and cy1 <= tcy <= cy2:
+                    nb = [min(x1, t[0]), min(y1, t[1]), max(x2, t[2]), max(y2, t[3])]
+                    if nb != box:
+                        groups[gi] = nb
+                        grown = True
+        if not grown:
+            break
+
+    for gx1, gy1, gx2, gy2 in groups:
+        gw, gh = gx2 - gx1, gy2 - gy1
+        if not (2.2 <= gw / float(max(1, gh)) <= 9.0):
+            continue
+        if gh < 9:
+            continue
+        if float(gray[gy1:gy2, gx1:gx2].mean()) < 110:
+            continue
+        group_boxes.append((gx1, gy1, gx2, gy2))
+
+    # حذف هم‌پوشان — قاب پلاک دقیق‌ترین جعبه است و اولویت دارد؛ گروه نویسه
+    # فقط اگر با قاب هم‌پوشان نباشد اضافه می‌شود (در غیر این صورت ناقص است)
+    uniq: list[tuple] = []
+    for b in sorted(frame_boxes, key=_detect_priority, reverse=True):
+        if all(_iou(b, u) < 0.35 for u in uniq):
+            uniq.append(b)
+    for b in sorted(group_boxes, key=_detect_priority, reverse=True):
+        if all(_iou(b, u) < 0.30 for u in uniq):
+            uniq.append(b)
+    return uniq[:5]
+
+
+def _detect_priority(box) -> tuple:
+    """کلید اولویت OCR: شباهت نسبت ابعاد به پلاک ایران (۴٫۷۳) + مساحت.
+
+    جعبهٔ درست معمولاً نسبت نزدیک ۴٫۷ دارد؛ بدنهٔ ماشین/پنجره/دیوار نسبت
+    متفاوتی دارند. با این ترتیب، پلاک واقعی زودتر OCR می‌شود و سقف زمانی
+    پیش از رسیدن به باکس‌های زباله تمام نمی‌شود.
+    """
+    x1, y1, x2, y2 = box
+    w, h = max(1, x2 - x1), max(1, y2 - y1)
+    aspect = w / float(h)
+    a_score = max(0.0, 1.0 - abs(aspect - 4.73) / 4.73)
+    return (a_score, w * h)
 
 
 def _iou(a, b) -> float:
@@ -399,8 +580,10 @@ class PlateReader:
         if easy is not None:
             try:
                 with self._lock:
+                    # canvas ۷۶۸ برای برشِ ≤۴۴۰×۱۱۰ کافی است — نصف زمان CRAFT
                     res = easy.readtext(crop, detail=1, paragraph=False,
-                                        allowlist=pt.OCR_ALLOWLIST)
+                                        allowlist=pt.OCR_ALLOWLIST,
+                                        workers=0, mag_ratio=1.0, canvas_size=768)
                 if res:
                     pieces = [(float(bb[0][0]), txt, float(c)) for bb, txt, c in res]
                     # حذف قطعات بلندِ بدون رقم — باقیمانده‌های متن صحنه/کلمه ایرانِ ناخوانا
@@ -415,13 +598,24 @@ class PlateReader:
                         out.append((rtl, conf, "easyocr"))
                         if ltr != rtl:
                             out.append((ltr, conf, "easyocr-ltr"))
+                        # تک‌قطعه‌ها هم کاندیدای مستقل — قطعهٔ زباله («۴۸» پرچم) نباید
+                        # به خوانش اصلی بچسبد؛ قطعهٔ «۱۳۸۸۱۱۱» تنها قابل‌ترمیم است
+                        for _x, txt, c in pieces:
+                            nt = pt.normalize(txt)
+                            if 3 <= len(nt) <= 9:
+                                out.append((nt, c, "easyocr-piece"))
             except Exception:
                 pass
         return out
 
     # ------------------------------------------------ تشخیص
     def _detect(self, bgr) -> list[tuple]:
-        """[(box, warp|None), ...] — YOLO اگر موجود، وگرنه کلاسیک."""
+        """[(box, warp|None), ...] — YOLO اگر موجود، وگرنه کلاسیک + گرادیانی.
+
+        ماسک رنگ و تراکم لبه مکمل‌اند: ماسک رنگ در نمای نزدیک خوب است،
+        تراکم لبه پلاک سفید روی بدنهٔ سفید و پلاک کوچک را پیدا می‌کند.
+        خروجی با اولویتِ شباهت نسبت ابعاد به ۴٫۷۳ مرتب می‌شود.
+        """
         yolo = self._get_yolo()
         if yolo is not None:
             try:
@@ -431,32 +625,149 @@ class PlateReader:
                             for b in res.boxes.xyxy.cpu().numpy().astype(int)]
             except Exception:
                 pass
-        return [(b, None) for b in _classical_detect(bgr)]
+        boxes = _classical_detect(bgr)
+        for tb in _text_detect(bgr):
+            if all(_iou(tb, b) < 0.35 for b in boxes):
+                boxes.append(tb)
+        boxes.sort(key=_detect_priority, reverse=True)
+        return [(b, None) for b in boxes[:5]]
 
     # ------------------------------------------------ برش پلاک
     def _plate_crop(self, bgr, box) -> "np.ndarray | None":
-        """برش + راست‌کردن (warp) — برای CRNN و OCR دقیق."""
-        x1, y1, x2, y2 = expand_box(box)
-        H, W = bgr.shape[:2]
-        crop = bgr[max(0, y1):min(H, y2), max(0, x1):min(W, x2)]
-        if crop.size == 0 or crop.shape[0] < 10 or crop.shape[1] < 30:
-            return None
-        crop = _upscale_to(enhance(crop), 96)
-        return _upscale_to(warp_plate(crop), 110)
+        """برش از تصویر خام + enhance روی خود برش + راست‌کردن (warp).
 
-    def _plain_crop(self, bgr, box) -> "np.ndarray | None":
-        """برش ساده بدون وارپ — وقتی گوشه‌یاب خطا می‌رود این مسیر بهتر می‌خواند."""
+        ترتیب مهم است: CLAHE روی کل تصویر تقطیع متفاوتی دارد؛ enhance باید
+        روی برش انجام شود تا با شرایط آزمایش‌شده یکی باشد."""
         x1, y1, x2, y2 = expand_box(box)
         H, W = bgr.shape[:2]
         crop = bgr[max(0, y1):min(H, y2), max(0, x1):min(W, x2)]
         if crop.size == 0 or crop.shape[0] < 10 or crop.shape[1] < 30:
             return None
-        return _upscale_to(enhance(crop), 110)
+        return _upscale_to(warp_plate(_upscale_to(enhance(crop), 96)), 110)
+
+    def _plain_crop(self, bgr, box, *, margin: float = 0.005,
+                    target_h: int = 110) -> "np.ndarray | None":
+        """برش ساده بدون وارپ — حاشیهٔ تقریباً صفر؛ جعبه‌های تشخیص خودشان تنگ‌اند
+        و حاشیهٔ اضافی نوار پرچم/بدنه را وارد OCR می‌کند و خوانش را خراب
+        (آزمایش واقعی: حاشیهٔ ۸٪ خوانش ۰٫۵۶ را به هیچ رساند)."""
+        x1, y1, x2, y2 = [int(v) for v in box]
+        w, h = x2 - x1, y2 - y1
+        H, W = bgr.shape[:2]
+        x1, y1 = max(0, x1 - int(w * margin)), max(0, y1 - int(h * margin))
+        x2, y2 = min(W, x2 + int(w * margin)), min(H, y2 + int(h * margin))
+        crop = bgr[max(0, y1):min(H, y2), max(0, x1):min(W, x2)]
+        if crop.size == 0 or crop.shape[0] < 10 or crop.shape[1] < 30:
+            return None
+        return _upscale_to(enhance(crop), target_h)
+
+    # ------------------------------------------------ برش حاشیه‌دار آزاد
+    def _margin_crop(self, bgr, box, *, fx: float = 0.45, fy: float = 0.60,
+                     target_h: int = 130) -> "np.ndarray | None":
+        """برش با حاشیهٔ سخاوتمند + بزرگ‌نمایی — برای جعبه‌های یافتهٔ کل-تصویر.
+
+        جعبهٔ متن EasyOCR تنگ است (فقط نویسه‌ها)؛ قاب پلاک حاشیهٔ بیشتری
+        می‌خواهد تا گوشه‌یاب و OCR بهتر کار کنند.
+        """
+        x1, y1, x2, y2 = [int(v) for v in box]
+        w, h = x2 - x1, y2 - y1
+        H, W = bgr.shape[:2]
+        x1, y1 = max(0, x1 - int(w * fx)), max(0, y1 - int(h * fy))
+        x2, y2 = min(W, x2 + int(w * fx)), min(H, y2 + int(h * fy))
+        crop = bgr[max(0, y1):y2, max(0, x1):x2]
+        if crop.size == 0 or crop.shape[0] < 8 or crop.shape[1] < 24:
+            return None
+        return _upscale_to(enhance(crop), target_h)
+
+    @staticmethod
+    def _binarize(crop) -> "np.ndarray | None":
+        """واریانت باینریِ برش پلاک — برای عکس‌های کم‌کنتراست/کدر.
+
+        آستانهٔ تطبیقی روی خاکستریِ بزرگ‌نمایی‌شده؛ خروجی ۳ کاناله برای EasyOCR.
+        """
+        if not HAS_CV2 or crop is None or crop.size == 0:
+            return None
+        gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY) if crop.ndim == 3 else crop
+        gray = _upscale_to(gray, 140)
+        th = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                                   cv2.THRESH_BINARY, 35, 12)
+        return cv2.cvtColor(th, cv2.COLOR_GRAY2BGR)
+
+    # ------------------------------------------------ یافتن متن در کل تصویر
+    def _fullimage_locate(self, bgr_full) -> list[tuple]:
+        """جعبه‌های متنیِ شبیه پلاک روی کل تصویر — بدون OCR دقیق.
+
+        OCR مستقیمِ کل تصویر روی متن ریز جواب غلط می‌دهد (نمونهٔ واقعی:
+        «۱۴ب۵۹۱» خوانده شد «۸۴۰ب۵۶۹»). به‌جای آن:
+          ۱) CRAFT جعبه‌های متن را پیدا می‌کند (حتی کم‌اطمینان)؛
+          ۲) جعبه‌های عریض (نسبت ≥۲) شبیه پلاک نگه داشته می‌شوند؛
+          ۳) caller هر جعبه را با کیفیت کامل برش و بزرگ‌نمایی و دوباره OCR می‌کند.
+        """
+        easy = self._get_easy()
+        if easy is None:
+            return []
+        H, W = bgr_full.shape[:2]
+        fi = bgr_full
+        if max(H, W) > 1280:
+            f = 1280.0 / max(H, W)
+            fi = cv2.resize(fi, None, fx=f, fy=f, interpolation=cv2.INTER_AREA)
+        try:
+            with self._lock:
+                # بدون allowlist — هدف «مکان‌یابی» است نه خواندن؛ آستانه‌های پایین‌تر
+                # تا متن ریزِ پلاک هم جعبه بگیرد
+                res = easy.readtext(fi, detail=1, paragraph=False, workers=0,
+                                    text_threshold=0.5, low_text=0.3,
+                                    mag_ratio=1.0, canvas_size=1152)
+        except Exception:
+            return []
+        s = W / float(fi.shape[1])
+        boxes: list[tuple] = []
+        for bb, _txt, _conf in res:
+            xs = [p[0] for p in bb]
+            ys = [p[1] for p in bb]
+            x1, y1, x2, y2 = min(xs) * s, min(ys) * s, max(xs) * s, max(ys) * s
+            w_, h_ = x2 - x1, y2 - y1
+            if h_ < 8 or w_ < 2.0 * h_ or w_ > 9.5 * h_:
+                continue
+            if w_ * h_ < 0.0008 * W * H:
+                continue
+            boxes.append((int(x1), int(y1), int(x2), int(y2)))
+        # حذف هم‌پوشان + اولویت نسبت ابعاد
+        uniq: list[tuple] = []
+        for b in sorted(boxes, key=_detect_priority, reverse=True):
+            if all(_iou(b, u) < 0.30 for u in uniq):
+                uniq.append(b)
+        return uniq[:4]
+
+    # ------------------------------------------------ ساخت کاندیداها
+    def _collect(self, cands: list[_Candidate], text: str, conf: float,
+                 method: str, box) -> bool:
+        """افزودن کاندیدای خام + ترمیم‌ها؛ خروجی: آیا کاندیدای معتبر ساخته شد؟"""
+        norm, valid = pt.validate(text)
+        cands.append(_Candidate(norm, conf, method, valid, box, None))
+        if valid:
+            return True
+        made_valid = False
+        if len(norm) in (6, 8):
+            fixed = pt.enforce_format(norm)
+            if fixed != norm and pt.validate(fixed)[1]:
+                cands.append(_Candidate(fixed, conf * 0.95, f"{method}+enforce",
+                                        True, box, None))
+                made_valid = True
+        for fixed, mul in pt.repair_candidates(norm):
+            cands.append(_Candidate(fixed, conf * mul, f"{method}+repair",
+                                    True, box, None))
+            made_valid = True
+        return made_valid
 
     # ------------------------------------------------ نقطه ورود
     def read_image(self, bgr, *, min_conf: float = 0.25,
-                   want_annotated: bool = True) -> dict:
-        """تحلیل کامل یک تصویر → دیکشنری نتیجه (JSON-serializable)."""
+                   want_annotated: bool = True,
+                   fast_mode: bool = True) -> dict:
+        """تحلیل کامل یک تصویر → دیکشنری نتیجه (JSON-serializable).
+
+        fast_mode=True: اگر از برش‌های پلاک کاندیدا ساخته شد (حتی نامعتبر
+        ولی قابل‌ترمیم)، OCR گرانِ کل-تصویر اجرا نمی‌شود — سرعت ~۱۰ برابر.
+        """
         t0 = time.perf_counter()
         caps = capabilities(self.models_dir)
 
@@ -466,65 +777,151 @@ class PlateReader:
             f = 2600.0 / max(H, W)
             bgr = cv2.resize(bgr, None, fx=f, fy=f, interpolation=cv2.INTER_AREA)
 
-        enhanced = enhance(bgr)
         cands: list[_Candidate] = []
 
-        dets = self._detect(enhanced)
+        t1 = time.perf_counter()
+        dets = self._detect(bgr)          # تشخیص روی تصویر خام — مقاوم‌تر
+        detect_ms = round((time.perf_counter() - t1) * 1000)
+
         method_prefix = "yolo" if self._get_yolo() is not None else "classical"
+        ocr_crops_ms = 0.0
+        valid_count = 0
         for i, (box, _warp) in enumerate(dets):
-            # دو مسیر برش: وارپ‌شده + ساده (هرکدام ممکن است بهتر خوانده شود)
-            crops = [(self._plate_crop(enhanced, box), "warp"),
-                     (self._plain_crop(enhanced, box), "crop")]
-            for crop, crop_kind in crops:
-                if crop is None:
-                    continue
-                for text, conf, ocr_method in self._ocr_crop(crop):
+            # سقف زمانی: هر باکس ~۱ تا ۳ ثانیه OCR می‌برد — بعد از ۲ کاندیدای
+            # معتبر، یا ۶ ثانیه پس از اولین کاندیدا، یا ۱۲ ثانیه مطلق، باکس‌های
+            # باقی‌مانده بی‌ارزش‌تر از هزینه‌اند
+            _el = time.perf_counter() - t0
+            if valid_count >= 2 or (valid_count >= 1 and _el > 6.0) or _el > 12.0:
+                break
+            # مسیر ۱: برش سادهٔ تنگ بدون وارپ — در آزمایش روی عکس‌های واقعی
+            # بهترین خوانش را داشته (حاشیهٔ کم = متن صحنهٔ کمتر) و سریع‌ترین است
+            crop2 = self._plain_crop(bgr, box)
+            if crop2 is not None:
+                t2 = time.perf_counter()
+                ocrs2 = self._ocr_crop(crop2)
+                ocr_crops_ms += time.perf_counter() - t2
+                got_valid = False
+                for text, conf, ocr_method in ocrs2:
                     if conf < min(min_conf, MIN_CANDIDATE_CONF) + 0.05:
                         continue
-                    norm, valid = pt.validate(text)
-                    if not valid and len(norm) in (6, 8):
-                        fixed = pt.enforce_format(norm)
-                        if pt.validate(fixed)[1]:
-                            cands.append(_Candidate(fixed, conf * 0.95,
-                                                    f"{method_prefix}+{ocr_method}+{crop_kind}+enforce",
-                                                    True, box, None))
-                    cands.append(_Candidate(norm, conf,
-                                            f"{method_prefix}+{ocr_method}+{crop_kind}",
-                                            valid, box, None))
-
-        # مسیر جایگزین: OCR روی کل تصویر — فقط وقتی از برش‌ها کاندیدای معتبر نداریم
-        # (روی صحنه‌های شلوغ گران و پر از متن مزاحم است)
-        if not any(c.valid for c in cands):
-            fi = enhanced
-            H2, W2 = fi.shape[:2]
-            if max(H2, W2) > 1600:                     # کنترل هزینه OCR کل-تصویر
-                f2 = 1600.0 / max(H2, W2)
-                fi = cv2.resize(fi, None, fx=f2, fy=f2, interpolation=cv2.INTER_AREA)
-            for text, conf, m in self._ocr_crop(fi):
-                if conf < min_conf:
+                    if self._collect(cands, text, conf,
+                                     f"{method_prefix}+{ocr_method}+crop", box):
+                        got_valid = True
+                if got_valid:
+                    valid_count += 1
                     continue
-                norm, valid = pt.validate(text)
-                if not valid and len(norm) in (6, 8):
-                    fixed = pt.enforce_format(norm)
-                    if pt.validate(fixed)[1]:
-                        cands.append(_Candidate(fixed, conf * 0.95, f"fullimage+{m}+enforce",
-                                                True, None, None))
-                cands.append(_Candidate(norm, conf, f"fullimage+{m}", valid, None, None))
+                # دروازهٔ هزینه: برش ساده هیچ قطعه‌ای نداد → واریانت‌های همان برش
+                # (۲x/باینری) بی‌ثمرند؛ اما وارپ هندسهٔ متفاوتی دارد — اجرا می‌ماند
+                if ocrs2:
+                    # مسیر ۲: بزرگ‌نمایی ۲ برابری اضافی — خوانش‌های ریز/بلوری را نجات
+                    # می‌دهد (آزمایش واقعی: ۰٫۵۶ → ۰٫۹۹ روی همان برش)
+                    if crop2.shape[0] < 260:
+                        crop2x = cv2.resize(crop2, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
+                        t2 = time.perf_counter()
+                        ocrs2x = self._ocr_crop(crop2x)
+                        ocr_crops_ms += time.perf_counter() - t2
+                        got_valid = False
+                        for text, conf, ocr_method in ocrs2x:
+                            if conf < min(min_conf, MIN_CANDIDATE_CONF) + 0.05:
+                                continue
+                            if self._collect(cands, text, conf,
+                                             f"{method_prefix}+{ocr_method}+crop2x", box):
+                                got_valid = True
+                        if got_valid:
+                            valid_count += 1
+                            continue
+                    # مسیر ۳: واریانت باینری — عکس‌های کم‌کنتراست/کدر؛ فقط برای برش‌های
+                    # کوچک (برش‌های عریض = باکس‌های زبالهٔ بزرگ، ارزش تکرار ندارند)
+                    if crop2.shape[1] <= 600:
+                        crop3 = self._binarize(crop2)
+                        if crop3 is not None:
+                            t2 = time.perf_counter()
+                            ocrs3 = self._ocr_crop(crop3)
+                            ocr_crops_ms += time.perf_counter() - t2
+                            for text, conf, ocr_method in ocrs3:
+                                if conf < min(min_conf, MIN_CANDIDATE_CONF) + 0.05:
+                                    continue
+                                if self._collect(cands, text, conf,
+                                                 f"{method_prefix}+{ocr_method}+bin", box):
+                                    valid_count += 1
+            # مسیر ۴: وارپ (راست‌کردن پرسپکتیو) — آخرین اولویت چون گوشه‌یاب در
+            # نمای نزدیک/کج اغلب خطا می‌رود و زمانش با برش ساده برابر است
+            crop = self._plate_crop(bgr, box)
+            if crop is None:
+                continue
+            t2 = time.perf_counter()
+            ocrs = self._ocr_crop(crop)
+            ocr_crops_ms += time.perf_counter() - t2
+            for text, conf, ocr_method in ocrs:
+                if conf < min(min_conf, MIN_CANDIDATE_CONF) + 0.05:
+                    continue
+                if self._collect(cands, text, conf,
+                                 f"{method_prefix}+{ocr_method}+warp", box):
+                    valid_count += 1
 
-        # حذف تکراری + امتیازدهی (معتبر بودن مهم‌تر از اطمینان)
+        # مسیر جایگزین: مکان‌یابی متن روی کل تصویر + OCR متمرکزِ برش‌ها —
+        # فقط وقتی از برش‌های تشخیص هیچ کاندیدایی نداریم (در fast_mode حتی
+        # با کاندیدای نامعتبرِ قابل‌ترمیم هم رد می‌شود)
+        fullimage_ms = 0.0
+        fullimage_skipped: str | None = None
+        if any(c.valid for c in cands):
+            fullimage_skipped = "کاندیدای معتبر از برش پلاک یافت شد"
+        elif fast_mode and any(len(c.text) >= 6 for c in cands):
+            # فقط قطعات با طول نزدیک به پلاک (۶+) قابل‌ترمیم‌اند؛ تکه‌تکه‌های
+            # کوتاه («۱س»، «۸۷») ارزش ترمیم ندارند و نباید جلوی مکان‌یابی را بگیرند
+            fullimage_skipped = "fast-mode: کاندیدای قابل‌ترمیم از برش وجود دارد"
+        elif (time.perf_counter() - t0) > 20.0:
+            fullimage_skipped = "time-budget: پردازش برش‌ها بیش از ۲۰ ثانیه"
+        else:
+            t3 = time.perf_counter()
+            locate_boxes = self._fullimage_locate(bgr)
+            located_any = False
+            for li, lb in enumerate(locate_boxes[:3]):
+                lcrop = self._margin_crop(bgr, lb)
+                if lcrop is None:
+                    continue
+                lvariants = [lcrop]
+                # واریانت ۲x فقط برای جعبهٔ نخست — هر جعبه اضافه ~۱ تا ۲ ثانیه
+                if li == 0 and lcrop.shape[0] < 260:
+                    lvariants.append(cv2.resize(lcrop, None, fx=2, fy=2,
+                                                interpolation=cv2.INTER_CUBIC))
+                for lv in lvariants:
+                    for text, conf, m in self._ocr_crop(lv):
+                        if conf < min_conf:
+                            continue
+                        if self._collect(cands, text, conf, f"locate+{m}", lb):
+                            located_any = True
+            if not located_any and not locate_boxes:
+                # آخرین لنگر (رفتار قدیمی): OCR مستقیم کل تصویر — دقت پایین‌تر
+                fi = bgr
+                H2, W2 = fi.shape[:2]
+                if max(H2, W2) > 1152:
+                    f2 = 1152.0 / max(H2, W2)
+                    fi = cv2.resize(fi, None, fx=f2, fy=f2, interpolation=cv2.INTER_AREA)
+                for text, conf, m in self._ocr_crop(fi):
+                    if conf < min_conf:
+                        continue
+                    self._collect(cands, text, conf, f"fullimage+{m}", None)
+            fullimage_ms = time.perf_counter() - t3
+
+        # حذف تکراری + رأی‌شماری + امتیازدهی — تکرار یک متن در واریانت‌های
+        # مختلف OCR نشانهٔ درستی است و امتیازش جمع می‌شود (تجمیع چند-خواننده)
         dedup: dict[str, _Candidate] = {}
         for c in cands:
             if not c.text or len(c.text) < 5 or len(c.text) > 9:
                 continue    # پلاک ایران ۶/۸ نویسه است؛ خارج از بازه نزدیک = نویز صحنه
             c.score = (2.0 if c.valid else 0.0) + min(c.conf, 1.0)
             cur = dedup.get(c.text)
-            if cur is None or c.score > cur.score:
+            if cur is None:
                 dedup[c.text] = c
+            else:
+                cur.score += 0.5 * min(c.score, 3.0)
+                cur.conf = max(cur.conf, c.conf)
         ranked = sorted(dedup.values(), key=lambda c: -c.score)[:MAX_CANDIDATES]
 
         best = next((c for c in ranked if c.valid), None) or (ranked[0] if ranked else None)
 
-        # برش و رنگ پلاک برای نمایش
+        # برش و رنگ پلاک برای نمایش (از تصویر خام — همان مسیر OCR)
         plate_items = []
         best_crop = None
         for c in ranked:
@@ -565,6 +962,12 @@ class PlateReader:
                               if c.text == best.text), None)
         if best_item is None and plate_items:
             best_item = plate_items[0]
+        timings = {
+            "detect_ms": detect_ms,
+            "ocr_crops_ms": int(ocr_crops_ms * 1000),
+            "fullimage_ms": int(fullimage_ms * 1000),
+            "total_ms": ms,
+        }
         return {
             "success": bool(plate_items),
             "best": best_item,
@@ -574,6 +977,9 @@ class PlateReader:
                 "ocr": "crnn+easyocr" if (caps["crnn_weights"] and caps["torch"]) else "easyocr",
                 "easyocr_error": self._easy_err,
                 "yolo_error": self._yolo_err if self._yolo_err != "weights-missing" else None,
+                "fast_mode": fast_mode,
+                "fullimage_skipped": fullimage_skipped,
+                "timings": timings,
             },
             "elapsed_ms": ms,
             "annotated_b64": annotated_b64,

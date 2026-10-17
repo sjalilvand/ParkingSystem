@@ -115,6 +115,8 @@
       <span id="spin" class="hidden"><span class="spinner"></span> در حال پردازش…</span>
       <label class="switch"><input type="checkbox" id="lookup" checked>
         جستجو در خودروهای ثبت‌شده سیستم</label>
+      <label class="switch"><input type="checkbox" id="fast" checked>
+        حالت سریع (بدون OCR کل تصویر)</label>
       <button id="clearBtn" style="background:var(--panel2); border:1px solid var(--line); font-weight:400">پاک کردن</button>
     </div>
   </div>
@@ -164,7 +166,8 @@
       <b>نصب موتور روی سرور</b> (اگر وضعیت بالا «easyocr» را خاموش نشان می‌دهد):<br>
       <code dir="ltr">cd D:\Projects\ParkingSystem\backend</code><br>
       <code dir="ltr">pip install -r requirements-ocr.txt</code><br>
-      بار اول که عکس می‌فرستید مدل‌ها دانلود می‌شوند (چند دقیقه) و بعد از آن هر تحلیل حدود ۱ تا ۳ ثانیه طول می‌کشد.
+      بار اول که عکس می‌فرستید مدل‌ها دانلود می‌شوند (چند دقیقه) و بعد از آن هر تحلیل معمولاً ۱ تا ۴ ثانیه طول می‌کشد
+      (با حالت سریع). عکسِ نزدیک از پلاک بهترین نتیجه را می‌دهد؛ اگر پلاک از کادر بیرون بزند هم قابل خواندن است.
       برای دقت بالاتر با مدل YOLO آموزش‌دیده، فایل را در <code dir="ltr">backend\models\plate_det_best.pt</code> بگذارید.
     </div>
   </div>
@@ -262,7 +265,7 @@ $('readBtn').onclick = async () => {
     await login();
     const fd = new FormData();
     fd.append('file', currentFile);
-    const r = await fetch(base + `/api/v1/plate-ocr/read?lookup=${$('lookup').checked}`, {
+    const r = await fetch(base + `/api/v1/plate-ocr/read?lookup=${$('lookup').checked}&fast=${$('fast').checked}`, {
       method:'POST', headers: authHeaders(), body: fd
     });
     $('errBox').style.display='none';
@@ -298,6 +301,14 @@ function render(j){
   $('confBar').style.width = Math.round((b.confidence||0)*100) + '%';
   $('confBar').style.background = b.valid ? 'var(--ok)' : 'var(--warn)';
   $('engineV').textContent = JSON.stringify(j.engine || {});
+  const t = j.engine?.timings;
+  if (t) {
+    const parts = [];
+    if (typeof t.detect_ms === 'number') parts.push('تشخیص ' + fa(t.detect_ms) + 'ms');
+    if (typeof t.ocr_crops_ms === 'number') parts.push('خواندن برش ' + fa(t.ocr_crops_ms) + 'ms');
+    if (typeof t.fullimage_ms === 'number' && t.fullimage_ms > 0) parts.push('کل-تصویر ' + fa(t.fullimage_ms) + 'ms');
+    if (parts.length) $('engineV').textContent = parts.join(' | ') + '  ⋙  ' + $('engineV').textContent;
+  }
   $('annotWrap').classList.toggle('hidden', !j.annotated_b64);
   if(j.annotated_b64) $('annotated').src = 'data:image/jpeg;base64,' + j.annotated_b64;
 
