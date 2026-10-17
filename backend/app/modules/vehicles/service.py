@@ -21,10 +21,14 @@ def _parse_hhmm(value) -> time | None:
 
 
 def permit_time_valid(permit, now: datetime) -> tuple[bool, str]:
-    """بررسی بازه اعتبار مجوز — تابع خالص (قابل تست واحد)."""
-    if permit.valid_from and now < permit.valid_from:
+    """بررسی بازه اعتبار مجوز — تابع خالص (قابل تست واحد).
+    سازگار با SQLite: مقادیر ناوآگاهِ دیتابیس به UTC آگاه نرمال می‌شوند."""
+    from app.shared.dt import as_utc
+
+    now = as_utc(now) or now
+    if permit.valid_from and now < (as_utc(permit.valid_from) or permit.valid_from):
         return False, "PERMIT_NOT_STARTED"
-    if permit.valid_until and now > permit.valid_until:
+    if permit.valid_until and now > (as_utc(permit.valid_until) or permit.valid_until):
         return False, "PERMIT_EXPIRED"
 
     if permit.allowed_days:

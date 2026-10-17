@@ -51,7 +51,8 @@ class ParkingSession(Base, TimestampMixin):
     # F14 (سند §۱۱): حداکثر یک نشست OPEN برای هر پلاک — هم‌تراز با migration p0001
     __table_args__ = (
         Index("uq_open_session_plate", "plate_normalized", unique=True,
-              postgresql_where=text("status = 'OPEN'")),
+              postgresql_where=text("status = 'OPEN'"),
+              sqlite_where=text("status = 'OPEN'")),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)

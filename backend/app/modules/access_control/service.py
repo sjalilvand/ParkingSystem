@@ -13,6 +13,7 @@ from app.parking_helpers import find_assigned_space, vehicle_unit_info
 from app.capacity import check_yard_capacity
 from app.realtime.manager import manager
 from app.shared.plate import normalize_plate
+from app.shared.dt import as_utc
 
 try:
     from app.modules.finance.service import (
@@ -148,7 +149,7 @@ class GateDecisionService:
                         policy = await resolve_exit_policy(db)
                     except Exception:
                         policy = (getattr(settings, "EXIT_UNPAID_POLICY", "WARN") or "WARN").upper()
-                    exit_duration = max(0, int((now - session.entry_at).total_seconds()))
+                    exit_duration = max(0, int((now - (as_utc(session.entry_at) or session.entry_at)).total_seconds()))
                     blocked = False
                     if policy == "DENY" and get_active_tariff is not None and calculate_amounts is not None:
                         _tariff = await get_active_tariff(db, now)

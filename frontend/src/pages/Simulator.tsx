@@ -1,9 +1,12 @@
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
-  Alert, Box, Button, Card, CardContent, Chip, MenuItem, Stack, TextField, Typography,
+  Alert, Box, Button, Card, CardContent, Chip, Divider, FormControlLabel, MenuItem,
+  Radio, RadioGroup, Slider, Stack, TextField, Typography,
 } from '@mui/material'
-import { PlayArrow, Stop, TouchApp } from '@mui/icons-material'
+import {
+  AutoAwesome, PlayArrow, RestartAlt, Stop, TouchApp, MovieFilter,
+} from '@mui/icons-material'
 import { api, apiErrorFa } from '../api/client'
 import { useLiveEvents } from '../api/ws'
 import { decisionFa } from '../app/theme'
@@ -22,17 +25,56 @@ interface DurRow { plate: string; seconds: number; to: string; kind: string
   owner?: string | null; unit?: string | null; tower?: string | null
   province?: string | null; city?: string | null }
 
+interface ScenVehicle { role: string; label: string; plate_raw: string; plate_normalized?: string
+  is_active: boolean; has_permit: boolean; space_code?: string | null; space_type?: string | null
+  owner?: string }
+interface ScenResident { name: string; unit: string; vehicles: ScenVehicle[] }
+interface ScenState {
+  residents: ScenResident[]
+  strangers: ScenVehicle[]
+  rules: { code: string; name: string; status: string; enabled: boolean; priority: number }[]
+  spaces: { code: string; type: string; status: string }[]
+  inside_count: number; occupied_spaces: number; total_spaces: number
+  active_rules: number; draft_rules: number; events_total: number
+  step_index: number; total_steps: number
+}
+interface StepResult {
+  index?: number; total?: number; title?: string; finished?: boolean; message?: string
+  action: 'gate' | 'activate_rule' | 'summary' | 'manual'
+  role?: string | null; role_label?: string; direction?: string; gate_code?: string
+  plate_raw?: string; rule_name?: string; rule?: string; error?: string
+  result?: {
+    decision: string; decision_reason: string; barrier_action: string
+    parking?: { code: string; zone?: string } | null
+    unit?: { unit_number?: string; tower?: string } | null
+    session?: { duration_seconds?: number; final_amount?: number; payment_status?: string } | null
+    warnings?: string[]
+    rule_trace?: { rule_name?: string } | null
+  }
+  explanation?: string[]
+}
+
 const dur = (s?: number) => {
   if (!s || s <= 0) return '-'
   const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60)
   return h > 0 ? `${h} ساعت و ${m} دقیقه` : `${m} دقیقه`
 }
 
+const colorOf = (d?: string) =>
+  d === 'ALLOW' || d === 'ALLOW_WITH_WARNING' ? 'success' : d === 'DENY' ? 'error'
+  : d === 'UNKNOWN_PLATE' ? 'warning' : 'info'
+
 export default function Simulator() {
   const qc = useQueryClient()
   const [interval, setIntervalS] = useState('3')
   const [ratio, setRatio] = useState('0.8')
   const [err, setErr] = useState('')
+  const [busy, setBusy] = useState(false)
+  // سناریو
+  const [steps, setSteps] = useState<StepResult[]>([])
+  const [manualPlate, setManualPlate] = useState('')
+  const [manualDir, setManualDir] = useState('IN')
+  const [manualResult, setManualResult] = useState<StepResult | null>(null)
   const { events } = useLiveEvents(40)
 
   const { data: st } = useQuery({
@@ -50,6 +92,11 @@ export default function Simulator() {
     queryFn: async () => (await api.get('/simulator/durations')).data as { items: DurRow[] },
     refetchInterval: 6000,
   })
+  const { data: scen } = useQuery({
+    queryKey: ['scenario-state'],
+    queryFn: async () => (await api.get('/simulator/scenario/state')).data as ScenState,
+    refetchInterval: 5000,
+  })
 
   const act = async (path: string, params = '') => {
     setErr('')
@@ -57,32 +104,231 @@ export default function Simulator() {
     catch (e) { setErr(apiErrorFa(e)) }
   }
 
+  const setupScenario = async () => {
+    if (!window.confirm('همه داده‌ها (ساکنان، خودروها، رویدادها، قوانین) پاک می‌شود — فقط ادمین و تنظیمات می‌ماند. مطمئنی؟')) return
+    setBusy(true); setErr(''); setSteps([]); setManualResult(null)
+    try {
+      await api.post('/simulator/scenario/setup')
+      qc.invalidateQueries({ queryKey: ['scenario-state'] })
+      qc.invalidateQueries({ queryKey: ['sim-status'] })
+    } catch (e) { setErr(apiErrorFa(e)) } finally { setBusy(false) }
+  }
+  const nextStep = async () => {
+    setBusy(true); setErr('')
+    try {
+      const r = await api.post('/simulator/scenario/step')
+      setSteps((s) => [...s, r.data])
+      qc.invalidateQueries({ queryKey: ['scenario-state'] })
+    } catch (e) { setErr(apiErrorFa(e)) } finally { setBusy(false) }
+  }
+  const resetSteps = async () => {
+    setSteps([]); setManualResult(null)
+    try { await api.post('/simulator/scenario/reset') } catch { /* noop */ }
+  }
+
+  const sendManual = async (plate?: string, direction?: string) => {
+    const p = (plate ?? manualPlate).trim()
+    if (!p) { setErr('پلاک را وارد یا از فهرست انتخاب کن.'); return }
+    setBusy(true); setErr('')
+    try {
+      const r = await api.post('/simulator/scenario/manual', {
+        plate_raw: p, direction: direction ?? manualDir,
+      })
+      setManualResult(r.data)
+      qc.invalidateQueries({ queryKey: ['scenario-state'] })
+      qc.invalidateQueries({ queryKey: ['sim-status'] })
+    } catch (e) { setErr(apiErrorFa(e)) } finally { setBusy(false) }
+  }
+
   const simEvents = events.filter((e) => e.event === 'simulator.event')
-  const colorOf = (d?: string) =>
-    d === 'ALLOW' || d === 'ALLOW_WITH_WARNING' ? 'success' : d === 'DENY' ? 'error'
-    : d === 'UNKNOWN_PLATE' ? 'warning' : 'default'
   const provs = Object.entries(st?.by_province ?? {})
+  const scenVehicles = [...(scen?.residents ?? []).flatMap((r) => r.vehicles.map((v) => ({ ...v, owner: r.name }))),
+    ...(scen?.strangers ?? [])]
+  const intervalNum = Math.max(1, Math.min(180, Number(interval) || 3))
+  const intervalMarks = [1, 15, 30, 60, 120, 180].map((v) => ({ value: v, label: String(v) }))
+
+  const renderStepCard = (s: StepResult, i: number) => (
+    <Stack key={i} spacing={0.5} sx={{ border: '1px solid #E3EAF2', borderRadius: 2.5, p: 1.4 }}>
+      <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
+        <Chip size="small" color="primary" sx={{ minWidth: 64 }}
+          label={s.index ? `گام ${s.index}` : (s.action === 'manual' ? 'دستی' : 'گام')} />
+        <Typography variant="body2" fontWeight={800}>{s.title ?? (s.action === 'manual' ? 'رویداد دستی' : '')}</Typography>
+        {s.action === 'gate' && s.direction && (
+          <Chip size="small" color={s.direction === 'IN' ? 'primary' : 'secondary'}
+            label={s.direction === 'IN' ? '⬅ ورود' : 'خروج ➡'} />
+        )}
+        {s.action === 'activate_rule' && <Chip size="small" color="warning" label="فعال‌سازی قانون" />}
+        {s.action === 'summary' && <Chip size="small" color="info" label="خلاصه" />}
+        {s.plate_raw && s.action === 'gate' && <PlateBox plate={s.plate_raw} size="sm" />}
+      </Stack>
+      {s.action === 'gate' && s.result && (
+        <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
+          <Chip size="small" color={colorOf(s.result.decision) as never}
+            label={decisionFa[s.result.decision] ?? s.result.decision} />
+          {s.result.barrier_action === 'OPEN'
+            ? <Chip size="small" color="success" variant="outlined" label="راهبند: باز" />
+            : <Chip size="small" color="default" variant="outlined" label="راهبند: بسته" />}
+          {s.result.parking && <Chip size="small" variant="outlined" label={`🅿️ ${s.result.parking.code}`} />}
+          {s.result.rule_trace?.rule_name && <Chip size="small" color="warning" label={`قانون: ${s.result.rule_trace.rule_name}`} />}
+        </Stack>
+      )}
+      {s.action === 'activate_rule' && <Chip size="small" color="warning" label={s.rule_name ?? s.rule} />}
+      {(s.explanation ?? []).map((x, j) => (
+        <Typography key={j} variant="caption" color="text.secondary" sx={{ pr: 1 }}>• {x}</Typography>
+      ))}
+    </Stack>
+  )
 
   return (
     <Stack spacing={2}>
       <Typography variant="h6" fontWeight={800}>🎮 شبیه‌ساز تردد و جریمه — نسخه کامل</Typography>
       {err && <Alert severity="error">{err}</Alert>}
 
+      {/* ================= سناریوی آزمایشی ================= */}
+      <Card><CardContent>
+        <Stack direction="row" spacing={1.2} alignItems="center" flexWrap="wrap" useFlexGap>
+          <MovieFilter color="primary" />
+          <Typography fontWeight={800} sx={{ flex: 1 }}>🎬 سناریوی آزمایشی — محیط‌بندی و گام‌به‌گام</Typography>
+          <Chip size="small" variant="outlined" label={`گام: ${scen?.step_index ?? 0}/${scen?.total_steps ?? 14}`} />
+          <Chip size="small" color={scen?.active_rules ? 'warning' : 'default'}
+            label={`قوانین فعال: ${scen?.active_rules ?? 0} | DRAFT: ${scen?.draft_rules ?? 0}`} />
+        </Stack>
+        <Typography variant="caption" color="text.secondary" component="div" mt={0.5}>
+          پاکسازی کامل (به‌جز ادمین) ← ۲ ساکن (علی رضایی، مریم کریمی) هر کدام یک واحد و ۳ خودرو
+          (پارکینگ خودش / متقاضی محوطه / پارکینگ دفنی) + ۲ غریبه فعالِ بدون مجوز + ۳ قانون DRAFT.
+        </Typography>
+
+        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.2} mt={1.5} alignItems={{ sm: 'center' }} flexWrap="wrap" useFlexGap>
+          <Button variant="contained" color="error" startIcon={<RestartAlt />}
+            disabled={busy} onClick={setupScenario}>۱) پاکسازی و ساخت سناریو</Button>
+          <Button variant="contained" color="primary" startIcon={<PlayArrow />}
+            disabled={busy} onClick={nextStep}>۲) گام بعدی</Button>
+          <Button variant="outlined" startIcon={<AutoAwesome />}
+            disabled={busy} onClick={async () => {
+              // اجرای خودکار همه گام‌های باقی‌مانده تا پایان
+              setBusy(true)
+              try {
+                for (let i = 0; i < 20; i++) {
+                  const r = await api.post('/simulator/scenario/step')
+                  setSteps((s) => [...s, r.data])
+                  if (r.data.finished) break
+                }
+              } catch (e) { setErr(apiErrorFa(e)) } finally { setBusy(false) }
+              qc.invalidateQueries({ queryKey: ['scenario-state'] })
+            }}>اجرای همه گام‌ها</Button>
+          <Button variant="text" startIcon={<Stop />} disabled={busy} onClick={resetSteps}>بازنشانی گام‌ها</Button>
+        </Stack>
+
+        {/* وضعیت موجودیت‌های سناریو */}
+        {scen && (scen.residents.length > 0 || scen.strangers.length > 0) && (
+          <Stack spacing={1} mt={2}>
+            {scen.residents.map((r) => (
+              <Stack key={r.name} direction={{ xs: 'column', sm: 'row' }} spacing={1} alignItems={{ sm: 'center' }}
+                sx={{ border: '1px solid #E3EAF2', borderRadius: 2.5, p: 1 }} flexWrap="wrap" useFlexGap>
+                <Chip size="small" color="success" label={`👤 ${r.name} — واحد ${r.unit}`} />
+                {r.vehicles.map((v) => (
+                  <Stack key={v.role} direction="row" spacing={0.6} alignItems="center">
+                    <PlateBox plate={v.plate_raw} size="sm" />
+                    <Chip size="small" variant="outlined" sx={{ fontSize: 11 }}
+                      label={`${v.label}${v.has_permit ? ' ✓مجوز' : ' ✗مجوز'}${v.space_code ? ` • ${v.space_code}` : ''}`} />
+                  </Stack>
+                ))}
+              </Stack>
+            ))}
+            <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
+              {scen.strangers.map((v) => (
+                <Stack key={v.role} direction="row" spacing={0.6} alignItems="center">
+                  <PlateBox plate={v.plate_raw} size="sm" />
+                  <Chip size="small" color="error" variant="outlined" sx={{ fontSize: 11 }} label={v.label} />
+                </Stack>
+              ))}
+              <Chip size="small" color="info" label={`🚗 داخل: ${scen.inside_count}`} />
+              <Chip size="small" variant="outlined" label={`🅿️ اشغال: ${scen.occupied_spaces}/${scen.total_spaces}`} />
+            </Stack>
+            <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+              {scen.rules.map((r) => (
+                <Chip key={r.code} size="small" sx={{ fontSize: 11 }}
+                  color={r.status === 'ACTIVE' ? 'warning' : 'default'}
+                  variant={r.status === 'ACTIVE' ? 'filled' : 'outlined'}
+                  label={`${r.name} — ${r.status === 'ACTIVE' ? 'فعال' : 'DRAFT'}`} />
+              ))}
+            </Stack>
+          </Stack>
+        )}
+
+        {/* رویداد دستی — کشویی یا تایپی */}
+        {scenVehicles.length > 0 && (
+          <Box mt={2} sx={{ borderTop: '1px dashed #E3EAF2', pt: 1.5 }}>
+            <Typography fontWeight={800} mb={1}>🖐 رویداد دستی — انتخابی (کشویی) یا تایپِ آزادِ پلاک</Typography>
+            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.2} alignItems={{ sm: 'center' }} flexWrap="wrap" useFlexGap>
+              <TextField size="small" select sx={{ minWidth: 280 }}
+                label="انتخاب از خودروهای سناریو"
+                value={scenVehicles.some((v) => v.plate_raw === manualPlate) ? manualPlate : ''}
+                onChange={(e) => setManualPlate(e.target.value)}>
+                {scenVehicles.map((v) => (
+                  <MenuItem key={v.role} value={v.plate_raw}>
+                    {v.label} — {v.plate_raw}{v.owner ? ` (${v.owner})` : ''}
+                  </MenuItem>
+                ))}
+              </TextField>
+              <TextField size="small" sx={{ minWidth: 210 }} label="یا تایپ دستی پلاک"
+                placeholder="مثلاً: 12 ب 345 ایران 11"
+                value={manualPlate} onChange={(e) => setManualPlate(e.target.value)} />
+              <RadioGroup row value={manualDir} onChange={(e) => setManualDir(e.target.value)}>
+                <FormControlLabel value="IN" control={<Radio size="small" />} label="ورود" />
+                <FormControlLabel value="OUT" control={<Radio size="small" />} label="خروج" />
+              </RadioGroup>
+              <Button variant="contained" startIcon={<TouchApp />} disabled={busy}
+                onClick={() => sendManual()}>ثبت رویداد دستی</Button>
+            </Stack>
+            {manualResult && <Box mt={1.5}>{renderStepCard({ ...manualResult, title: `رویداد دستی — ${manualResult.plate_raw}` }, -1)}</Box>}
+          </Box>
+        )}
+
+        {/* دفترچه گام‌ها */}
+        {steps.length > 0 && (
+          <Box mt={2}>
+            <Typography fontWeight={800} mb={1}>📖 گام‌های اجراشده ({steps.length})</Typography>
+            <Stack spacing={1}>{steps.map(renderStepCard)}</Stack>
+          </Box>
+        )}
+      </CardContent></Card>
+
+      {/* ================= شبیه‌ساز خودکار ================= */}
       <Card><CardContent>
         <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} alignItems={{ sm: 'center' }} flexWrap="wrap" useFlexGap>
           {st?.running ? (
             <Button variant="contained" color="error" startIcon={<Stop />} onClick={() => act('stop')}>توقف</Button>
           ) : (
             <Button variant="contained" color="success" startIcon={<PlayArrow />}
-              onClick={() => act('start', `?interval=${interval}&resident_ratio=${ratio}`)}>شروع شبیه‌سازی</Button>
+              onClick={() => act('start', `?interval=${intervalNum}&resident_ratio=${ratio}`)}>شروع شبیه‌سازی</Button>
           )}
           <Button variant="outlined" startIcon={<TouchApp />} onClick={() => act('tick')}>یک رویداد دستی</Button>
-          <TextField size="small" select label="فاصله (ثانیه)" value={interval}
-            onChange={(e) => setIntervalS(e.target.value)} sx={{ width: 150 }}>
-            {['2','3','5','10'].map((v) => <MenuItem key={v} value={v}>{v}</MenuItem>)}
-          </TextField>
+          <Box sx={{ minWidth: 260, flex: 1, maxWidth: 420 }}>
+            <Typography variant="caption" color="text.secondary">
+              فاصله بین رویدادها: <b>{intervalNum}</b> ثانیه (۱ تا ۱۸۰)
+            </Typography>
+            <Slider size="small" min={1} max={180} step={1} marks={intervalMarks}
+              value={intervalNum}
+              onChange={(_, v) => setIntervalS(String(v as number))}
+              valueLabelDisplay="auto" />
+          </Box>
+          <TextField size="small" type="number" label="فاصله (ثانیه)" sx={{ width: 120 }}
+            inputProps={{ min: 1, max: 180 }}
+            value={interval}
+            onChange={(e) => {
+              const v = Number(e.target.value)
+              if (!Number.isNaN(v)) setIntervalS(String(Math.max(1, Math.min(180, Math.floor(v)))))
+            }} />
+          <Stack direction="row" spacing={0.6}>
+            {['2', '3', '5', '10', '30', '60', '180'].map((v) => (
+              <Chip key={v} size="small" clickable variant={interval === v ? 'filled' : 'outlined'}
+                color={interval === v ? 'primary' : 'default'}
+                label={`${v}s`} onClick={() => setIntervalS(v)} />
+            ))}
+          </Stack>
           <TextField size="small" select label="نسبت ساکن" value={ratio}
-            onChange={(e) => setRatio(e.target.value)} sx={{ width: 150 }}>
+            onChange={(e) => setRatio(e.target.value)} sx={{ width: 140 }}>
             <MenuItem value="0.5">۵۰٪</MenuItem><MenuItem value="0.8">۸۰٪</MenuItem><MenuItem value="0.9">۹۰٪</MenuItem>
           </TextField>
         </Stack>
@@ -179,6 +425,11 @@ export default function Simulator() {
           {(durs?.items ?? []).length === 0 && <Typography color="text.secondary">هنوز خروجی ثبت نشده.</Typography>}
         </Stack>
       </CardContent></Card>
+
+      <Divider />
+      <Typography variant="caption" color="text.secondary">
+        نکته: قوانین فعال‌شده در سناریو را می‌توانی از صفحه «قوانین ورود/خروج» دوباره به DRAFT برگردانی.
+      </Typography>
     </Stack>
   )
 }

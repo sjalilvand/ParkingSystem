@@ -20,6 +20,20 @@ from app.realtime.router import router as ws_router
 async def lifespan(app: FastAPI):
     import asyncio
     manager.set_loop(asyncio.get_running_loop())
+    # p0005: اطمینان از partial بودن ایندکس نشست باز روی SQLite (ورود دوبارهٔ پلاک بعد از خروج)
+    try:
+        async with engine.begin() as conn:
+            if conn.dialect.name == "sqlite":
+                sql = (await conn.execute(text(
+                    "SELECT sql FROM sqlite_master WHERE type='index' AND name='uq_open_session_plate'"
+                ))).scalar()
+                if sql and "WHERE" not in (sql or "").upper():
+                    await conn.execute(text("DROP INDEX uq_open_session_plate"))
+                    await conn.execute(text(
+                        "CREATE UNIQUE INDEX uq_open_session_plate ON parking_sessions (plate_normalized) "
+                        "WHERE status = 'OPEN'"))
+    except Exception:
+        pass
     yield
     await engine.dispose()
 

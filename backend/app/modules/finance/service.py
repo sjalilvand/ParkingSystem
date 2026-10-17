@@ -265,7 +265,7 @@ async def close_session_amounts(db: AsyncSession, session: ParkingSession) -> di
     """بستن مالی نشست: محاسبه مبلغ + ساخت Charge. خروجی شامل warnings.
     سیاست‌های D2/D3/D4/D7 در همین نقطه از تنظیمات زمان-اجرا اعمال می‌شوند."""
     now = datetime.now(timezone.utc)
-    duration = max(0, int((now - session.entry_at).total_seconds()))
+    duration = max(0, int((now - (_as_aware(session.entry_at) or session.entry_at)).total_seconds()))
     session.duration_seconds = duration
     tariff = await get_active_tariff(db, now)
     policy = await resolve_tariff_policy(db)
