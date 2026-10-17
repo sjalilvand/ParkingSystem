@@ -101,3 +101,13 @@ async def health_database():
 
 app.include_router(api_router, prefix=settings.API_V1_PREFIX)
 app.include_router(ws_router)
+
+# صفحه تست پلاک‌خوان — http://localhost:8000/plate-test/
+import pathlib
+
+from fastapi.staticfiles import StaticFiles
+
+_plate_test_dir = pathlib.Path(__file__).parent / "modules" / "plate_ocr" / "static"
+if _plate_test_dir.exists():
+    app.mount("/plate-test", StaticFiles(directory=str(_plate_test_dir), html=True),
+              name="plate-test")

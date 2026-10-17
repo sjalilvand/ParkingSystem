@@ -19,6 +19,7 @@ from app.modules.devices.router import router as devices_router
 from app.modules.files.router import router as files_router
 from app.modules.finance.router import router as finance_router
 from app.modules.parking.router import router as parking_router
+from app.modules.plate_ocr.router import router as plate_ocr_router
 from app.modules.permits.router import router as permits_router
 from app.modules.reports.router import router as reports_router
 from app.modules.residents.router import router as residents_router
@@ -51,6 +52,7 @@ api_router.include_router(simulator_router, dependencies=[Depends(require_any_pe
 api_router.include_router(config_router)
 api_router.include_router(scenario_router)
 api_router.include_router(camera_router)
+api_router.include_router(plate_ocr_router)
 @api_router.get("/ping", tags=["System"])
 async def ping():
     return {"message": "pong"}

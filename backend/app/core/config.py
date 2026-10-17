@@ -78,6 +78,16 @@ class Settings(BaseSettings):
     # D10: تکلیف شارژ VOIDED در گزارش‌های مالی — SEPARATE (نمایش جدا) | EXCLUDE (حذف از گزارش)
     VOIDED_REPORT_MODE: str = "SEPARATE"
 
+    # ------------------------------------------------------------------
+    # پلاک‌خوان OCR (ماژول app/modules/plate_ocr) — وابستگی‌ها اختیاری‌اند
+    # (requirements-ocr.txt). مدل‌های YOLO/CRNN آموزش‌دیده در models_dir
+    # قرار می‌گیرند؛ نبود آن‌ها فقط کیفیت تشخیص را کم می‌کند (fallback کلاسیک).
+    # ------------------------------------------------------------------
+    PLATE_OCR_MODELS_DIR: str = "models"
+    PLATE_OCR_MAX_IMAGE_MB: int = 12
+    PLATE_OCR_MAX_IMAGE_PX: int = 2600      # بزرگ‌ترین ضلع مجاز ورودی
+    PLATE_OCR_MIN_CONF: float = 0.25        # حداقل اطمینان پیش‌فرض OCR
+
 
 _INSECURE_DEFAULTS = {"change-me-in-production", "gate-dev-key"}
 

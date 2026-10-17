@@ -55,6 +55,7 @@ Default dev admin: admin / Admin@1234  (change in any real deployment!)
 - [x] Celery: daily reports + file retention cleanup
 - [x] Production docker-compose + nginx
 - [x] Policy decisions D1-D10 applied & runtime-configurable (`GET /api/v1/policy-settings`, docs/pending-decisions.md v1.0)
+- [x] Plate OCR service (Iranian plate reader): `POST /api/v1/plate-ocr/read` + test page at `/plate-test/` (docs/plate-ocr.md)
 - [ ] Real hardware adapters for plate-reader / barrier
 - [ ] Field testing with real ANPR camera / barrier / thermal printer
 
