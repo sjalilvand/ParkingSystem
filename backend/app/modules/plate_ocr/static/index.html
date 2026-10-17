@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>تست پلاک‌خوان — سیستم پارکینگ</title>
+<style>
+  :root{
+    --bg:#0f1420; --panel:#171e2e; --panel2:#1d2740; --line:#2a3550;
+    --txt:#e8ecf5; --muted:#8b96ad; --accent:#4f8cff; --ok:#2ecc8f; --bad:#ff5d5d; --warn:#ffb020;
+  }
+  *{box-sizing:border-box; font-family:"Vazirmatn",Tahoma,"Segoe UI",sans-serif}
+  body{margin:0; background:var(--bg); color:var(--txt); min-height:100vh}
+  .wrap{max-width:980px; margin:0 auto; padding:24px 16px 60px}
+  header{display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; margin-bottom:20px}
+  h1{font-size:20px; margin:0}
+  h1 small{color:var(--muted); font-weight:400; font-size:12px; display:block; margin-top:4px}
+  .caps{display:flex; gap:6px; flex-wrap:wrap}
+  .cap{font-size:11px; padding:4px 10px; border-radius:20px; border:1px solid var(--line); color:var(--muted)}
+  .cap.on{color:#0f1420; background:var(--ok); border-color:var(--ok); font-weight:700}
+  .cap.off{opacity:.55}
+  .card{background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:18px; margin-bottom:16px}
+  .row{display:flex; gap:12px; flex-wrap:wrap; align-items:center}
+  label{font-size:12px; color:var(--muted); display:block; margin-bottom:6px}
+  input[type=text],input[type=password]{background:var(--panel2); border:1px solid var(--line); color:var(--txt);
+    border-radius:8px; padding:9px 12px; font-size:13px; min-width:220px}
+  input:focus{outline:1px solid var(--accent)}
+  button{background:var(--accent); color:#fff; border:0; border-radius:8px; padding:10px 22px;
+    font-size:14px; cursor:pointer; font-weight:700}
+  button:hover{filter:brightness(1.12)}
+  button:disabled{opacity:.45; cursor:wait}
+  #drop{border:2px dashed var(--line); border-radius:14px; padding:36px 16px; text-align:center;
+    cursor:pointer; transition:.15s}
+  #drop.hover{border-color:var(--accent); background:rgba(79,140,255,.07)}
+  #drop .ico{font-size:34px; margin-bottom:8px}
+  #drop p{margin:4px 0; color:var(--muted); font-size:13px}
+  #preview{max-width:100%; max-height:340px; border-radius:10px; display:none; margin:0 auto}
+  .hidden{display:none!important}
+  .btn-row{margin-top:14px; display:flex; gap:10px; align-items:center; flex-wrap:wrap}
+  .switch{display:flex; align-items:center; gap:6px; font-size:13px; color:var(--muted)}
+  .spinner{width:16px; height:16px; border:2px solid #ffffff55; border-top-color:#fff; border-radius:50%;
+    animation:spin .7s linear infinite; display:inline-block; vertical-align:-3px}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .err{background:rgba(255,93,93,.1); border:1px solid var(--bad); color:#ffb4b4;
+    padding:12px 14px; border-radius:10px; font-size:13px; white-space:pre-wrap}
+  .plate-box{display:flex; align-items:center; gap:18px; flex-wrap:wrap}
+  .plate{background:#fff; color:#111; border:3px solid #1a3a8f; border-left:12px solid #1a3a8f;
+    border-radius:6px; padding:8px 18px; font-size:34px; font-weight:800; letter-spacing:2px;
+    direction:ltr; text-align:center; font-family:"Vazirmatn",Tahoma; min-width:280px}
+  .plate small{display:block; font-size:11px; color:#1a3a8f; letter-spacing:0; font-weight:700}
+  .badge{font-size:12px; padding:5px 14px; border-radius:20px; font-weight:700}
+  .badge.ok{background:rgba(46,204,143,.15); color:var(--ok); border:1px solid var(--ok)}
+  .badge.bad{background:rgba(255,93,93,.15); color:var(--bad); border:1px solid var(--bad)}
+  .kv{display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px; margin-top:14px}
+  .kv .item{background:var(--panel2); border:1px solid var(--line); border-radius:10px; padding:10px 12px}
+  .kv .k{font-size:11px; color:var(--muted); margin-bottom:4px}
+  .kv .v{font-size:14px; font-weight:700}
+  .confbar{height:8px; background:var(--line); border-radius:6px; overflow:hidden; margin-top:6px}
+  .confbar>div{height:100%; background:var(--ok)}
+  table{width:100%; border-collapse:collapse; font-size:13px}
+  th,td{padding:8px 10px; text-align:right; border-bottom:1px solid var(--line)}
+  th{color:var(--muted); font-weight:600; font-size:11px}
+  .crops{display:flex; gap:10px; flex-wrap:wrap}
+  .crops img{height:70px; border-radius:6px; border:1px solid var(--line)}
+  #annotated{max-width:100%; border-radius:10px; border:1px solid var(--line)}
+  details{margin-top:12px}
+  summary{cursor:pointer; color:var(--muted); font-size:12px}
+  pre{background:#0b101b; border:1px solid var(--line); border-radius:10px; padding:12px;
+    font-size:11px; overflow:auto; direction:ltr; text-align:left; max-height:300px}
+  .veh{background:rgba(46,204,143,.08); border:1px solid var(--ok); border-radius:10px;
+    padding:12px 14px; margin-top:10px; font-size:13px}
+  .hint{font-size:12px; color:var(--muted); margin-top:8px; line-height:1.9}
+  .hint code{background:var(--panel2); padding:2px 8px; border-radius:6px; direction:ltr; display:inline-block}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>🚗 تست پلاک‌خوان ایرانی
+      <small>آپلود عکس پلاک و بررسی خوانده شدن — ماژول plate-ocr</small>
+    </h1>
+    <div class="caps" id="caps">…</div>
+  </header>
+
+  <div class="card" id="errBox" style="display:none"></div>
+
+  <div class="card">
+    <div class="row">
+      <div>
+        <label>کلید API (پیش‌فرض توسعه: <code dir="ltr">gate-dev-key</code>)</label>
+        <input type="password" id="apiKey" placeholder="gate-dev-key" value="">
+      </div>
+      <div class="switch">
+        <input type="checkbox" id="useLogin"> ورود با نام کاربری به‌جای کلید
+      </div>
+      <div id="loginBox" class="hidden row">
+        <input type="text" id="username" placeholder="نام کاربری (admin)">
+        <input type="password" id="password" placeholder="رمز عبور">
+      </div>
+    </div>
+    <div class="hint">این صفحه فقط روی مرورگر شما کار می‌کند و کلید در localStorage ذخیره می‌شود.
+      آدرس سرور: <code dir="ltr" id="baseLbl"></code></div>
+  </div>
+
+  <div class="card">
+    <div id="drop">
+      <div class="ico">📷</div>
+      <p><b>عکس پلاک را اینجا رها کنید یا کلیک کنید</b></p>
+      <p>می‌توانید اسکرین‌شات را با Ctrl+V هم بچسبانید — jpg / png / webp (حداکثر ۱۲MB)</p>
+      <input type="file" id="fileInput" accept="image/*" class="hidden">
+    </div>
+    <img id="preview" alt="پیش‌نمایش">
+    <div class="btn-row">
+      <button id="readBtn" disabled>🔍 خواندن پلاک</button>
+      <span id="spin" class="hidden"><span class="spinner"></span> در حال پردازش…</span>
+      <label class="switch"><input type="checkbox" id="lookup" checked>
+        جستجو در خودروهای ثبت‌شده سیستم</label>
+      <button id="clearBtn" style="background:var(--panel2); border:1px solid var(--line); font-weight:400">پاک کردن</button>
+    </div>
+  </div>
+
+  <div class="card hidden" id="resultCard">
+    <div class="plate-box">
+      <div class="plate" id="bestPlate">—</div>
+      <div>
+        <span class="badge" id="validBadge"></span>
+        <div class="kv" style="margin-top:10px">
+          <div class="item"><div class="k">فرمت سیستم</div><div class="v" id="sysForm" dir="ltr">—</div></div>
+          <div class="item"><div class="k">رنگ پلاک</div><div class="v" id="colorV">—</div></div>
+          <div class="item"><div class="k">زمان پردازش</div><div class="v" id="msV">—</div></div>
+        </div>
+        <div style="margin-top:10px">
+          <div class="k" style="font-size:11px;color:var(--muted)">اطمینان: <b id="confV"></b></div>
+          <div class="confbar"><div id="confBar" style="width:0%"></div></div>
+        </div>
+      </div>
+    </div>
+    <div id="vehBox"></div>
+    <div class="kv" style="margin-top:14px">
+      <div class="item" style="grid-column:1/-1">
+        <div class="k">موتور</div><div class="v" id="engineV" dir="ltr">—</div>
+      </div>
+    </div>
+    <div id="cropWrap" style="margin-top:14px">
+      <label>برش پلاک خوانده‌شده</label>
+      <div class="crops" id="crops"></div>
+    </div>
+    <div style="margin-top:14px" id="annotWrap">
+      <label>تصویر تحلیل‌شده (جعبه‌ها)</label><br>
+      <img id="annotated" alt="تحلیل‌شده">
+    </div>
+    <details>
+      <summary>جدول همه کاندیداها + JSON خام</summary>
+      <table id="candTable" style="margin-top:10px">
+        <thead><tr><th>#</th><th>پلاک</th><th dir="ltr">سیستم</th><th>معتبر</th><th>اطمینان</th><th dir="ltr">method</th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <pre id="rawJson"></pre>
+    </details>
+  </div>
+
+  <div class="card">
+    <div class="hint">
+      <b>نصب موتور روی سرور</b> (اگر وضعیت بالا «easyocr» را خاموش نشان می‌دهد):<br>
+      <code dir="ltr">cd D:\Projects\ParkingSystem\backend</code><br>
+      <code dir="ltr">pip install -r requirements-ocr.txt</code><br>
+      بار اول که عکس می‌فرستید مدل‌ها دانلود می‌شوند (چند دقیقه) و بعد از آن هر تحلیل حدود ۱ تا ۳ ثانیه طول می‌کشد.
+      برای دقت بالاتر با مدل YOLO آموزش‌دیده، فایل را در <code dir="ltr">backend\models\plate_det_best.pt</code> بگذارید.
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const base = location.origin;
+$('baseLbl').textContent = base + '/api/v1';
+
+let token = null, currentFile = null;
+
+// ── localStorage ──
+$('apiKey').value = localStorage.getItem('plateTestKey') || '';
+$('useLogin').checked = localStorage.getItem('plateTestLogin') === '1';
+$('username').value = localStorage.getItem('plateTestUser') || '';
+toggleLogin();
+$('apiKey').oninput = () => localStorage.setItem('plateTestKey', $('apiKey').value);
+$('username').oninput = () => localStorage.setItem('plateTestUser', $('username').value);
+$('useLogin').onchange = () => { localStorage.setItem('plateTestLogin', $('useLogin').checked ? '1' : '0'); toggleLogin(); };
+function toggleLogin(){ $('loginBox').classList.toggle('hidden', !$('useLogin').checked); }
+
+function authHeaders(extra={}){
+  const h = {...extra};
+  if ($('useLogin').checked && token) h['Authorization'] = 'Bearer ' + token;
+  else if ($('apiKey').value.trim()) h['X-API-Key'] = $('apiKey').value.trim();
+  return h;
+}
+
+// ── وضعیت موتور ──
+async function loadStatus(){
+  try{
+    const r = await fetch(base + '/api/v1/plate-ocr/status');
+    const j = await r.json();
+    const c = j.capabilities || {};
+    const mk = (k,label) => `<span class="cap ${c[k]?'on':'off'}">${label}${c[k]?' ✓':' ✕'}</span>`;
+    $('caps').innerHTML =
+      mk('opencv','OpenCV') + mk('easyocr','EasyOCR') + mk('torch','Torch') +
+      mk('ultralytics','YOLO') + mk('yolo_weights','مدل تشخیص') + mk('crnn_weights','مدل CRNN');
+    if(!j.ready) showErr('⚠ موتور OCR نصب نیست.\n' + (j.install_hint||''));
+  }catch(e){ showErr('سرور در دسترس نیست: ' + e.message); }
+}
+loadStatus();
+
+function showErr(msg){ const b=$('errBox'); b.style.display='block'; b.className='card err'; b.textContent=msg; }
+function hideErr(){ $('errBox').style.display='none'; }
+
+// ── ورود ──
+async function login(){
+  if(!$('useLogin').checked || token) return;
+  const r = await fetch(base + '/api/v1/auth/login', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({username:$('username').value, password:$('password').value})
+  });
+  const j = await r.json();
+  if(!r.ok) throw new Error(j?.error?.message || 'ورود ناموفق بود');
+  token = j.access_token;
+}
+
+// ── انتخاب فایل ──
+const drop = $('drop');
+drop.onclick = () => $('fileInput').click();
+$('fileInput').onchange = e => setFile(e.target.files[0]);
+['dragover','dragenter'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('hover'); }));
+['dragleave','drop'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove('hover'); }));
+drop.addEventListener('drop', e => setFile(e.dataTransfer.files[0]));
+document.addEventListener('paste', e => {
+  for(const it of (e.clipboardData?.items||[]))
+    if(it.type.startsWith('image/')) { setFile(it.getAsFile()); break; }
+});
+
+function setFile(f){
+  if(!f || !f.type.startsWith('image/')) return;
+  if(f.size > 12*1024*1024){ showErr('حجم فایل بیش از ۱۲ مگابایت است'); return; }
+  hideErr();
+  currentFile = f;
+  $('preview').src = URL.createObjectURL(f);
+  $('preview').style.display = 'block';
+  $('readBtn').disabled = false;
+}
+
+$('clearBtn').onclick = () => {
+  currentFile = null; token = null;
+  $('preview').style.display = 'none';
+  $('readBtn').disabled = true;
+  $('resultCard').classList.add('hidden');
+};
+
+// ── خواندن پلاک ──
+$('readBtn').onclick = async () => {
+  if(!currentFile) return;
+  hideErr(); $('errBox').className='card';
+  $('readBtn').disabled = true; $('spin').classList.remove('hidden');
+  try{
+    await login();
+    const fd = new FormData();
+    fd.append('file', currentFile);
+    const r = await fetch(base + `/api/v1/plate-ocr/read?lookup=${$('lookup').checked}`, {
+      method:'POST', headers: authHeaders(), body: fd
+    });
+    $('errBox').style.display='none';
+    const j = await r.json();
+    if(!r.ok) throw new Error(j?.error?.message || ('خطا ' + r.status));
+    render(j);
+  }catch(e){
+    $('errBox').style.display='block'; $('errBox').className='card err';
+    $('errBox').textContent = '❌ ' + e.message;
+  }finally{
+    $('readBtn').disabled = !currentFile; $('spin').classList.add('hidden');
+  }
+};
+
+function fa(n){ return String(n).replace(/\d/g, d => '۰۱۲۳۴۵۶۷۸۹'[d]); }
+
+function render(j){
+  $('resultCard').classList.remove('hidden');
+  $('resultCard').scrollIntoView({behavior:'smooth'});
+  const b = j.best || (j.plates && j.plates[0]);
+  if(!b){
+    showErr('هیچ پلاکی در تصویر پیدا نشد. عکس واضح‌تر/نزدیک‌تر امتحان کنید.');
+    return;
+  }
+  $('bestPlate').innerHTML = fa(b.persian).replace(/\|/g,'<small>ایران</small>')
+    + (b.system && b.system.includes('IR') ? '' : '');
+  $('validBadge').textContent = b.valid ? '✓ قالب معتبر پلاک ایران' : '⚠ قالب نامعتبر';
+  $('validBadge').className = 'badge ' + (b.valid ? 'ok' : 'bad');
+  $('sysForm').textContent = b.system || '—';
+  $('colorV').textContent = b.color || '—';
+  $('msV').textContent = fa(j.elapsed_ms) + ' میلی‌ثانیه';
+  $('confV').textContent = fa(Math.round((b.confidence||0)*100)) + '٪';
+  $('confBar').style.width = Math.round((b.confidence||0)*100) + '%';
+  $('confBar').style.background = b.valid ? 'var(--ok)' : 'var(--warn)';
+  $('engineV').textContent = JSON.stringify(j.engine || {});
+  $('annotWrap').classList.toggle('hidden', !j.annotated_b64);
+  if(j.annotated_b64) $('annotated').src = 'data:image/jpeg;base64,' + j.annotated_b64;
+
+  // برش‌ها
+  $('crops').innerHTML = '';
+  (j.plates||[]).forEach(p => {
+    if(p.crop_b64){
+      const im = document.createElement('img');
+      im.src = 'data:image/jpeg;base64,' + p.crop_b64;
+      im.title = p.persian;
+      $('crops').appendChild(im);
+    }
+  });
+  $('cropWrap').style.display = $('crops').children.length ? 'block' : 'none';
+
+  // جدول کاندیداها
+  const tb = $('candTable').querySelector('tbody');
+  tb.innerHTML = '';
+  (j.plates||[]).forEach((p,i) => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${fa(i+1)}</td><td style="font-weight:700">${fa(p.persian)}</td>
+      <td dir="ltr">${p.system||'—'}</td>
+      <td>${p.valid?'<span class="badge ok">معتبر</span>':'<span class="badge bad">نامعتبر</span>'}</td>
+      <td>${fa(Math.round(p.confidence*100))}٪</td><td dir="ltr" style="font-size:11px">${p.method}</td>`;
+    tb.appendChild(tr);
+  });
+  const {annotated_b64, ...rest} = j;
+  $('rawJson').textContent = JSON.stringify(rest, null, 2);
+
+  // خودروی سیستم
+  $('vehBox').innerHTML = '';
+  if(j.vehicles && j.vehicles.length){
+    j.vehicles.forEach(v => {
+      const d = document.createElement('div');
+      d.className = 'veh';
+      d.innerHTML = `✅ این پلاک در سیستم ثبت است: <b>${v.brand||''} ${v.model||''}</b>
+        — رنگ: ${v.color||'—'} — پلاک خام: <b dir="ltr">${v.plate_raw||'—'}</b>`;
+      $('vehBox').appendChild(d);
+    });
+  } else if($('lookup').checked){
+    $('vehBox').innerHTML = '<div class="veh" style="border-color:var(--line)">این پلاک در خودروهای ثبت‌شده یافت نشد.</div>';
+  }
+}
+</script>
+</body>
+</html>

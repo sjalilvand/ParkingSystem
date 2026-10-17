@@ -1,0 +1,22 @@
+# ============================================================================
+# وابستگی‌های اختیاری پلاک‌خوان (Plate OCR)
+# نصب:  cd backend
+#       pip install -r requirements-ocr.txt
+# ⚠ بار اول اجرا، EasyOCR مدل‌های خودش (~۱۰۰MB) را دانلود می‌کند — اینترنت لازم است.
+# ============================================================================
+
+numpy>=1.26,<2
+opencv-contrib-python>=4.10
+Pillow>=10
+arabic-reshaper>=3.0
+python-bidi>=0.4
+
+# بک‌اند OCR آماده (پیش‌فرض) — بدون نیاز به آموزش
+easyocr>=1.7.1
+
+# --- اختیاری: تشخیص YOLO + CRNN آموزش‌دیده (دقت بالاتر برای دوربین راهبند) ---
+# نصب torch نسخه CPU روی ویندوز (سبک‌تر):
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+# نصب نسخه GPU (اگر کارت گرافیک NVIDIA دارید):
+#   https://pytorch.org/get-started/locally/
+# ultralytics>=8.2.0
