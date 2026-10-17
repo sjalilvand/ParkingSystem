@@ -29,20 +29,29 @@ interface ScenVehicle { role: string; label: string; plate_raw: string; plate_no
   is_active: boolean; has_permit: boolean; space_code?: string | null; space_type?: string | null
   owner?: string }
 interface ScenResident { name: string; unit: string; vehicles: ScenVehicle[] }
+interface ScenBanned { role: string; label: string; plate_raw: string; restricted: boolean
+  restriction_type?: string | null; restriction_reason?: string | null; has_permit: boolean }
 interface ScenState {
   residents: ScenResident[]
   strangers: ScenVehicle[]
+  banned?: ScenBanned[]
   rules: { code: string; name: string; status: string; enabled: boolean; priority: number }[]
   spaces: { code: string; type: string; status: string }[]
   inside_count: number; occupied_spaces: number; total_spaces: number
   active_rules: number; draft_rules: number; events_total: number
+  yard_capacity?: { total: number; source: string } | null
+  exit_policy?: string
+  tariff_active?: boolean
+  phases?: { key: string; title: string }[]
   step_index: number; total_steps: number
 }
 interface StepResult {
   index?: number; total?: number; title?: string; finished?: boolean; message?: string
-  action: 'gate' | 'activate_rule' | 'summary' | 'manual'
+  action: 'gate' | 'activate_rule' | 'summary' | 'manual' | 'set_yard_capacity' | 'clear_yard_capacity' | 'set_exit_policy' | 'backdate_session' | 'lift_restriction' | 'grant_permit'
+  phase?: string; phase_title?: string
   role?: string | null; role_label?: string; direction?: string; gate_code?: string
   plate_raw?: string; rule_name?: string; rule?: string; error?: string
+  policy?: string; hours?: number; minutes?: number; lifted?: number
   result?: {
     decision: string; decision_reason: string; barrier_action: string
     parking?: { code: string; zone?: string } | null
@@ -52,6 +61,14 @@ interface StepResult {
     rule_trace?: { rule_name?: string } | null
   }
   explanation?: string[]
+}
+
+const PHASE_FA: Record<string, { label: string; color: 'primary' | 'warning' | 'secondary' | 'error' | 'success' }> = {
+  SETUP: { label: 'محیط‌بندی', color: 'primary' },
+  RULES: { label: 'قوانین', color: 'warning' },
+  CAPACITY: { label: 'ظرفیت محوطه', color: 'secondary' },
+  DEBT: { label: 'خروج با بدهی', color: 'error' },
+  RECOVERY: { label: 'جبران/مهمان', color: 'success' },
 }
 
 const dur = (s?: number) => {
@@ -153,11 +170,21 @@ export default function Simulator() {
         <Chip size="small" color="primary" sx={{ minWidth: 64 }}
           label={s.index ? `گام ${s.index}` : (s.action === 'manual' ? 'دستی' : 'گام')} />
         <Typography variant="body2" fontWeight={800}>{s.title ?? (s.action === 'manual' ? 'رویداد دستی' : '')}</Typography>
+        {s.phase && PHASE_FA[s.phase] && (
+          <Chip size="small" color={PHASE_FA[s.phase].color} variant="outlined"
+            label={s.phase_title ?? PHASE_FA[s.phase].label} />
+        )}
         {s.action === 'gate' && s.direction && (
           <Chip size="small" color={s.direction === 'IN' ? 'primary' : 'secondary'}
             label={s.direction === 'IN' ? '⬅ ورود' : 'خروج ➡'} />
         )}
         {s.action === 'activate_rule' && <Chip size="small" color="warning" label="فعال‌سازی قانون" />}
+        {(s.action === 'set_yard_capacity' || s.action === 'clear_yard_capacity' || s.action === 'set_exit_policy') && (
+          <Chip size="small" color="secondary" label="تغییر تنظیمات" />
+        )}
+        {(s.action === 'backdate_session' || s.action === 'lift_restriction' || s.action === 'grant_permit') && (
+          <Chip size="small" color="info" label="اقدام اپراتور" />
+        )}
         {s.action === 'summary' && <Chip size="small" color="info" label="خلاصه" />}
         {s.plate_raw && s.action === 'gate' && <PlateBox plate={s.plate_raw} size="sm" />}
       </Stack>
@@ -189,14 +216,21 @@ export default function Simulator() {
         <Stack direction="row" spacing={1.2} alignItems="center" flexWrap="wrap" useFlexGap>
           <MovieFilter color="primary" />
           <Typography fontWeight={800} sx={{ flex: 1 }}>🎬 سناریوی آزمایشی — محیط‌بندی و گام‌به‌گام</Typography>
-          <Chip size="small" variant="outlined" label={`گام: ${scen?.step_index ?? 0}/${scen?.total_steps ?? 14}`} />
+          <Chip size="small" variant="outlined" label={`گام: ${scen?.step_index ?? 0}/${scen?.total_steps ?? 32}`} />
           <Chip size="small" color={scen?.active_rules ? 'warning' : 'default'}
             label={`قوانین فعال: ${scen?.active_rules ?? 0} | DRAFT: ${scen?.draft_rules ?? 0}`} />
         </Stack>
         <Typography variant="caption" color="text.secondary" component="div" mt={0.5}>
           پاکسازی کامل (به‌جز ادمین) ← ۲ ساکن (علی رضایی، مریم کریمی) هر کدام یک واحد و ۳ خودرو
-          (پارکینگ خودش / متقاضی محوطه / پارکینگ دفنی) + ۲ غریبه فعالِ بدون مجوز + ۳ قانون DRAFT.
+          (پارکینگ خودش / متقاضی محوطه / پارکینگ دفنی) + ۲ غریبه فعال بدون مجوز + ۱ خودروی ممنوعه
+          + ۳ قانون DRAFT + تعرفه آزمایشی. سپس اجرای گام‌به‌گام در ۵ فاز:
+          ۱) تردد پایه ۲) فعال‌سازی قوانین ۳) ظرفیت محوطه پر ۴) خروج با بدهی (D1) ۵) جبران و مهمان.
         </Typography>
+        <Stack direction="row" spacing={0.6} mt={1} flexWrap="wrap" useFlexGap>
+          {Object.entries(PHASE_FA).map(([k, v]) => (
+            <Chip key={k} size="small" variant="outlined" color={v.color} label={v.label} />
+          ))}
+        </Stack>
 
         <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.2} mt={1.5} alignItems={{ sm: 'center' }} flexWrap="wrap" useFlexGap>
           <Button variant="contained" color="error" startIcon={<RestartAlt />}
@@ -242,10 +276,25 @@ export default function Simulator() {
                   <Chip size="small" color="error" variant="outlined" sx={{ fontSize: 11 }} label={v.label} />
                 </Stack>
               ))}
+              {(scen.banned ?? []).map((v) => (
+                <Stack key={v.role} direction="row" spacing={0.6} alignItems="center">
+                  <PlateBox plate={v.plate_raw} size="sm" />
+                  <Chip size="small" color={v.restricted ? 'error' : 'default'}
+                    variant={v.restricted ? 'filled' : 'outlined'} sx={{ fontSize: 11 }}
+                    label={`${v.label}${v.restricted ? ' (ممنوع)' : ' (ممنوعیت لغو شد)'}`} />
+                </Stack>
+              ))}
               <Chip size="small" color="info" label={`🚗 داخل: ${scen.inside_count}`} />
               <Chip size="small" variant="outlined" label={`🅿️ اشغال: ${scen.occupied_spaces}/${scen.total_spaces}`} />
             </Stack>
             <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+              <Chip size="small" color="secondary" variant="outlined"
+                label={`ظرفیت محوطه: ${scen.yard_capacity ? `${scen.yard_capacity.total} (${scen.yard_capacity.source})` : 'نامحدود'}`} />
+              <Chip size="small"
+                color={scen.exit_policy === 'DENY' ? 'error' : scen.exit_policy === 'ALLOW' ? 'success' : 'warning'}
+                variant="outlined" label={`سیاست خروج با بدهی (D1): ${scen.exit_policy ?? 'WARN'}`} />
+              <Chip size="small" color={scen.tariff_active ? 'success' : 'default'} variant="outlined"
+                label={scen.tariff_active ? 'تعرفه فعال ✓' : 'بدون تعرفه فعال'} />
               {scen.rules.map((r) => (
                 <Chip key={r.code} size="small" sx={{ fontSize: 11 }}
                   color={r.status === 'ACTIVE' ? 'warning' : 'default'}

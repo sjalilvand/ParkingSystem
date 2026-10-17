@@ -16,6 +16,7 @@ import Violations from '../pages/Violations'
 import Tariffs from '../pages/Tariffs'
 import Ops from '../pages/Ops'
 import Simulator from '../pages/Simulator'
+import PlateOcr from '../pages/PlateOcr'
 import ParkingDesigner from '../pages/ParkingDesigner'
 import RuleTester from '../pages/RuleTester'
 import ScenarioBuilder from '../pages/ScenarioBuilder'
@@ -43,6 +44,7 @@ export default function App() {
         <Route path="/tariffs" element={<Tariffs />} />
         <Route path="/ops" element={<Ops />} />
         <Route path="/simulator" element={<Simulator />} />
+        <Route path="/plate-ocr" element={<PlateOcr />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

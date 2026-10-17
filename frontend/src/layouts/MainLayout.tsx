@@ -7,7 +7,7 @@ import {
   ListItemText, Popover, Stack, TextField, Toolbar, Typography,
 } from '@mui/material'
 import {
-  AccountBalance, Apartment, ConfirmationNumber, DirectionsCar,
+  AccountBalance, Apartment, CameraAlt, ConfirmationNumber, DirectionsCar,
   Dashboard as DashIcon, LockReset, Logout, LocalParking, ManageAccounts,
   Menu as MenuIcon, Notifications, Payments, ReportProblem, ReceiptLong,
   Science, Settings, SwapHoriz, Tour, Tune, Troubleshoot, VideogameAsset,
@@ -31,6 +31,7 @@ const menu: { label: string; icon: ReactNode; path: string; perm?: string }[] = 
   { label: 'پنل گیت', icon: <SwapHoriz />, path: '/gate', perm: 'gate.view' },
   { label: 'مرکز عملیات', icon: <Troubleshoot />, path: '/ops', perm: 'ops.view' },
   { label: 'شبیه‌ساز', icon: <VideogameAsset />, path: '/simulator', perm: 'simulator.view' },
+  { label: 'پلاک‌خوان (OCR)', icon: <CameraAlt />, path: '/plate-ocr' },
   { label: 'ساختار مجتمع', icon: <Apartment />, path: '/structure', perm: 'structure.view' },
   { label: 'مسئول محوطه', icon: <Tour />, path: '/field', perm: 'parking.view' },
   { label: 'خودروها', icon: <DirectionsCar />, path: '/vehicles', perm: 'vehicles.view' },

@@ -111,6 +111,9 @@ class VehicleService:
 
     @staticmethod
     async def has_active_restriction(db: AsyncSession, plate_normalized: str, now: datetime) -> VehicleRestriction | None:
+        from app.shared.dt import as_utc
+
+        now = as_utc(now) or now
         result = await db.execute(
             select(VehicleRestriction).where(
                 VehicleRestriction.plate_normalized == plate_normalized,
@@ -118,9 +121,11 @@ class VehicleService:
             )
         )
         for r in result.scalars().all():
-            if r.starts_at and now < r.starts_at:
+            # as_utc: سازگار با SQLite (مقادیر ناوآگاه دیتابیس)
+            starts, ends = as_utc(r.starts_at), as_utc(r.ends_at)
+            if starts and now < starts:
                 continue
-            if r.ends_at and now > r.ends_at:
+            if ends and now > ends:
                 continue
             return r
         return None

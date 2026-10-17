@@ -1,25 +1,30 @@
-"""سناریوی آزمایشی شبیه‌ساز (موج ۱۰):
+"""سناریوی آزمایشی شبیه‌ساز (موج ۱۰ + ۱۱):
 پاکسازی کامل داده‌ها (به‌جز ادمین/تنظیمات/زیرساخت) → ساخت سناریوی آموزشی:
   • ۲ ساکن (علی رضایی، مریم کریمی) — هر کدام یک واحد
   • هر ساکن ۳ خودرو: اولی=پارکینگ خودش، دومی=متقاضی محوطه، سومی=پارکینگ دفنی
   • ۲ خودرو غریبه (فعالِ بدون مجوز)
+  • ۱ خودروی ممنوعه (محدودیت BANNED فعال)
   • ۳ قانون DRAFT (ساکنِ خودش / متقاضی محوطه / ناشناس→نگهبان)
-و اجرای گام‌به‌گام سناریو با توضیح فارسیِ هر تصمیم.
+  • تعرفهٔ فعال آزمایشی (برای محاسبهٔ بدهی)
+و اجرای گام‌به‌گام سناریو در ۵ فاز با توضیح فارسیِ هر تصمیم:
+  ۱) محیط‌بندی و تردد پایه   ۲) فعال‌سازی قوانین   ۳) ظرفیت محوطهٔ پر
+  ۴) خروج با بدهی (سیاست D1)   ۵) جبران، مهمان و پایان
 """
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.base import Base
 from app.db.session import AsyncSessionLocal
 from app.modules.access_control.models import AccessEvent, ParkingSession
 from app.modules.complexes.models import Complex, Tower, Unit
-from app.modules.config_admin.models import EntryExitRule
+from app.modules.config_admin.models import AppSetting, EntryExitRule
 from app.modules.devices.models import Gate
+from app.modules.finance.models import Tariff
 from app.modules.parking.models import ParkingAssignment, ParkingSpace
 from app.modules.residents.models import Person, UnitOccupancy
-from app.modules.vehicles.models import AccessPermit, Vehicle
+from app.modules.vehicles.models import AccessPermit, Vehicle, VehicleRestriction
 from app.shared.plate import normalize_plate
 
 # ---------------------------------------------------------------------------
@@ -51,9 +56,19 @@ REASON_FA = {
     "RULE_REFER_GUARD": "طبق قانون → ارجاع به نگهبان",
     "YARD_APPLICANT": "متقاضی محوطه → ارجاع به نگهبان",
     "UNKNOWN_TO_GUARD": "ناشناس → ارجاع به نگهبان",
+    "RULE_DENY": "طبق قانون → عدم اجازه",
     "YARD_CAPACITY_FULL": "ظرفیت محوطه پر است",
     "NO_OPEN_SESSION_FOR_EXIT": "بدون نشست باز برای خروج",
 }
+
+# فازهای سناریو — برای نمایش گروه‌بندی‌شده در UI
+PHASES = [
+    {"key": "SETUP", "title": "۱) محیط‌بندی و تردد پایه"},
+    {"key": "RULES", "title": "۲) فعال‌سازی قوانین و مقایسهٔ تصمیم‌ها"},
+    {"key": "CAPACITY", "title": "۳) ظرفیت محوطهٔ پر"},
+    {"key": "DEBT", "title": "۴) خروج با بدهی (سیاست D1)"},
+    {"key": "RECOVERY", "title": "۵) جبران، مهمان و پایان"},
+]
 DECISION_FA = {
     "ALLOW": "اجازه عبور",
     "ALLOW_WITH_WARNING": "عبور با هشدار",
@@ -99,6 +114,12 @@ STRANGERS = [
      "plate_raw": "89 ن 012 ایران 36", "color": "سبز", "brand": "وانت نیسان"},
 ]
 
+BANNED_VEHICLES = [
+    {"role": "BAN1", "label": "خودروی ممنوعه — محدودیت BANNED فعال",
+     "plate_raw": "90 و 123 ایران 11", "color": "زرد", "brand": "پراید ۱۳۱",
+     "reason": "تخلف تکراریِ توقف در مسیر عبور — ممنوعیت ورود (سناریو)"},
+]
+
 SPACE_MAP = {  # role خودرو → فضای اختصاص‌یافته
     "ALI1": {"code": "P-A-101", "type": "PRIVATE", "zone": "A", "floor": -1, "label": "پارکینگ شخصی علی"},
     "ALI3": {"code": "D-A-01",  "type": "BURIED",  "zone": "D", "floor": -2, "label": "پارکینگ دفنی علی"},
@@ -136,36 +157,78 @@ DRAFT_RULES = [
 ]
 
 # ---------------------------------------------------------------------------
-# گام‌های سناریو — هر گام یا «رویداد راهبند» است یا «فعال‌سازی قانون» یا «خلاصه»
+# گام‌های سناریو در ۵ فاز — هر گام «رویداد راهبند»، «فعال‌سازی قانون»،
+# «تغییر تنظیم سیاستی» یا «خلاصه» است.
 # ---------------------------------------------------------------------------
 STEPS = [
-    {"action": "gate", "role": "ALI1", "direction": "IN",
+    # ── فاز ۱: محیط‌بندی و تردد پایه (قوانین همه DRAFT)
+    {"phase": "SETUP", "action": "gate", "role": "ALI1", "direction": "IN",
      "title": "ورود خودرو اول علی (پارکینگ خودش)"},
-    {"action": "gate", "role": "ALI1", "direction": "OUT",
+    {"phase": "SETUP", "action": "gate", "role": "ALI1", "direction": "OUT",
      "title": "خروج خودرو اول علی"},
-    {"action": "gate", "role": "ALI2", "direction": "IN",
+    {"phase": "SETUP", "action": "gate", "role": "ALI2", "direction": "IN",
      "title": "ورود خودرو دوم علی (متقاضی محوطه — بدون مجوز)"},
-    {"action": "gate", "role": "MRY1", "direction": "IN",
+    {"phase": "SETUP", "action": "gate", "role": "MRY1", "direction": "IN",
      "title": "ورود خودرو اول مریم (پارکینگ خودش)"},
-    {"action": "gate", "role": "MRY3", "direction": "IN",
+    {"phase": "SETUP", "action": "gate", "role": "MRY3", "direction": "IN",
      "title": "ورود خودرو سوم مریم (پارکینگ دفنی)"},
-    {"action": "gate", "role": "STR1", "direction": "IN",
+    {"phase": "SETUP", "action": "gate", "role": "STR1", "direction": "IN",
      "title": "ورود غریبه ۱ (فعال بدون مجوز)"},
-    {"action": "gate", "role": "BADPLATE", "direction": "IN",
+    {"phase": "SETUP", "action": "gate", "role": "BAN1", "direction": "IN",
+     "title": "ورود خودروی ممنوعه (هنوز هیچ قانونی فعال نیست)"},
+    {"phase": "SETUP", "action": "gate", "role": "BADPLATE", "direction": "IN",
      "title": "ورود با پلاکِ ناخوانا (تست خطای خوانش)"},
-    {"action": "activate_rule", "rule": "R-SCEN-UNKNOWN",
+    # ── فاز ۲: فعال‌سازی قوانین و مقایسهٔ تصمیم‌ها
+    {"phase": "RULES", "action": "activate_rule", "rule": "R-SCEN-UNKNOWN",
      "title": "فعال‌سازی قانون «ناشناس → نگهبان»"},
-    {"action": "gate", "role": "STR2", "direction": "IN",
+    {"phase": "RULES", "action": "gate", "role": "STR2", "direction": "IN",
      "title": "ورود مجدد غریبه — این‌بار با قانون فعال"},
-    {"action": "activate_rule", "rule": "R-SCEN-YARD",
+    {"phase": "RULES", "action": "activate_rule", "rule": "R-SCEN-YARD",
      "title": "فعال‌سازی قانون «متقاضی محوطه»"},
-    {"action": "gate", "role": "ALI2", "direction": "IN",
+    {"phase": "RULES", "action": "gate", "role": "ALI2", "direction": "IN",
      "title": "ورود دوباره خودرو دوم علی — با قانون فعال"},
-    {"action": "activate_rule", "rule": "R-SCEN-RESIDENT",
+    {"phase": "RULES", "action": "activate_rule", "rule": "R-SCEN-RESIDENT",
      "title": "فعال‌سازی قانون «ساکنِ خودش»"},
-    {"action": "gate", "role": "MRY1", "direction": "OUT",
+    {"phase": "RULES", "action": "gate", "role": "MRY1", "direction": "OUT",
      "title": "خروج خودرو اول مریم — با قانون ساکن فعال"},
-    {"action": "summary", "title": "خلاصه وضعیت نهایی"},
+    {"phase": "RULES", "action": "gate", "role": "BAN1", "direction": "IN",
+     "title": "ورود دوباره خودروی ممنوعه — قوانین فعال‌اند اما ممنوعیت نرم نمی‌شود"},
+    # ── فاز ۳: ظرفیت محوطهٔ پر
+    {"phase": "CAPACITY", "action": "set_yard_capacity", "total": 2,
+     "title": "تعیین ظرفیت محوطه = ۲ (در «طراح تنظیمات»)"},
+    {"phase": "CAPACITY", "action": "gate", "role": "ALI3", "direction": "IN",
+     "title": "ورود خودرو سوم علی (دفنی) — پرشدن آخرین جای ظرفیت"},
+    {"phase": "CAPACITY", "action": "gate", "role": "ALI1", "direction": "IN",
+     "title": "ورود دوباره خودرو اول علی — محوطه پر است!"},
+    {"phase": "CAPACITY", "action": "gate", "role": "MRY3", "direction": "IN",
+     "title": "ورود تکراری خودرو سوم مریم (هم‌اکنون داخل است)"},
+    {"phase": "CAPACITY", "action": "clear_yard_capacity",
+     "title": "حذف محدودیت ظرفیت (بازگشت به نامحدود)"},
+    {"phase": "CAPACITY", "action": "gate", "role": "ALI1", "direction": "IN",
+     "title": "ورود دوباره خودرو اول علی — حالا عبور می‌کند"},
+    # ── فاز ۴: خروج با بدهی (سیاست D1)
+    {"phase": "DEBT", "action": "set_exit_policy", "policy": "DENY",
+     "title": "سیاست خروج با بدهی → DENY (مسدودسازی)"},
+    {"phase": "DEBT", "action": "backdate_session", "role": "ALI1", "minutes": 90,
+     "title": "عقب‌کشیدن زمان ورود به ۹۰ دقیقه قبل (شبیه‌سازی توقف طولانی)"},
+    {"phase": "DEBT", "action": "gate", "role": "ALI1", "direction": "OUT",
+     "title": "خروج خودرو اول علی — بدهی پرداخت‌نشده دارد!"},
+    {"phase": "DEBT", "action": "set_exit_policy", "policy": "WARN",
+     "title": "بازگشت سیاست خروج به WARN (پیش‌فرض)"},
+    {"phase": "DEBT", "action": "gate", "role": "ALI1", "direction": "OUT",
+     "title": "خروج دوباره — با سیاست WARN عبور می‌کند اما بدهی ثبت می‌ماند"},
+    # ── فاز ۵: جبران، مهمان و پایان
+    {"phase": "RECOVERY", "action": "lift_restriction", "role": "BAN1",
+     "title": "لغو ممنوعیت خودروی ممنوعه (تصمیم مدیر)"},
+    {"phase": "RECOVERY", "action": "grant_permit", "role": "BAN1", "hours": 2,
+     "title": "صدور مجوز مهمان ۲ ساعته برای خودروی قبلاً ممنوع"},
+    {"phase": "RECOVERY", "action": "gate", "role": "BAN1", "direction": "IN",
+     "title": "ورود خودروی قبلاً ممنوع — این‌بار با مجوز مهمان"},
+    {"phase": "RECOVERY", "action": "gate", "role": "BAN1", "direction": "OUT",
+     "title": "خروج خودروی مهمان — تسویهٔ تعرفه"},
+    {"phase": "RECOVERY", "action": "gate", "role": "STR1", "direction": "OUT",
+     "title": "خروج غریبه ۱ — بدون نشست باز (اصلاً وارد نشده بود)"},
+    {"phase": "RECOVERY", "action": "summary", "title": "خلاصه وضعیت نهایی"},
 ]
 
 
@@ -283,6 +346,36 @@ async def seed_scenario(db: AsyncSession) -> dict:
         vehicle_ids[v["role"]] = veh.id
         plate_by_role[v["role"]] = v["plate_raw"]
 
+    # خودروی ممنوعه — فعال اما با محدودیت BANNED (موج ۱۱)
+    for v in BANNED_VEHICLES:
+        norm = normalize_plate(v["plate_raw"]) or v["plate_raw"]
+        veh = Vehicle(
+            plate_raw=v["plate_raw"], plate_normalized=norm,
+            plate_letter=None, plate_province_code="11",
+            plate_province="تهران", plate_city="تهران",
+            plate_type="PERSONAL", vehicle_type="CAR",
+            brand=v["brand"], color=v["color"], is_active=True,
+            notes=f"SCEN:{v['role']}|{v['label']}",
+        )
+        db.add(veh)
+        await db.flush()
+        vehicle_ids[v["role"]] = veh.id
+        plate_by_role[v["role"]] = v["plate_raw"]
+        db.add(VehicleRestriction(
+            vehicle_id=veh.id, plate_normalized=norm,
+            restriction_type="BANNED", starts_at=now,
+            reason=v["reason"], status="ACTIVE", created_by="scenario"))
+
+    # تعرفهٔ فعال آزمایشی — اگر هیچ تعرفهٔ فعالی نیست (برای محاسبهٔ بدهی در فاز ۴)
+    has_tariff = await db.scalar(select(func.count()).select_from(Tariff)
+                                  .where(Tariff.status == "ACTIVE"))
+    if not int(has_tariff or 0):
+        db.add(Tariff(
+            title="تعرفهٔ آزمایشی شبیه‌ساز — ساعتی ۱۰ هزار تومان",
+            free_minutes=0, hourly_amount=10_000, priority=0,
+            valid_from=now - timedelta(days=1), valid_until=now + timedelta(days=3650),
+            status="ACTIVE", approved_by="scenario", approved_at=now))
+
     # سه قانون DRAFT — کد سناریو در description نشانه‌گذاری می‌شود تا بعداً قابل پیدا کردن باشد
     for rl in DRAFT_RULES:
         db.add(EntryExitRule(
@@ -296,12 +389,28 @@ async def seed_scenario(db: AsyncSession) -> dict:
         "complex": cx.name, "tower": tw.name,
         "units": [r["unit_number"] for r in RESIDENTS],
         "residents": [f'{r["first_name"]} {r["last_name"]}' for r in RESIDENTS],
-        "vehicles": len(RESIDENTS) * 3 + len(STRANGERS),
+        "vehicles": len(RESIDENTS) * 3 + len(STRANGERS) + len(BANNED_VEHICLES),
         "permits": len(PERMIT_ROLES),
         "spaces": list(SPACE_MAP.keys()),
         "draft_rules": [rl["name"] for rl in DRAFT_RULES],
         "strangers": len(STRANGERS),
+        "banned": [v["role"] for v in BANNED_VEHICLES],
+        "tariff_seeded": not bool(int(has_tariff or 0)),
+        "phases": [p["title"] for p in PHASES],
+        "steps": len(STEPS),
     }
+
+
+async def _reset_policy_settings(db: AsyncSession) -> None:
+    """بازگرداندن تنظیمات سیاستیِ مدیریت‌شدهٔ سناریو به حالت خنثی:
+    حذف ظرفیت محوطه + حذف EXIT_UNPAID_POLICY از gate_policy (سیاست خروج به پیش‌فرض)."""
+    row = (await db.execute(select(AppSetting).where(AppSetting.key == "yard_capacity"))).scalar_one_or_none()
+    if row is not None:
+        await db.delete(row)
+    gp = (await db.execute(select(AppSetting).where(AppSetting.key == "gate_policy"))).scalar_one_or_none()
+    if gp is not None and isinstance(gp.value, dict) and "EXIT_UNPAID_POLICY" in gp.value:
+        gp.value = {k: v for k, v in gp.value.items() if k != "EXIT_UNPAID_POLICY"}
+    await db.commit()
 
 
 async def setup_scenario() -> dict:
@@ -315,6 +424,7 @@ async def setup_scenario() -> dict:
     sim._state["last"] = None
     async with AsyncSessionLocal() as db:
         deleted = await cleanup_db(db)
+        await _reset_policy_settings(db)
         summary = await seed_scenario(db)
     _state["step_index"] = 0
     _state["steps_log"] = []
@@ -363,6 +473,20 @@ def _explain(action: str, result: dict, role: str | None, direction: str | None)
         out.append(f"نشست پارکینگ بسته و فضا آزاد شد.{extra}")
     elif reason == "SESSION_ALREADY_OPEN":
         out.append("چرا؟ برای همین پلاک قبلاً نشست بازی وجود دارد → ورود تکراری با هشدار.")
+    elif reason == "PLATE_RESTRICTED":
+        out.append("چرا؟ برای این پلاک محدودیتِ فعالی (BANNED) ثبت شده است. محدودیت را نمی‌شود با قانون دور زد — "
+                   "حتی قوانین فعال هم اجازهٔ نرم‌کردن این تصمیم را ندارند (RULE_SOFTEN_BLOCKED).")
+    elif reason == "YARD_CAPACITY_FULL":
+        out.append("چرا؟ تعداد ترددهای تأییدشدهٔ داخل مجموعه به ظرفیت اعلام‌شدهٔ محوطه رسیده است.")
+        out.append("تصمیم: نیاز به تأیید نگهبان — از «پنل گیت» می‌توان عبور دستی داد یا متقاضی را برگرداند. ظرفیت را می‌توان در «طراح تنظیمات» (کلید yard_capacity) تغییر داد.")
+    elif reason == "EXIT_UNPAID_BLOCKED":
+        sess = result.get("session") or {}
+        amt = sess.get("final_amount", 0)
+        dur2 = sess.get("duration_seconds")
+        out.append(f"چرا؟ سیاست D1 روی DENY است و بدهیِ محاسبه‌شده ({amt:,} تومان برای {dur2 or 0} ثانیه توقف) پرداخت نشده — راهبند بسته می‌ماند.")
+        out.append("پس از پرداخت در «بدهی‌ها» (یا اعتبار پیش‌پرداخت در مهلت خروج) خروج آزاد می‌شود.")
+    elif reason == "NO_OPEN_SESSION_FOR_EXIT":
+        out.append("چرا؟ هیچ نشست بازی برای این پلاک وجود ندارد — خروج با هشدار ثبت می‌شود و بدهی‌ای محاسبه نمی‌گردد.")
     if result.get("parking"):
         out.append(f'فضای تخصیص‌یافته: {result["parking"].get("code")} (زون {result["parking"].get("zone")})')
     if result.get("unit"):
@@ -371,6 +495,12 @@ def _explain(action: str, result: dict, role: str | None, direction: str | None)
     if trace:
         out.append(f'قانون اعمال‌شده: «{trace.get("rule_name")}»')
     warns = [w for w in (result.get("warnings") or []) if w != "RULES_ENGINE_ERROR"]
+    if "UNPAID_EXIT" in warns:
+        out.append("بدهی همین خروج ثبت شد — در صفحهٔ «بدهی‌ها» قابل پیگیری است (سیاست WARN: عبور با ثبت بدهی).")
+    warns = [w for w in warns if w not in ("UNPAID_EXIT", "UNPAID_EXIT_BLOCKED_BY_POLICY")]
+    if "RULE_SOFTEN_BLOCKED" in warns:
+        out.append("قانونی که مطابق شرطش بود خواست تصمیم را تغییر دهد اما سامانه اجازهٔ نرم‌کردنِ ممنوعیت را نمی‌دهد.")
+    warns = [w for w in warns if w != "RULE_SOFTEN_BLOCKED"]
     if warns:
         out.append("هشدارها: " + "، ".join(warns))
     return out
@@ -387,7 +517,9 @@ async def _run_gate_step(role: str, direction: str) -> dict:
             confidence=98.0, raw_payload={"source": "scenario"})
     role_label = next((v["label"] for r in RESIDENTS for v in r["vehicles"] if v["role"] == role), None)
     if role_label is None:
-        role_label = next((v["label"] for v in STRANGERS if v["role"] == role), "پلاک ناخوانا")
+        role_label = next((v["label"] for v in STRANGERS if v["role"] == role), None)
+    if role_label is None:
+        role_label = next((v["label"] for v in BANNED_VEHICLES if v["role"] == role), "پلاک ناخوانا")
     return {
         "action": "gate", "role": role, "role_label": role_label,
         "direction": direction, "gate_code": gate_code, "plate_raw": plate_raw,
@@ -417,16 +549,164 @@ async def _activate_rule(code: str) -> dict:
         }
 
 
+# ---------------------------------------------------------------------------
+# گام‌های سیاستی جدید (موج ۱۱) — ظرفیت محوطه / سیاست خروج / عقب‌کشیدن زمان /
+# لغو ممنوعیت / صدور مجوز مهمان
+# ---------------------------------------------------------------------------
+def _phase_of(step: dict) -> str:
+    return step.get("phase") or "SETUP"
+
+
+async def _set_yard_capacity(total: int) -> dict:
+    async with AsyncSessionLocal() as db:
+        row = (await db.execute(select(AppSetting).where(AppSetting.key == "yard_capacity"))).scalar_one_or_none()
+        if row is None:
+            db.add(AppSetting(key="yard_capacity", value={"total": int(total), "note": "scenario"},
+                              updated_by="scenario"))
+        else:
+            row.value = {**(row.value or {}), "total": int(total), "note": "scenario"}
+        await db.commit()
+    return {
+        "action": "set_yard_capacity", "total": total,
+        "explanation": [
+            f"ظرفیت محوطه روی {total} تنظیم شد (کلید yard_capacity در «طراح تنظیمات»).",
+            "از این لحظه هر ورودی که تعداد ترددهای تأییدشدهٔ داخل به این عدد رسیده باشد → نیاز به تأیید نگهبان (YARD_CAPACITY_FULL).",
+            "مبنای شمارش: رکوردهای حضورِ تأییدشده (ParkingOccupancy با وضعیت OCCUPIED).",
+        ],
+    }
+
+
+async def _clear_yard_capacity() -> dict:
+    async with AsyncSessionLocal() as db:
+        row = (await db.execute(select(AppSetting).where(AppSetting.key == "yard_capacity"))).scalar_one_or_none()
+        if row is not None:
+            await db.delete(row)
+        await db.commit()
+    return {
+        "action": "clear_yard_capacity",
+        "explanation": [
+            "محدودیت ظرفیت حذف شد — محوطه نامحدود است.",
+            "در عملیات واقعی این تصمیم با مدیر مجموعه است؛ اینجا فقط برای ادامهٔ سناریو انجام می‌شود.",
+        ],
+    }
+
+
+async def _set_exit_policy(policy: str) -> dict:
+    policy = (policy or "WARN").upper()
+    if policy not in ("ALLOW", "WARN", "DENY"):
+        policy = "WARN"
+    async with AsyncSessionLocal() as db:
+        row = (await db.execute(select(AppSetting).where(AppSetting.key == "gate_policy"))).scalar_one_or_none()
+        if row is None:
+            db.add(AppSetting(key="gate_policy", value={"EXIT_UNPAID_POLICY": policy}, updated_by="scenario"))
+        else:
+            row.value = {**(row.value or {}), "EXIT_UNPAID_POLICY": policy}
+        await db.commit()
+    fa = {"ALLOW": "عبور آزاد", "WARN": "عبور با هشدار و ثبت بدهی", "DENY": "مسدودسازی خروج"}[policy]
+    return {
+        "action": "set_exit_policy", "policy": policy,
+        "explanation": [
+            f"سیاست D1 (خروج با بدهی) روی {policy} — {fa} — تنظیم شد (کلید gate_policy در «طراح تنظیمات»).",
+            "این سیاست زمان-اجراست: از همان لحظه برای همهٔ خروج‌های جدید اعمال می‌شود.",
+        ],
+    }
+
+
+async def _backdate_session(role: str, minutes: int) -> dict:
+    minutes = max(1, int(minutes or 60))
+    plate_raw = await _role_plate(role)
+    norm = normalize_plate(plate_raw or "")
+    async with AsyncSessionLocal() as db:
+        sess = (await db.execute(
+            select(ParkingSession).where(
+                ParkingSession.plate_normalized == norm,
+                ParkingSession.status == "OPEN",
+            ).order_by(ParkingSession.entry_at.desc())
+        )).scalars().first()
+        if sess is None:
+            return {"action": "backdate_session", "role": role, "error": "NO_OPEN_SESSION"}
+        old = sess.entry_at
+        sess.entry_at = datetime.now(timezone.utc) - timedelta(minutes=minutes)
+        await db.commit()
+    return {
+        "action": "backdate_session", "role": role, "minutes": minutes,
+        "explanation": [
+            f"زمان ورودِ نشست باز از {old} به {minutes} دقیقه قبل عقب کشیده شد.",
+            "چون توقفِ کوتاه بدهی صفر می‌دهد، برای شبیه‌سازی «توقف طولانی» این کار لازم است.",
+            "محاسبهٔ مبلغ در لحظهٔ خروج با تعرفهٔ فعال انجام می‌شود (رُند به بالا، ساعتی).",
+        ],
+    }
+
+
+async def _lift_restriction(role: str) -> dict:
+    plate_raw = await _role_plate(role)
+    norm = normalize_plate(plate_raw or "")
+    async with AsyncSessionLocal() as db:
+        rows = (await db.execute(select(VehicleRestriction).where(
+            VehicleRestriction.plate_normalized == norm,
+            VehicleRestriction.status == "ACTIVE"))).scalars().all()
+        if not rows:
+            return {"action": "lift_restriction", "role": role, "error": "NO_ACTIVE_RESTRICTION"}
+        for r in rows:
+            r.status = "RESOLVED"
+            r.resolved_by = "scenario"
+            r.resolved_at = datetime.now(timezone.utc)
+        await db.commit()
+    return {
+        "action": "lift_restriction", "role": role, "lifted": len(rows),
+        "explanation": [
+            f"محدودیتِ فعال برای «{role}» برداشته شد (RESOLVED).",
+            "در عملیات واقعی این کار از صفحهٔ «تخلفات/محدودیت‌ها» با تصمیم مدیر انجام می‌شود.",
+        ],
+    }
+
+
+async def _grant_permit(role: str, hours: float = 2.0) -> dict:
+    hours = max(0.5, float(hours or 2))
+    plate_raw = await _role_plate(role)
+    norm = normalize_plate(plate_raw or "")
+    now = datetime.now(timezone.utc)
+    async with AsyncSessionLocal() as db:
+        veh = (await db.execute(select(Vehicle).where(
+            Vehicle.plate_normalized == norm))).scalars().first()
+        db.add(AccessPermit(
+            vehicle_id=veh.id if veh else None, plate_normalized=norm,
+            permit_type="GUEST", valid_from=now, valid_until=now + timedelta(hours=hours),
+            status="ACTIVE", reason=f"مجوز مهمانِ سناریو — {hours} ساعت"))
+        await db.commit()
+    return {
+        "action": "grant_permit", "role": role, "hours": hours,
+        "explanation": [
+            f"مجوز GUEST برای {hours} ساعت صادر شد (پلاک: {plate_raw}).",
+            "مجوزهای مهمان از صفحهٔ «مجوزها» هم قابل صدور هستند.",
+        ],
+    }
+
+
+_ACTION_HANDLERS = {
+    "set_yard_capacity": lambda s: _set_yard_capacity(s.get("total", 2)),
+    "clear_yard_capacity": lambda s: _clear_yard_capacity(),
+    "set_exit_policy": lambda s: _set_exit_policy(s.get("policy", "WARN")),
+    "backdate_session": lambda s: _backdate_session(s.get("role", ""), s.get("minutes", 60)),
+    "lift_restriction": lambda s: _lift_restriction(s.get("role", "")),
+    "grant_permit": lambda s: _grant_permit(s.get("role", ""), s.get("hours", 2)),
+}
+
+
 async def next_step() -> dict:
     i = _state["step_index"]
     if i >= len(STEPS):
         return {"finished": True, "total": len(STEPS),
                 "message": "همه گام‌ها اجرا شد — برای شروع مجدد «بازنشانی گام‌ها» را بزن."}
     step = STEPS[i]
+    phase = _phase_of(step)
+    phase_title = next((p["title"] for p in PHASES if p["key"] == phase), phase)
     if step["action"] == "gate":
         out = await _run_gate_step(step["role"], step["direction"])
     elif step["action"] == "activate_rule":
         out = await _activate_rule(step["rule"])
+    elif step["action"] in _ACTION_HANDLERS:
+        out = await _ACTION_HANDLERS[step["action"]](step)
     else:
         snap = await scenario_state()
         out = {
@@ -434,12 +714,15 @@ async def next_step() -> dict:
             "explanation": [
                 f'خودروهای داخل مجموعه: {snap["inside_count"]}',
                 f'فضاهای اشغال‌شده: {snap["occupied_spaces"]} از {snap["total_spaces"]}',
+                f'ظرفیت محوطه: {snap["yard_capacity"]["total"] if snap["yard_capacity"] else "نامحدود"}',
+                f'سیاست خروج با بدهی (D1): {snap["exit_policy"]}',
                 f'قوانین فعال: {snap["active_rules"]} | DRAFT: {snap["draft_rules"]}',
-                "همه رویدادها در «گزارش‌ها ← رویدادهای تردد» و «جریمه/تخلف» قابل بررسی هستند.",
+                "همه رویدادها در «گزارش‌ها ← رویدادهای تردد» و «جریمه/تخلف» و بدهی‌ها در «بدهی‌ها» قابل بررسی هستند.",
             ],
         }
     _state["step_index"] = i + 1
-    entry = {"index": i + 1, "total": len(STEPS), "title": step["title"], **out}
+    entry = {"index": i + 1, "total": len(STEPS), "title": step["title"],
+             "phase": phase, "phase_title": phase_title, **out}
     _state["steps_log"].append(entry)
     return entry
 
@@ -494,9 +777,36 @@ async def scenario_state() -> dict:
         open_sessions = await db.scalar(select(func.count()).select_from(ParkingSession)
                                          .where(ParkingSession.status == "OPEN"))
         events_total = await db.scalar(select(func.count()).select_from(AccessEvent))
+        # وضعیت ممنوعیت‌ها (موج ۱۱)
+        banned_out = []
+        for v in BANNED_VEHICLES:
+            veh = (await db.execute(
+                select(Vehicle).where(Vehicle.notes.like(f"SCEN:{v['role']}|%")))).scalars().first()
+            if veh is None:
+                continue
+            rest = (await db.execute(select(VehicleRestriction).where(
+                VehicleRestriction.plate_normalized == veh.plate_normalized,
+                VehicleRestriction.status == "ACTIVE"))).scalars().first()
+            permit = (await db.execute(select(AccessPermit).where(
+                AccessPermit.plate_normalized == veh.plate_normalized,
+                AccessPermit.status == "ACTIVE"))).scalars().first()
+            banned_out.append({"role": v["role"], "label": v["label"],
+                                "plate_raw": veh.plate_raw,
+                                "restricted": rest is not None,
+                                "restriction_type": (rest.restriction_type if rest else None),
+                                "restriction_reason": (rest.reason if rest else None),
+                                "has_permit": permit is not None})
+        # ظرفیت محوطه + سیاست خروج (زمان-اجرا)
+        from app.capacity import get_declared_yard_capacity
+        from app.core.runtime_settings import resolve_exit_policy
+        cap_total, cap_src = await get_declared_yard_capacity(db)
+        exit_policy = await resolve_exit_policy(db)
+        tariff_active = bool(int(await db.scalar(
+            select(func.count()).select_from(Tariff).where(Tariff.status == "ACTIVE")) or 0))
         return {
             "residents": residents_out,
             "strangers": strangers_out,
+            "banned": banned_out,
             "rules": [{"code": ((r.description or "").split("|")[0].replace("SCEN-RULE:", "")),
                         "name": r.name, "status": r.status, "enabled": r.enabled,
                         "priority": r.priority} for r in rules],
@@ -507,6 +817,10 @@ async def scenario_state() -> dict:
             "active_rules": len([r for r in rules if r.status == "ACTIVE"]),
             "draft_rules": len([r for r in rules if r.status != "ACTIVE"]),
             "events_total": int(events_total or 0),
+            "yard_capacity": ({"total": cap_total, "source": cap_src} if cap_total else None),
+            "exit_policy": exit_policy,
+            "tariff_active": tariff_active,
+            "phases": PHASES,
             "step_index": _state["step_index"],
             "total_steps": len(STEPS),
         }

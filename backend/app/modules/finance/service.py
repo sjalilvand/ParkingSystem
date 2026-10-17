@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.access_control.models import ParkingSession
 from app.modules.finance.models import Charge, Payment, PaymentAllocation, Tariff
+from app.shared.dt import as_utc
 
 try:  # ZoneInfo در ویندوز بدون tzdata ممکن است موجود نباشد — fallback امن
     from zoneinfo import ZoneInfo
@@ -247,9 +248,11 @@ async def get_active_tariff(db: AsyncSession, now: datetime) -> Tariff | None:
         select(Tariff).where(Tariff.status == "ACTIVE").order_by(Tariff.priority.desc(), Tariff.created_at.desc())
     )
     for t in result.scalars().all():
-        if t.valid_from and now < t.valid_from:
+        # as_utc: SQLite تاریخ ناوآگاه برمی‌گرداند و مقایسهٔ ناوآگاه/آگاه کرش می‌کند
+        vf, vu = as_utc(t.valid_from), as_utc(t.valid_until)
+        if vf and now < vf:
             continue
-        if t.valid_until and now > t.valid_until:
+        if vu and now > vu:
             continue
         return t
     return None
