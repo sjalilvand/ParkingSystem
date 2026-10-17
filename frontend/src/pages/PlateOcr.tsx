@@ -22,6 +22,7 @@ interface OcrPlate {
   color_score?: number
   box?: number[] | null
   crop_b64?: string | null
+  matched_vehicle?: boolean
 }
 interface VehicleHit {
   vehicle_id: string
@@ -33,12 +34,26 @@ interface VehicleHit {
   model?: string | null
   color?: string | null
 }
+interface OcrTimings {
+  detect_ms?: number
+  ocr_crops_ms?: number
+  fullimage_ms?: number
+  total_ms?: number
+}
 interface OcrResult {
   success: boolean
   best: OcrPlate | null
   plates: OcrPlate[]
   vehicles: VehicleHit[]
-  engine: { detector?: string; ocr?: string; easyocr_error?: string | null }
+  best_is_matched?: boolean
+  engine: {
+    detector?: string
+    ocr?: string
+    easyocr_error?: string | null
+    fast_mode?: boolean
+    fullimage_skipped?: string | null
+    timings?: OcrTimings
+  }
   elapsed_ms: number
   annotated_b64?: string | null
 }
@@ -57,6 +72,7 @@ export default function PlateOcr() {
   const [file, setFile] = useState<File | null>(null)
   const [preview, setPreview] = useState<string | null>(null)
   const [lookup, setLookup] = useState(true)
+  const [fast, setFast] = useState(true)
   const [minConf, setMinConf] = useState(0.25)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
@@ -96,7 +112,7 @@ export default function PlateOcr() {
       const fd = new FormData()
       fd.append('file', file)
       const r = await api.post('/plate-ocr/read', fd, {
-        params: { lookup: lookup && canLookup, min_conf: minConf },
+        params: { lookup: lookup && canLookup, min_conf: minConf, fast },
         timeout: 120000,
       })
       setRes(r.data as OcrResult)
@@ -111,6 +127,14 @@ export default function PlateOcr() {
     const det = e.detector === 'yolo' ? 'YOLO' : 'تشخیص کلاسیک (CV)'
     const ocr = e.ocr === 'crnn+easyocr' ? 'CRNN + EasyOCR' : 'EasyOCR'
     return `${det} + ${ocr}`
+  }
+  const timingsFa = (t?: OcrTimings) => {
+    if (!t) return null
+    const parts: string[] = []
+    if (typeof t.detect_ms === 'number') parts.push(`تشخیص ${t.detect_ms}ms`)
+    if (typeof t.ocr_crops_ms === 'number') parts.push(`خواندن برش ${t.ocr_crops_ms}ms`)
+    if (typeof t.fullimage_ms === 'number' && t.fullimage_ms > 0) parts.push(`کل-تصویر ${t.fullimage_ms}ms`)
+    return parts.join(' | ')
   }
 
   return (
@@ -184,6 +208,10 @@ export default function PlateOcr() {
               valueLabelFormat={(v) => `${Math.round(v * 100)}٪`} />
           </Box>
           <FormControlLabel
+            control={<Switch checked={fast} onChange={(e) => setFast(e.target.checked)} size="small" />}
+            label={<Typography variant="body2">حالت سریع <Typography component="span" variant="caption" color="text.secondary">(رد شدن از OCR گرانِ کل تصویر)</Typography></Typography>}
+          />
+          <FormControlLabel
             control={<Switch checked={lookup && canLookup} disabled={!canLookup}
               onChange={(e) => setLookup(e.target.checked)} size="small" />}
             label="جستجو در خودروهای ثبت‌شده"
@@ -205,36 +233,46 @@ export default function PlateOcr() {
             <Typography fontWeight={800} sx={{ flex: 1 }}>نتیجهٔ تشخیص</Typography>
             <Chip size="small" variant="outlined" label={`⏱ ${res.elapsed_ms ?? 0} میلی‌ثانیه`} />
             {res.engine && <Chip size="small" color="info" variant="outlined" label={engineFa(res.engine)} />}
+            {timingsFa(res.engine?.timings) && (
+              <Chip size="small" variant="outlined" sx={{ fontSize: 11 }} label={timingsFa(res.engine?.timings) as string} />
+            )}
             <Chip size="small" color={res.success ? 'success' : 'warning'}
               label={res.success ? 'پلاک یافت شد ✓' : 'پلاکی یافت نشد'} />
           </Stack>
 
           {best ? (
-            <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} mt={1.5} alignItems={{ md: 'flex-start' }}>
-              <Stack spacing={1} sx={{ minWidth: 260 }}>
-                <Typography variant="caption" color="text.secondary">بهترین کاندیدا:</Typography>
-                <PlateBox plate={best.persian || best.raw} size="lg" />
-                <Stack direction="row" spacing={0.8} flexWrap="wrap" useFlexGap>
-                  <Chip size="small" color={best.valid ? 'success' : 'error'}
-                    label={best.valid ? 'قالب معتبر ✓' : 'قالب نامعتبر ✗'} />
-                  <Chip size="small" variant="outlined" label={`اطمینان: ${pct(best.confidence)}`} />
-                  {best.color && <Chip size="small" variant="outlined" label={`رنگ: ${best.color}`} />}
-                  {best.method && <Chip size="small" variant="outlined" sx={{ fontSize: 11 }} label={`روش: ${best.method}`} />}
+            <Stack spacing={1.5} mt={1.5}>
+              {res.best_is_matched && (
+                <Alert severity="success" icon={<Visibility />}>
+                  این کاندیدا در <b>خودروهای ثبت‌شدهٔ سامانه</b> مطابقت داشت و به‌عنوان نتیجهٔ نهایی انتخاب شد — حتی اگر اطمینان OCR آن پایین‌تر از بقیه بود.
+                </Alert>
+              )}
+              <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} alignItems={{ md: 'flex-start' }}>
+                <Stack spacing={1} sx={{ minWidth: 260 }}>
+                  <Typography variant="caption" color="text.secondary">بهترین کاندیدا:</Typography>
+                  <PlateBox plate={best.persian || best.raw} size="lg" />
+                  <Stack direction="row" spacing={0.8} flexWrap="wrap" useFlexGap>
+                    <Chip size="small" color={best.valid ? 'success' : 'error'}
+                      label={best.valid ? 'قالب معتبر ✓' : 'قالب نامعتبر ✗'} />
+                    <Chip size="small" variant="outlined" label={`اطمینان: ${pct(best.confidence)}`} />
+                    {best.color && <Chip size="small" variant="outlined" label={`رنگ: ${best.color}`} />}
+                    {best.method && <Chip size="small" variant="outlined" sx={{ fontSize: 11 }} label={`روش: ${best.method}`} />}
+                  </Stack>
+                  {best.system && (
+                    <Typography variant="body2" component="div">
+                      قالب سیستمی: <Box component="code" sx={{ direction: 'ltr', display: 'inline-block' }}>{best.system}</Box>
+                    </Typography>
+                  )}
                 </Stack>
-                {best.system && (
-                  <Typography variant="body2" component="div">
-                    قالب سیستمی: <Box component="code" sx={{ direction: 'ltr', display: 'inline-block' }}>{best.system}</Box>
-                  </Typography>
+                {res.annotated_b64 && (
+                  <Box sx={{ flex: 1, textAlign: 'center' }}>
+                    <Typography variant="caption" color="text.secondary">تصویر تحلیل‌شده (کادر پلاک):</Typography>
+                    <Box component="img"
+                      src={`data:image/jpeg;base64,${res.annotated_b64}`}
+                      alt="annotated" sx={{ maxHeight: 300, maxWidth: '100%', borderRadius: 2, border: '1px solid #E3EAF2' }} />
+                  </Box>
                 )}
               </Stack>
-              {res.annotated_b64 && (
-                <Box sx={{ flex: 1, textAlign: 'center' }}>
-                  <Typography variant="caption" color="text.secondary">تصویر تحلیل‌شده (کادر پلاک):</Typography>
-                  <Box component="img"
-                    src={`data:image/jpeg;base64,${res.annotated_b64}`}
-                    alt="annotated" sx={{ maxHeight: 300, maxWidth: '100%', borderRadius: 2, border: '1px solid #E3EAF2' }} />
-                </Box>
-              )}
             </Stack>
           ) : (
             <Typography color="text.secondary" mt={1.5}>

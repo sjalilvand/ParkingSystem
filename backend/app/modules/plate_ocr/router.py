@@ -94,6 +94,8 @@ async def read_plate(
     file: UploadFile = File(...),
     lookup: bool = Query(default=False, description="جستجوی پلاک در خودروهای ثبت‌شده"),
     min_conf: float = Query(default=0.25, ge=0.05, le=0.95),
+    fast: bool = Query(default=True,
+                       description="حالت سریع — رد شدن از OCR گران کل-تصویر وقتی کاندیدای قابل‌ترمیم هست"),
     x_api_key: str | None = Header(default=None, alias="X-API-Key"),
     authorization: str | None = Header(default=None),
     api_key: str | None = Query(default=None),
@@ -126,19 +128,23 @@ async def read_plate(
     # OCR سنگین است → اجرا در threadpool تا event-loop بلاک نشود
     import anyio
     result = await anyio.to_thread.run_sync(
-        partial(reader.read_image, bgr, min_conf=min_conf)
+        partial(reader.read_image, bgr, min_conf=min_conf, fast_mode=fast)
     )
 
     vehicles = []
-    if lookup and result.get("best"):
-        sys_plate = result["best"].get("system")
-        if sys_plate:
-            # مجوز: کلید گیت = معتمد؛ کاربر JWT نیازمند مجوز خودرو/گیت
-            if user is not None:
-                perms = set(await user_permission_codes(db, user))
-                if not (perms & LOOKUP_PERMISSIONS) and not await user_is_admin(db, user):
-                    raise ForbiddenError("برای جستجوی خودرو مجوز لازم است (vehicles.view)")
-            vehicles = await _lookup_vehicles(db, sys_plate)
+    if lookup and result.get("plates"):
+        # مجوز: کلید گیت = معتمد؛ کاربر JWT نیازمند مجوز خودرو/گیت
+        if user is not None:
+            perms = set(await user_permission_codes(db, user))
+            if not (perms & LOOKUP_PERMISSIONS) and not await user_is_admin(db, user):
+                raise ForbiddenError("برای جستجوی خودرو مجوز لازم است (vehicles.view)")
+        vehicles, matched_item = await _lookup_matched(db, result["plates"])
+        if matched_item is not None:
+            # تصمیم‌گیرِ نهایی: کاندیدایی که در خودروهای ثبت‌شده پیدا شد برنده است
+            # (سیستم پلاک واقعی ساکن‌ها را می‌شناسد — قوی‌تر از هر حدسِ ترمیم)
+            matched_item["matched_vehicle"] = True
+            result["best"] = matched_item
+            result["best_is_matched"] = True
 
     return {
         "success": result["success"],
@@ -157,25 +163,37 @@ async def test_page():
 
 
 # ---------------------------------------------------------------------------
-# جستجوی خودرو بر اساس پلاک نرمال‌شده سیستم
+# جستجوی خودرو — اولین کاندیدای مطابق با خودروی ثبت‌شده برنده است
 # ---------------------------------------------------------------------------
-async def _lookup_vehicles(db: AsyncSession, system_plate: str) -> list[dict]:
+async def _lookup_matched(db: AsyncSession, plates: list[dict]) -> tuple[list[dict], dict | None]:
+    """کاندیداها (به ترتیب رتبه) را با خودروهای ثبت‌شده مقایسه می‌کند.
+
+    برمی‌گرداند (خودروهای مطابق، آیتمِ کاندیدای برنده یا None).
+    """
     from app.modules.vehicles.models import Vehicle
 
-    rows = (await db.execute(
-        select(Vehicle)
-        .where(Vehicle.plate_normalized == system_plate)
-        .where(Vehicle.is_active.is_(True))
-        .limit(5)
-    )).scalars().all()
-    return [{
-        "vehicle_id": v.id,
-        "plate_normalized": v.plate_normalized,
-        "plate_raw": v.plate_raw,
-        "plate_type": v.plate_type,
-        "vehicle_type": v.vehicle_type,
-        "brand": v.brand,
-        "model": v.model,
-        "color": v.color,
-        "unit_id": v.unit_id,
-    } for v in rows]
+    seen: set[str] = set()
+    for item in plates:
+        sys_plate = item.get("system")
+        if not sys_plate or sys_plate in seen:
+            continue
+        seen.add(sys_plate)
+        rows = (await db.execute(
+            select(Vehicle)
+            .where(Vehicle.plate_normalized == sys_plate)
+            .where(Vehicle.is_active.is_(True))
+            .limit(5)
+        )).scalars().all()
+        if rows:
+            return [{
+                "vehicle_id": v.id,
+                "plate_normalized": v.plate_normalized,
+                "plate_raw": v.plate_raw,
+                "plate_type": v.plate_type,
+                "vehicle_type": v.vehicle_type,
+                "brand": v.brand,
+                "model": v.model,
+                "color": v.color,
+                "unit_id": v.unit_id,
+            } for v in rows], item
+    return [], None
