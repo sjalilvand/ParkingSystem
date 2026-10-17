@@ -51,10 +51,12 @@ Default dev admin: admin / Admin@1234  (change in any real deployment!)
 
 ## Roadmap
 
-- [ ] Notifications module (in-app + WebSocket push)
+- [x] Notifications module (in-app + WebSocket push)
+- [x] Celery: daily reports + file retention cleanup
+- [x] Production docker-compose + nginx
+- [x] Policy decisions D1-D10 applied & runtime-configurable (`GET /api/v1/policy-settings`, docs/pending-decisions.md v1.0)
 - [ ] Real hardware adapters for plate-reader / barrier
-- [ ] Celery: daily reports + file retention cleanup
-- [ ] Production docker-compose + nginx
+- [ ] Field testing with real ANPR camera / barrier / thermal printer
 
 ## Plate Normalization
 

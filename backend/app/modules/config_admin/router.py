@@ -162,10 +162,18 @@ async def disable_rule(rule_id: str, db: AsyncSession = Depends(get_db), user: U
 DEFAULTS: dict[str, dict] = {
     "tariff_policy": {
         "free_minutes": 90, "hourly_amount": 250000, "daily_max_amount": 500000,
-        "rounding": "HOUR_UP", "day_definition": "CALENDAR",
-        "exit_grace_minutes": 20, "resident_discount_percent": 0,
-        "_needs_decision": ["rounding", "day_definition", "resident_discount_percent"],
+        "rounding": "HOUR_UP",                      # D2 — اعمال شد (پیش‌فرض: ساعتی رو به بالا)
+        "day_definition": "24H",                    # D3 — اعمال شد (پیش‌فرض: بازه ۲۴ ساعته)
+        "night_enabled": False,                     # D4 — اعمال شد (پیش‌فرض: خاموش)
+        "night_start_hour": 22, "night_end_hour": 6,
+        "exit_grace_minutes": 20,                   # D7 — اعمال شد (مهلت خروج پس از پرداخت)
+        "min_charge_amount": 0,                     # D7 — اعمال شد (0 = غیرفعال)
+        "resident_discount_percent": 0,
+        "_needs_decision": ["resident_discount_percent"],
     },
+    "gate_policy": {"EXIT_UNPAID_POLICY": "WARN"},    # D1 — اعمال شد (پیش‌فرض WARN)
+    "finance_policy": {"SELF_APPROVAL_POLICY": "WARN"},  # D9 — اعمال شد (پیش‌فرض هشدار)
+    "report_policy": {"VOIDED_REPORT_MODE": "SEPARATE"},  # D10 — اعمال شد (نمایش جدا)
     "violation_policy": {"default_penalty_amount": 1000000, "requires_image": True,
                          "_needs_decision": ["default_penalty_amount"]},
 }
@@ -208,6 +216,26 @@ async def setting_history(key: str, db: AsyncSession = Depends(get_db), user: Us
                              .order_by(AppSettingHistory.changed_at.desc()).limit(50))).scalars().all()
     return [{"id": h.id, "old_value": h.old_value, "new_value": h.new_value,
              "reason": h.reason, "changed_at": h.changed_at.isoformat() if h.changed_at else None} for h in rows]
+
+
+# ---------------- policy settings (D1-D10) ----------------
+
+@router.get("/policy-settings")
+async def get_policy_settings(db: AsyncSession = Depends(get_db), user: User = Depends(_perm_view())):
+    """D1-D10: مقدار مؤثر سیاست‌های زمان-اجرا (app_settings → env → پیش‌فرض)."""
+    from app.core.runtime_settings import (
+        resolve_exit_policy,
+        resolve_self_approval_policy,
+        resolve_tariff_policy,
+        resolve_voided_report_mode,
+    )
+    return {
+        "gate_policy": {"EXIT_UNPAID_POLICY": await resolve_exit_policy(db)},          # D1
+        "tariff_policy": await resolve_tariff_policy(db),                               # D2/D3/D4/D7
+        "finance_policy": {"SELF_APPROVAL_POLICY": await resolve_self_approval_policy(db)},  # D9
+        "report_policy": {"VOIDED_REPORT_MODE": await resolve_voided_report_mode(db)},  # D10
+        "plate_letter_mapping": {"PLATE_LETTER_MAPPING": "MANY_TO_ONE"},                # D8 (نیازمند migration؛ از env فقط)
+    }
 
 
 # ---------------- receipt templates & box settings ----------------

@@ -21,6 +21,7 @@ from app.modules.finance.service import (
     calculate_amounts,
     charge_outstanding,
     initial_tariff_status,
+    self_approval_decision,
 )
 from app.modules.identity.models import User
 from app.modules.violations.models import Violation
@@ -111,7 +112,7 @@ async def preview_tariff(body: TariffPreviewRequest, db: AsyncSession = Depends(
         source = "AD_HOC"
     amounts = calculate_amounts(tariff, body.duration_seconds)
     return {"source": source, "duration_seconds": body.duration_seconds, **amounts,
-            "note": "قواعد گردکردن/سقف/شب نیازمند تصویب (docs/pending-decisions.md D2-D4)"}
+            "note": "قواعد گردکردن/سقف/شب/حداقل از تنظیمات زمان-اجرا اعمال می‌شوند (D2-D4، D7 — docs/pending-decisions.md)"}
 
 
 @router.post("/tariffs/{tariff_id}/activate")
@@ -318,8 +319,17 @@ async def approve_adjustment(adj_id: str, db: AsyncSession = Depends(get_db), us
         raise NotFoundError("اصلاحیه یافت نشد")
     if obj.status != "PENDING":
         raise ConflictError("این اصلاحیه قبلاً تعیین تکلیف شده است")
-    # D9 (§۲۳): تفکیک تأییدکننده از درخواست‌دهنده — فعلاً هشدار، مسدودسازی پس از تصویب D9
-    self_approval = (obj.requested_by and user.id and obj.requested_by == user.id)
+    # D9 (§۲۳): تفکیک تأییدکننده از درخواست‌دهنده — policy از تنظیمات زمان-اجرا:
+    #   WARN (پیش‌فرض): تأیید انجام می‌شود و self_approval در audit ثبت می‌گردد
+    #   BLOCK: تأیید اصلاحیه توسط درخواست‌دهنده مسدود می‌شود (409)
+    try:
+        from app.core.runtime_settings import resolve_self_approval_policy
+        sa_policy = await resolve_self_approval_policy(db)
+    except Exception:
+        sa_policy = (getattr(settings, "SELF_APPROVAL_POLICY", "WARN") or "WARN").upper()
+    allowed, self_approval = self_approval_decision(sa_policy, obj.requested_by, user.id if user else None)
+    if not allowed:
+        raise ConflictError("تأیید اصلاحیه توسط درخواست‌دهنده مجاز نیست (سیاست D9: BLOCK)")
     obj.status = "APPROVED"
     obj.approved_by = user.id if user else None
     obj.approved_at = datetime.now(timezone.utc)

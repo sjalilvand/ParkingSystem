@@ -54,6 +54,30 @@ class Settings(BaseSettings):
     ENFORCE_PARKING_PERMISSIONS: bool = True
     YARD_CAPACITY_TOTAL: int | None = None  # REQ-09-03; None/0 = unlimited
 
+    # ------------------------------------------------------------------
+    # تصمیمات سیاستی D1-D10 (docs/pending-decisions.md) — مقادیر env فقط
+    # fallback هستند؛ مقدار زمان-اجرا از app_settings (config_admin) خوانده
+    # می‌شود و بدون ری‌استارت از پنل مدیریت قابل تغییر است (runtime_settings.py).
+    # D1 از EXIT_UNPAID_POLICY (بالا) استفاده می‌کند.
+    # ------------------------------------------------------------------
+    # D2: قاعده گرد کردن تعرفه — HOUR_UP (ساعتی رو به بالا) | MINUTE (دقیقه‌ای)
+    TARIFF_ROUNDING: str = "HOUR_UP"
+    # D3: تعریف روز برای سقف روزانه — 24H (بازه‌های ۲۴ ساعته از ورود) | CALENDAR (روز تقویمی تهران)
+    TARIFF_DAY_DEFINITION: str = "24H"
+    # D4: تعرفه شب (F11) — فعال‌سازی نرخ شب برای بازه شبانه
+    NIGHT_TARIFF_ENABLED: bool = False
+    NIGHT_START_HOUR: int = 22   # شروع بازه شب (ساعت محلی تهران)
+    NIGHT_END_HOUR: int = 6      # پایان بازه شب (ساعت محلی تهران)
+    # D7: حداقل مبلغ قابل صدور شارژ + مهلت خروج پس از پرداخت (دقیقه)
+    MIN_CHARGE_AMOUNT: int = 0   # 0 = غیرفعال
+    EXIT_GRACE_MINUTES: int = 20
+    # D8: نگاشت حروف پلاک — MANY_TO_ONE (وضع موجود) | UNIQUE (نگاشت یکتا)
+    PLATE_LETTER_MAPPING: str = "MANY_TO_ONE"
+    # D9: تأیید اصلاحیه توسط درخواست‌دهنده — WARN (هشدار) | BLOCK (مسدودسازی)
+    SELF_APPROVAL_POLICY: str = "WARN"
+    # D10: تکلیف شارژ VOIDED در گزارش‌های مالی — SEPARATE (نمایش جدا) | EXCLUDE (حذف از گزارش)
+    VOIDED_REPORT_MODE: str = "SEPARATE"
+
 
 _INSECURE_DEFAULTS = {"change-me-in-production", "gate-dev-key"}
 
