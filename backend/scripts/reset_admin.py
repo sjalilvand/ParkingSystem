@@ -1,5 +1,11 @@
-"""ریست رمز ادمین در production:  python -m scripts.reset_admin --password "NewPass@123"
-(باید داخل کانتینر backend اجرا شود — دستور در راهنمای استقرار.)"""
+"""ریست رمز + فعال‌سازی حساب ادمین در production:
+    python -m scripts.reset_admin --password "NewPass@123"
+(باید داخل کانتینر backend اجرا شود — دستور در راهنمای استقرار.)
+
+علاوه بر رمز، این سه فیلد را هم اصلاح می‌کند تا پیام «حساب کاربری غیرفعال است»
+یا «حساب کاربری قفل شده است» بعد از ریست دیده نشود:
+    is_active=True, is_locked=False, failed_login_count=0
+"""
 import argparse
 import asyncio
 import sys
@@ -22,8 +28,11 @@ async def _reset(pw: str) -> None:
             print("admin user not found")
             return
         u.password_hash = hash_password(pw)
+        u.is_active = True
+        u.is_locked = False
+        u.failed_login_count = 0
         await db.commit()
-        print("admin password UPDATED")
+        print(f"admin password UPDATED + account reactivated (is_active={u.is_active}, is_locked={u.is_locked})")
 
 
 def main():
