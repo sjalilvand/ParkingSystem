@@ -165,6 +165,24 @@ def _upscale_to(img, target_h: int) -> "np.ndarray":
     return cv2.resize(img, None, fx=f, fy=f, interpolation=cv2.INTER_CUBIC)
 
 
+def _fit_ocr_size(img, target_h: int = 110, max_h: int = 150,
+                  max_w: int = 1200) -> "np.ndarray":
+    """الحاقیه §۳ — نرمال‌سازی اندازهٔ برش برای OCR.
+
+    برش کوچک → بزرگ‌نمایی (مثل قبل). برش بزرگ (پلاک نزدیک در عکس موبایل/دوربین
+    رزولوشن‌بالا) → کوچک‌سازی به ارتفاع ≤ ۱۵۰px: EasyOCR روی برش‌های بزرگ
+    هم چند ثانیه کند است و هم پرنویز (اندازه‌گیری واقعی: برش ۳۱۰px → ~۹ ثانیه
+    با خوانش آشفته؛ همان برش در ۱۴۰px → سریع‌تر و تمیزتر)."""
+    h, w = img.shape[:2]
+    if h < target_h:
+        f = max(2, int(np.ceil(target_h / h)))
+        return cv2.resize(img, None, fx=f, fy=f, interpolation=cv2.INTER_CUBIC)
+    if h > max_h or w > max_w:
+        f = min(max_h / float(h), max_w / float(w))
+        return cv2.resize(img, None, fx=f, fy=f, interpolation=cv2.INTER_AREA)
+    return img
+
+
 def expand_box(box, f: float = BOX_EXPAND):
     x1, y1, x2, y2 = [int(v) for v in box]
     w, h = x2 - x1, y2 - y1
@@ -312,7 +330,13 @@ def _text_detect(bgr) -> list[tuple]:
             continue
         chars.append((x, y, x + cw, y + ch))
 
-    # ---------- ۳) گروه‌بندی خطی نویسه‌ها ----------
+    # الحاقیه §۳ — سقف نویسه‌ها: بافت‌های پرنویز (آسفالت/برگ) هزاران بلاب
+    # می‌سازند و گروه‌بندی خطی O(n²) را منفجر می‌کنند (اندازه‌گیری: ~۲۴ ثانیه
+    # روی عکس ۱۲MP). بزرگ‌ترین‌ها نگه داشته می‌شوند — نویسه‌های پلاک همیشه از
+    # کوچک‌ترین‌ها بزرگ‌ترند.
+    if len(chars) > 2500:
+        chars.sort(key=lambda b: (b[2] - b[0]) * (b[3] - b[1]), reverse=True)
+        chars = chars[:2500]
     chars.sort(key=lambda b: (b[1], b[0]))
     used = [False] * len(chars)
     groups: list[list[int]] = []
@@ -592,9 +616,24 @@ class PlateReader:
                               if p[2] >= MIN_CANDIDATE_CONF
                               and (any(ch.isdigit() for ch in p[1]) or len(p[1]) <= 2)]
                     if pieces:
-                        rtl = "".join(t for _, t, _ in sorted(pieces, key=lambda p: -p[0]))
-                        ltr = "".join(t for _, t, _ in sorted(pieces, key=lambda p: p[0]))
-                        conf = max(p[2] for p in pieces)
+                        # الحاقیه §۳ — اسمبلر ساخت‌یافته (مقید به قالب ایران):
+                        # از قطعات (حتی پراکنده) همهٔ ترکیب‌های قالب‌معتبر ساخته
+                        # می‌شود؛ این مسیر خوانش‌های چندقطعه‌ایِ واقعی را نجات
+                        # می‌دهد (تأیید روی عکس واقعی گیت: قطعات «73» + «934340»
+                        # → کاندیدای معتبر ۸ نویسه‌ای)
+                        try:
+                            for assembled, sc in pt.assemble_from_pieces(pieces)[:3]:
+                                if sc >= MIN_CANDIDATE_CONF:
+                                    out.append((assembled, min(0.99, sc), "easyocr-assemble"))
+                        except Exception:
+                            pass
+                        # concat فقط با قطعات پراطمینان — قطعهٔ ضعیف («۱۸» به‌جای ۷۲)
+                        # خوانش اصلی را مسموم می‌کند
+                        strong = [p for p in pieces if p[2] >= 0.45]
+                        use = strong if strong else pieces
+                        rtl = "".join(t for _, t, _ in sorted(use, key=lambda p: -p[0]))
+                        ltr = "".join(t for _, t, _ in sorted(use, key=lambda p: p[0]))
+                        conf = max(p[2] for p in use)
                         out.append((rtl, conf, "easyocr"))
                         if ltr != rtl:
                             out.append((ltr, conf, "easyocr-ltr"))
@@ -626,10 +665,42 @@ class PlateReader:
             except Exception:
                 pass
         boxes = _classical_detect(bgr)
-        for tb in _text_detect(bgr):
-            if all(_iou(tb, b) < 0.35 for b in boxes):
-                boxes.append(tb)
-        boxes.sort(key=_detect_priority, reverse=True)
+        # الحاقیه §۳ — بودجهٔ هزینهٔ تشخیص: _text_detect روی تصاویر بزرگِ بافت‌دار
+        # (آسفالت/سقف در عکس موبایل ۱۲MP) تا ~۲۴ ثانیه کش می‌آمد (اندازه‌گیری
+        # واقعی). راه‌حل: اجرای همیشگی (برای پوشش سفید-روی-سفید — رگرسیون car2/car3)
+        # اما روی نسخهٔ کوچک‌شدهٔ ≤۱۴۰۰px + سقف تعداد نویسه‌ها در گروه‌بندی.
+        H, W = bgr.shape[:2]
+        tsc = min(1.0, 1400.0 / max(H, W))
+        if tsc < 1.0:
+            probe = cv2.resize(bgr, None, fx=tsc, fy=tsc, interpolation=cv2.INTER_AREA)
+        else:
+            probe = bgr
+        for tb in _text_detect(probe):
+            tb2 = (tb[0] / tsc, tb[1] / tsc, tb[2] / tsc, tb[3] / tsc)
+            if all(_iou(tb2, b) < 0.35 for b in boxes):
+                boxes.append(tb2)
+        # الحاقیه §۳ — جریمهٔ جعبهٔ لبه‌چسب: خط سقف/افق و کادر تصویر که از گوشه
+        # شروع می‌شوند معمولاً پس‌زمینه‌اند اما نسبت ابعادشان شبیه پلاک است و
+        # اولویت می‌گرفتند، بودجهٔ زمانی OCR را می‌سوزاندند و پلاک واقعی از دست
+        # می‌رفت (تأیید روی عکس واقعی گیت). فقط برشِ گوشه‌ای/نوار کامل جریمه می‌شود.
+        H, W = bgr.shape[:2]
+
+        def _prio(b):
+            a_score, area = _detect_priority(b)
+            x1, y1, x2, y2 = b[0], b[1], b[2], b[3]
+            # جریمهٔ دقیق‌تر: فقط (الف) جعبه‌ای که دقیقاً از گوشهٔ بالای تصویر
+            # شروع می‌شود (خط سقف/افق — مورد واقعی گیت) و (ب) نوار تمام‌عرض/
+            # تمام‌ارتفاع. پلاکِ کلوزآپی که به لبهٔ راست/پایین می‌چسبد جریمه
+            # نمی‌شود (رگرسیون car1).
+            if x1 <= 2 and y1 <= 2:
+                a_score -= 0.5
+            elif x1 <= 2 and x2 >= W - 3:
+                a_score -= 0.3
+            elif y1 <= 2 and y2 >= H - 3:
+                a_score -= 0.3
+            return (a_score, area)
+
+        boxes.sort(key=_prio, reverse=True)
         return [(b, None) for b in boxes[:5]]
 
     # ------------------------------------------------ برش پلاک
@@ -643,7 +714,7 @@ class PlateReader:
         crop = bgr[max(0, y1):min(H, y2), max(0, x1):min(W, x2)]
         if crop.size == 0 or crop.shape[0] < 10 or crop.shape[1] < 30:
             return None
-        return _upscale_to(warp_plate(_upscale_to(enhance(crop), 96)), 110)
+        return _fit_ocr_size(warp_plate(_upscale_to(enhance(crop), 96)), 110)
 
     def _plain_crop(self, bgr, box, *, margin: float = 0.005,
                     target_h: int = 110) -> "np.ndarray | None":
@@ -658,7 +729,7 @@ class PlateReader:
         crop = bgr[max(0, y1):min(H, y2), max(0, x1):min(W, x2)]
         if crop.size == 0 or crop.shape[0] < 10 or crop.shape[1] < 30:
             return None
-        return _upscale_to(enhance(crop), target_h)
+        return _fit_ocr_size(enhance(crop), target_h)
 
     # ------------------------------------------------ برش حاشیه‌دار آزاد
     def _margin_crop(self, bgr, box, *, fx: float = 0.45, fy: float = 0.60,
@@ -676,7 +747,7 @@ class PlateReader:
         crop = bgr[max(0, y1):y2, max(0, x1):x2]
         if crop.size == 0 or crop.shape[0] < 8 or crop.shape[1] < 24:
             return None
-        return _upscale_to(enhance(crop), target_h)
+        return _fit_ocr_size(enhance(crop), target_h)
 
     @staticmethod
     def _binarize(crop) -> "np.ndarray | None":

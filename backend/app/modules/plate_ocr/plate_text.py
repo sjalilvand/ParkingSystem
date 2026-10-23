@@ -130,6 +130,65 @@ def enforce_format(text: str) -> str:
     return "".join(out)
 
 
+def assemble_from_pieces(pieces: list[tuple[float, str, float]]) -> list[tuple[str, float]]:
+    """الحاقیه §۳ — اسمبلر ساخت‌یافته: ساخت کاندیدای پلاک از قطعات OCR.
+
+    الهام از beam search مقید به فرمت (plate_all.py): قطعات متنی خوانده‌شده
+    (با مختصات x) زیرمجموعه‌سازی و در دو ترتیب LTR/RTL به هم می‌چسبند و هر
+    ترکیبی که بتوان آن را به قالب ایران «۲رقم + حرف + ۳رقم (+۲رقم استان)»
+    رساند، کاندیدای معتبر است.
+
+    امتیازدهی: کمینهٔ اطمینان قطعات؛ ضریب‌ها:
+      * استفاده از قطعات بیشتر → ×(۱ + ۰٫۰۶×(r−۱))
+      * داشتن کد استان (۸ نویسه) → +۰٫۱۰
+      * متنِ از قبل قالب‌معتبر → ×۱٫۰؛ متنِ enforce‌شده (حرفِ حدس‌زده‌شده) → ×۰٫۸
+      * تک‌قطعه (r=۱) → ×۰٫۸۵ (قطعهٔ واحدِ چسبیدهٔ «مقی + استان» کم‌اتکاست)
+
+    pieces: [(x, text, conf), ...]  →  [(متن_نرمال_فارسی, امتیاز), ...]
+    """
+    from itertools import combinations
+
+    out: dict[str, float] = {}
+    toks = []
+    for x, t, c in pieces:
+        nt = normalize(t)
+        if nt:
+            toks.append((float(x), nt, float(c)))
+    if not toks:
+        return []
+    for r in range(1, min(4, len(toks)) + 1):
+        for combo in combinations(toks, r):
+            for seq in (combo, tuple(reversed(combo))):
+                s = "".join(t for _, t, _ in seq)
+                if not (6 <= len(s) <= 8):
+                    continue
+                min_conf = min(c for _, _, c in seq)
+                for s2 in ({s, enforce_format(s)} if len(s) in (6, 8) else {s}):
+                    n, valid = validate(s2)
+                    if not valid:
+                        continue
+                    score = min_conf * (1.0 + 0.06 * (r - 1))
+                    if len(n) == 8:
+                        score += 0.10
+                    if s2 != s:            # حرف وسط حدس‌زده‌شده (enforce)
+                        score *= 0.80
+                    if r == 1:             # قطعهٔ واحد چسبیده — کم‌اتکاتر
+                        score *= 0.85
+                    if n not in out or out[n] < score:
+                        out[n] = round(min(0.99, score), 4)
+                # الحاقیه §۳ — متن‌های ۷ نویسه‌ای (اتصال ناقص قطعات): مسیر ترمیم
+                # (حذف تک‌نویسه/ساخت حرف) با ضریب کاهشی — پوشش «۷۳۹۴۳۴۰» و امثال آن
+                if len(s) == 7:
+                    for fixed, mul in repair_candidates(s):
+                        n2, valid2 = validate(fixed)
+                        if not valid2:
+                            continue
+                        score2 = min_conf * (1.0 + 0.06 * (r - 1)) * 0.75 * mul
+                        if n2 not in out or out[n2] < score2:
+                            out[n2] = round(min(0.99, score2), 4)
+    return sorted(out.items(), key=lambda kv: -kv[1])
+
+
 def to_system_normalized(plate_fa: str, letter_mapping: str | None = None) -> str | None:
     """تبدیل پلاک فارسیِ نرمال‌شده (مثل «12ب345» یا «12ب34567») به فرمت سیستم.
 

@@ -103,7 +103,7 @@ class Settings(BaseSettings):
     PLATE_ENVELOPE_MAX_ANGLE_DEG: float = 35.0   # انحراف مجاز از عمود (درجه)
     PLATE_ENVELOPE_MIN_LUX: float = 20.0         # حداقل روشنایی صحنه (تقریبی)
     PLATE_ENVELOPE_MAX_SPEED_KMH: float = 20.0   # حداکثر سرعت مجاز عبور
-    PLATE_REVIEW_LOW_CONF: float = 0.55          # زیر این اطمینان → NEEDS_REVIEW
+    PLATE_REVIEW_LOW_CONF: float = 0.70          # زیر این اطمینان → NEEDS_REVIEW (کالیبراسیون واقعی: عکس سخت ۰٫۴۵-۰٫۶۷)
 
     # ------------------------------------------------------------------
     # الحاقیه §۴ — همگام‌سازی روزانه Google Sheets (شیت خودروها)
