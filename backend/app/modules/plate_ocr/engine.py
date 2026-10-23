@@ -473,6 +473,7 @@ class _Candidate:
     box: tuple | None = None
     crop_b64: str | None = None
     score: float = field(default=0.0)
+    prov_bonus: float = 0.0   # >0 ⇒ کد استان از خوانش متمرکز کادر «ایران» آمده
 
 
 class PlateReader:
@@ -811,6 +812,156 @@ class PlateReader:
             return None
         return crop[int(0.12 * h):int(0.90 * h), int(0.085 * w):int(0.805 * w)]
 
+    @staticmethod
+    def _seg_province(crop) -> "np.ndarray | None":
+        """نوار ارقام کد استان — مستطیل سمت راست، زیر کلمهٔ «ایران».
+
+        دو کشف آزمایش واقعی (اکتبر ۲۰۲۶): (۱) ارقام این کادر در خوانش خطِ
+        کاملِ برش اشتباه می‌آیند (۲۹د۷۲۸ ایران ۶۳ فارس → «۴۳» — فقط ۶→۴)؛
+        (۲) اگر کلمهٔ «ایران» بالای ارقام بماند، CRAFT ناحیه را یک خط
+        می‌داند و خوانش به آشغال می‌گرزد (پورشه: «ا٥٢» به‌جای «۱۱» واضح).
+        پس نوار پایین کادر (بدون کلمه) + بزرگ‌نمایی تا ~۱۸۰px خوانش را نجات
+        می‌دهد — همان الگوی seg_main برای پلاک اصلی.
+        """
+        if not HAS_CV2 or crop is None or crop.size == 0:
+            return None
+        h, w = crop.shape[:2]
+        if w < 44 or h < 20:
+            return None
+        box = crop[int(0.34 * h):int(0.93 * h), int(0.775 * w):int(0.995 * w)]
+        if box.size == 0 or box.shape[1] < 14:
+            return None
+        # بزرگ‌نمایی تا ارتفاع ~۱۸۰px — ارقام کد استان در برش ۱۴۰px فقط
+        # ~۳۵px‌اند؛ مدل fa در این اندازه ۶/۴ و ۲/۳ را می‌آمیزد
+        f = max(1.0, 180.0 / box.shape[0])
+        if f > 1.0:
+            box = cv2.resize(box, None, fx=f, fy=f, interpolation=cv2.INTER_CUBIC)
+        return box
+
+    @staticmethod
+    def _seg_province_full(crop) -> "np.ndarray | None":
+        """واریانت پشتیبان: کادر کامل با کلمهٔ ایران — برای پلاک‌های کج که
+        نوارِ تنگ ممکن است رقم را ببرد (آزمایش پژو: خوانش ۶۳ از همین واریانت)."""
+        if not HAS_CV2 or crop is None or crop.size == 0:
+            return None
+        h, w = crop.shape[:2]
+        if w < 44 or h < 20:
+            return None
+        box = crop[int(0.06 * h):int(0.96 * h), int(0.775 * w):int(0.995 * w)]
+        if box.size == 0 or box.shape[1] < 14:
+            return None
+        f = max(1.0, 180.0 / box.shape[0])
+        if f > 1.0:
+            box = cv2.resize(box, None, fx=f, fy=f, interpolation=cv2.INTER_CUBIC)
+        return box
+
+    def _read_province(self, img, *, open_craft: bool = True) -> list[tuple[str, float]]:
+        """خوانش متمرکز ۲ رقم کد استان — [(دورقم, اطمینان), ...].
+
+        allowlist فقط-رقم (کلاس‌های بومی fa)؛ آستانهٔ باز CRAFT (مشابه مسیر ۳
+        خوانش اصلی) تا ارقام کم‌کنتراستِ کادر جا نیفتند (آزمایش ۴.png: با
+        آستانهٔ پیش‌فرض هیچ جعبه‌ای برنمی‌گشت). normalize حرف‌زدگیِ باقی‌مانده
+        را حذف می‌کند — فقط رشتهٔ دقیقاً ۲رقمی با اطمینان معنادار می‌ماند.
+        """
+        easy = self._get_easy()
+        if easy is None or img is None or img.size == 0:
+            return []
+        out: list[tuple[str, float]] = []
+        try:
+            kw = (dict(text_threshold=0.4, low_text=0.3) if open_craft else {})
+            with self._lock:
+                res = easy.readtext(img, detail=1, paragraph=False,
+                                    allowlist=pt.OCR_PROVINCE_ALLOWLIST,
+                                    workers=0, mag_ratio=1.0, canvas_size=768,
+                                    **kw)
+            for _bb, txt, c in res:
+                # ۱۱ فارسی روی کادر اغلب «ا» (الف) خوانده می‌شود — دوقلوی
+                # بصری؛ قبل از normalize الف‌ها را رقم ۱ می‌کنیم. جعبه‌های
+                # نیمهٔ بالای تصویر (= کلمهٔ ایران در واریانت کامل) کنار می‌روند
+                try:
+                    y_top = float(_bb[0][1])
+                    y_bot = float(_bb[2][1])
+                    if (y_top + y_bot) / 2.0 < 0.45 * img.shape[0]:
+                        continue
+                except Exception:
+                    pass
+                t2 = ((txt or "").replace("ا", "۱").replace("آ", "۱")
+                          .replace("l", "1").replace("I", "1"))
+                nt = pt.normalize(t2)
+                if nt.isdigit() and len(nt) == 2 and float(c) >= 0.30:
+                    out.append((nt, float(c)))
+        except Exception:
+            pass
+        return out
+
+    @staticmethod
+    def _otsu_binarize(img) -> "np.ndarray | None":
+        """OTSU با پیش‌صیقل CLAHE — هایلایت فلزِ پلاکِ برجسته را خنثی می‌کند
+        و شکل بستهٔ ارقام (۵، ۶) را برای OCR بازیابی می‌کند."""
+        if not HAS_CV2 or img is None or img.size == 0:
+            return None
+        g = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if img.ndim == 3 else img
+        g = cv2.createCLAHE(2.0, (8, 8)).apply(g)
+        _, th = cv2.threshold(g, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        return cv2.cvtColor(th, cv2.COLOR_GRAY2BGR)
+
+    def _province_candidates(self, crop_raw, crop_enh) -> list[tuple[str, float]]:
+        """کدهای استان رتبه‌بندی‌شدهٔ یک برش — [(دورقم, اطمینان), ...] حداکثر ۲.
+
+        سه واریانت همیشه اجرا می‌شوند (نه fallback — آزمایش پژو: خوانش ۶۳
+        فقط از واریانت کامل می‌آمد و گیتِ «اگر خوانش داشتیم» آن را حذف
+        می‌کرد):
+          ۱) نوار ارقام خام (آستانهٔ باز)  ۲) نوار enhance (آستانهٔ باز)
+          ۳) کادر کامل با کلمهٔ ایران (آستانهٔ پیش‌فرض — شرایط آزمایش پژو)
+        تکرارِ یک خوانش = رأی (+۰٫۱۲). برای هر خوانش، دوقلوی بصری‌اش (۶↔۴،
+        ۲↔۳ — هر دو ممکن است کد رسمی باشند) با ضریب ۰٫۷۵ هم اضافه می‌شود؛
+        رأی‌شماریِ merge تکلیف را روشن می‌کند.
+        """
+        if crop_raw is None:
+            return []
+        strip1 = self._seg_province(crop_raw)
+        strip2 = self._seg_province(crop_enh) if crop_enh is not None else None
+        if strip1 is None and strip2 is None:
+            return []
+        reads: dict[str, tuple[float, int]] = {}
+
+        def _collect(img, open_craft: bool) -> None:
+            if img is None:
+                return
+            for d, c in self._read_province(img, open_craft=open_craft):
+                mc, v = reads.get(d, (0.0, 0))
+                reads[d] = (max(mc, c), v + 1)
+
+        _collect(strip1, True)
+        _collect(strip2, True)
+        _collect(self._seg_province_full(crop_enh if crop_enh is not None else crop_raw),
+                 False)
+        # واریانت OTSU+CLAHE — پلاک فلزیِ برجسته هایلایت دارد؛ باینری‌سازی
+        # شکل بستهٔ ارقام را برمی‌گرداند (آزمایش واقعی ۴.png: نوار «۱۸» با
+        # اطمینان ۰٫۳۷ ← otsu «۱۱» با ۰٫۶۸؛ پژو/پورشه: بدون خوانش اضافه)
+        if strip1 is not None:
+            _collect(self._otsu_binarize(strip1), True)
+        if not reads:
+            return []
+        best: dict[str, float] = {}
+        for d, (mc, v) in reads.items():
+            conf = min(0.99, mc + (0.12 if v >= 2 else 0.0))
+            if d not in pt.PROVINCE_CODES:
+                conf *= 0.60
+            if best.get(d, 0.0) < conf:
+                best[d] = conf
+            # دوقلوی بصری حتی برای خوانش معتبر — ۴۳ و ۶۳ هر دو کد رسمی‌اند
+            # و ۶/۴ در اندازهٔ ریز دوقلویند (آزمایش پژو: ۶۳ → ۴۳)
+            for i in range(2):
+                alt_d = pt._PROV_CONFUSIONS.get(d[i])
+                if alt_d:
+                    alt = d[:i] + alt_d + d[i + 1:]
+                    if alt in pt.PROVINCE_CODES:
+                        alt_conf = conf * 0.75
+                        if best.get(alt, 0.0) < alt_conf:
+                            best[alt] = alt_conf
+        return sorted(best.items(), key=lambda kv: -kv[1])[:2]
+
     # ------------------------------------------------ یافتن متن در کل تصویر
     def _fullimage_locate(self, bgr_full) -> list[tuple]:
         """جعبه‌های متنیِ شبیه پلاک روی کل تصویر — بدون OCR دقیق.
@@ -902,6 +1053,8 @@ class PlateReader:
             bgr = cv2.resize(bgr, None, fx=f, fy=f, interpolation=cv2.INTER_AREA)
 
         cands: list[_Candidate] = []
+        # خوانش متمرکز کد استان هر برش — کلید: جعبهٔ تشخیص
+        prov_by_box: dict[tuple, list[tuple[str, float]]] = {}
 
         t1 = time.perf_counter()
         dets = self._detect(bgr)          # تشخیص روی تصویر خام — مقاوم‌تر
@@ -944,6 +1097,10 @@ class PlateReader:
             # خوانش کل برش + بخش اصلی (بدون نوار پرچم/کادر/کد استان — ۵.jpeg)
             crop_raw = self._plain_crop(bgr, box, enhance_img=False)
             crop_enh = self._plain_crop(bgr, box)
+            # مسیر کد استان — قبل از خوانش اصلی اجرا می‌شود تا با خروجِ
+            # زودهنگامِ مسیرهای بعدی هم در دست بماند (۲ فراخوانی OCR ریز)
+            if (time.perf_counter() - t0) < 10.0:
+                prov_by_box[box] = self._province_candidates(crop_raw, crop_enh)
             variants: list[tuple] = []
             for c_img, c_tag in (
                     (crop_raw, "crop"),
@@ -1073,6 +1230,43 @@ class PlateReader:
                 cur.score += 0.5 * min(c.score, 3.0)
                 cur.conf = max(cur.conf, c.conf)
         ranked = sorted(dedup.values(), key=lambda c: -c.score)[:MAX_CANDIDATES]
+
+        # الحاقیه کد استان — بعد از رأی‌شماری: کاندیدای حاصل، امتیازِ رأی‌خوردهٔ
+        # کاندیدای پایه را به ارث می‌برد (۸رقمِ ساخته‌شده از ۶رقمِ پررأی نباید
+        # فقط به‌خاطر تک‌تولید بودن ببازد) + بونوس خوانش متمرکز کادر «ایران»:
+        #   * ۶رقمی → چسباندن کد استان (→۸رقمی)
+        #   * ۸رقمی با کد متفاوت → کاندیدای تصحیح‌شدهٔ موازی (−۰٫۱۰ — کدِ قبلی
+        #     از خطِ کاملِ شلوغ آمده و خوانش متمرکز فقط-رقم معتبرتر است)
+        extra: dict[str, _Candidate] = {}
+        for c in ranked:
+            if not c.valid or c.box is None:
+                continue
+            for pd, pc in (prov_by_box.get(c.box) or [])[:2]:
+                if pc < 0.45:
+                    continue
+                fixed = None
+                if len(c.text) == 6:
+                    fixed = c.text + pd
+                elif len(c.text) == 8 and c.text[6:] != pd:
+                    fixed = c.text[:6] + pd
+                if fixed is None or fixed == c.text or not pt.validate(fixed)[1]:
+                    continue
+                bonus = 0.35 if pc >= 0.55 else 0.15
+                score = c.score + bonus - (0.10 if len(c.text) == 8 else 0.0)
+                cand = _Candidate(fixed, min(0.99, max(pc, 0.60)),
+                                  f"{c.method}+province", True, box=c.box,
+                                  score=round(score, 4), prov_bonus=bonus)
+                cur = extra.get(fixed)
+                if cur is None or cur.score < cand.score:
+                    extra[fixed] = cand
+        for fixed, cand in extra.items():
+            hit = next((c for c in ranked if c.text == fixed), None)
+            if hit is None:
+                ranked.append(cand)
+            elif cand.score > hit.score:
+                ranked[ranked.index(hit)] = cand
+        ranked.sort(key=lambda c: -c.score)
+        ranked = ranked[:MAX_CANDIDATES]
 
         # best: نخست کاندیدای معتبرِ بالای آستانهٔ کاربر؛ وگرنه هر معتبری؛
         # وگرنه نخستین کاندیدا (نمایش + هشدار اطمینان در UI)
