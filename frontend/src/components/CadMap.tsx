@@ -57,8 +57,8 @@ function extractSpots(j: unknown): { spots: Record<string, unknown>[]; source: s
 const CHUNK = 25
 
 /* ---------- هندسهٔ کمکی ---------- */
-const CANVAS_W = 1050
-const CANVAS_H = 950
+const CANVAS_W = 1150
+const CANVAS_H = 1040
 const PAD = 36
 
 function centroid(poly: { x: number; y: number }[]) {
@@ -386,8 +386,8 @@ export default function CadMap() {
                     const q = poly[(i + 1) % poly.length]
                     return Math.hypot(q.x - p.x, q.y - p.y)
                   })) * geo.s
-                  const font = Math.min(12.5, Math.max(8.5, longPx * 0.28))
-                  const inner = insetPoly(poly, 0.86)
+                  const font = Math.min(13, Math.max(9, longPx * 0.30))
+                  const inner = insetPoly(poly, 0.74)
                   return (
                     <g key={s.id} className="cad-spot" style={{ cursor: 'pointer' }}
                       onClick={() => { if (lastDraggedRef.current) return; setSel(s); setSelStatus(s.status); setSelCode(s.parking_code) }}>
@@ -442,8 +442,9 @@ export default function CadMap() {
               </MenuItem>
             ))}
           </TextField>
-          <TextField fullWidth label="شماره جایگاه" value={selCode} margin="normal"
-            onChange={(e) => setSelCode(e.target.value)} />
+          <TextField fullWidth label="شماره جایگاه (قابل تغییر)" value={selCode} margin="normal"
+            onChange={(e) => setSelCode(e.target.value)}
+            helperText="شماره را ویرایش و «ذخیره» بزنید — تغییر نام ماندگار است (حتی پس از refresh نقشه)" />
           {sel?.confidence != null && (
             <Typography variant="caption" color="text.secondary">
               اطمینان تشخیص: {(sel.confidence * 100).toFixed(0)}٪ — لایه: {sel.source_layer ?? '—'}
