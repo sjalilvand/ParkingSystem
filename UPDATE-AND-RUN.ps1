@@ -9,6 +9,12 @@
 #       -SkipAgent    گیت‌ایجنت را اجرا نکن
 #       -Prod         حالت production با docker-compose.prod.yml (.env.prod)
 #
+#  نکتهٔ سرور E:
+#     • prod:  .\UPDATE-AND-RUN.ps1 -Prod   → پورت از APP_PORT در .env.prod (E: = 80)
+#     • dev:   .\UPDATE-AND-RUN.ps1         → uvicorn:8000 + vite:5173
+#     • اگر requirements.txt تغییر کرده باشد، وابستگی‌ها خودکار دوباره نصب می‌شوند
+#       (مارکر بر اساس هش فایل است — .deps_ok قدیمی منسوخ)
+#
 #  پیش‌نیازها (فقط بار اول):
 #     backend\.venv  (محیط مجازی پایتون) — خودکار ساخته می‌شود اگر نباشد
 #     Node.js پرتابل در tools\node (برای frontend) یا Node نصب‌شدهٔ سیستم
@@ -78,26 +84,35 @@ if (-not (Test-Path $venvPy)) {
 if (-not (Test-Path $venvPy)) { Write-Host "  ✗ ساخت venv ناموفق" -ForegroundColor Red; exit 1 }
 Write-Host "  پایتون بک‌اند: $venvPy" -ForegroundColor Gray
 
-$marker = Join-Path $backend ".venv\.deps_ok"
+# مارکر وابستگی بر اساس هش requirements.txt — تغییر فایل ⇒ نصب خودکار دوباره
+$reqHash = ""
+try { $reqHash = (Get-FileHash (Join-Path $backend "requirements.txt") -Algorithm MD5).Hash.Substring(0,8) } catch {}
+$marker = Join-Path $backend ".venv\.deps_ok_$reqHash"
 $needInstall = -not (Test-Path $marker)
 if ($needInstall) {
+    Remove-Item (Join-Path $backend ".venv\.deps_ok*") -Force -ErrorAction SilentlyContinue
     Write-Host "  نصب وابستگی‌ها (requirements.txt) …"
     & $venvPy -m pip install --upgrade pip -q
     & $venvPy -m pip install -r (Join-Path $backend "requirements.txt") -q
     if ($LASTEXITCODE -eq 0) { New-Item -ItemType File -Path $marker -Force | Out-Null }
     else { Write-Host "  ⚠ نصب با خطا مواجه شد — لاگ بالا را بررسی کن" -ForegroundColor Yellow }
 } else {
-    Write-Host "  وابستگی‌ها از قبل نصب‌اند (حذف فایل .venv\.deps_ok برای نصب مجدد)" -ForegroundColor Gray
+    Write-Host "  وابستگی‌ها به‌روز و نصب‌اند (هش requirements: $reqHash)" -ForegroundColor Gray
 }
 
 # ---------- [۳] مهاجرت پایگاه‌داده ----------
-Write-Host ""
-Write-Host "=== [۳] مهاجرت‌های پایگاه‌داده (Alembic) ===" -ForegroundColor Yellow
-Push-Location $backend
-& $venvPy -m alembic upgrade head
-Pop-Location
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "  ⚠ مهاجرت ناموفق — اگر Postgres روشن نیست ابتدا اجرا کن: docker-compose up -d db" -ForegroundColor Yellow
+if ($Prod) {
+    Write-Host ""
+    Write-Host "=== [۳] مهاجرت‌ها: در حالت -Prod داخل کانتینر اجرا می‌شود (گام ۶) — رد شد ===" -ForegroundColor Gray
+} else {
+    Write-Host ""
+    Write-Host "=== [۳] مهاجرت‌های پایگاه‌داده (Alembic) ===" -ForegroundColor Yellow
+    Push-Location $backend
+    & $venvPy -m alembic upgrade head
+    Pop-Location
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "  ⚠ مهاجرت ناموفق — اگر Postgres روشن نیست ابتدا اجرا کن: docker-compose up -d db" -ForegroundColor Yellow
+    }
 }
 
 # ---------- [۴] فرانت‌اند ----------
@@ -138,12 +153,45 @@ if ($Prod) {
     Write-Host ""
     Write-Host "=== [۶] اجرای PRODUCTION (docker-compose.prod.yml) ===" -ForegroundColor Yellow
     $envFile = Join-Path $root ".env.prod"
+    if (-not (Test-Path $envFile)) {
+        Write-Host "  ✗ .env.prod در ریشهٔ پروژه نیست — حالت prod بدون آن مجاز نیست (secrets fail-fast)." -ForegroundColor Red
+        exit 1
+    }
+    # پورت انتشار از .env.prod (پیش‌فرض 8880)
+    $appPort = 8880
+    $m = Select-String -Path $envFile -Pattern '^\s*APP_PORT\s*=\s*(\d+)' | Select-Object -First 1
+    if ($m) { $appPort = [int]$m.Matches[0].Groups[1].Value }
+    # بک‌آپ پیش از ارتقا (اگر اسکریپت بک‌آپ موجود باشد) — بهترین تلاش
+    $bak = Join-Path $root "scripts\backup-db.ps1"
+    if (Test-Path $bak) {
+        Write-Host "  بک‌آپ پایگاه‌داده پیش از ارتقا …" -ForegroundColor Gray
+        try { & powershell -NoProfile -ExecutionPolicy Bypass -File $bak 2>$null | Out-Null } catch {}
+    }
     docker compose --env-file $envFile -f (Join-Path $root "docker-compose.prod.yml") up -d --build
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "  ✗ docker compose ناموفق — Docker Desktop روشن است؟ لاگ بالا را بررسی کن." -ForegroundColor Red
+        exit 1
+    }
+    # بررسی سلامت از طریق nginx (مسیر /health به بک‌اند پروکسی می‌شود)
     Write-Host ""
-    Write-Host "✔ سامانه در حالت production بالا آمد." -ForegroundColor Green
-    Write-Host "  آدرس:  http://localhost:80  (یا http://192.168.100.2)" -ForegroundColor Green
-    Write-Host "  لاگ:   docker compose -f docker-compose.prod.yml logs -f" -ForegroundColor Gray
-    exit 0
+    Write-Host "=== [۹] بررسی سلامت production (پورت $appPort) ===" -ForegroundColor Yellow
+    $okP = $false
+    for ($i = 0; $i -lt 30; $i++) {
+        Start-Sleep -Seconds 2
+        try {
+            $r = Invoke-RestMethod -Uri "http://127.0.0.1:$appPort/health/live" -TimeoutSec 3
+            if ($r.status -eq "ok") { $okP = $true; break }
+        } catch {}
+    }
+    if ($appPort -eq 80) { $outUrl = "http://192.168.100.2" } else { $outUrl = "http://192.168.100.2:$appPort" }
+    if ($okP) { Write-Host "✔ سامانه در حالت production سالم است." -ForegroundColor Green }
+    else {
+        Write-Host "⚠ هنوز پاسخ نمی‌دهد — build/مهاجرت ممکن است طول بکشد؛ لاگ را ببین:" -ForegroundColor Yellow
+        Write-Host "   docker compose -f docker-compose.prod.yml logs -f backend" -ForegroundColor Gray
+    }
+    Write-Host ""
+    Write-Host "  آدرس سامانه:  $outUrl" -ForegroundColor Green
+    if ($okP) { exit 0 } else { exit 2 }
 }
 
 Write-Host ""
