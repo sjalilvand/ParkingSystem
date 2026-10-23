@@ -8,6 +8,8 @@
 #       -SkipPull     فقط اجرا (بدون git pull)
 #       -SkipAgent    گیت‌ایجنت را اجرا نکن
 #       -Prod         حالت production با docker-compose.prod.yml (.env.prod)
+#       -Ocr          فعال‌سازی پلاک‌خوان: INSTALL_OCR=true در .env.prod + build مجدد backend
+#                     تست از منوی «آزمایش پلاک‌خوان ← پلاک‌خوان OCR» یا مسیر /plate-test/
 #
 #  نکتهٔ سرور E:
 #     • prod:  .\UPDATE-AND-RUN.ps1 -Prod   → پورت از APP_PORT در .env.prod (E: = 80)
@@ -23,7 +25,8 @@
 param(
     [switch]$SkipPull,
     [switch]$SkipAgent,
-    [switch]$Prod
+    [switch]$Prod,
+    [switch]$Ocr
 )
 
 $ErrorActionPreference = "Continue"
@@ -161,6 +164,19 @@ if ($Prod) {
     $appPort = 8880
     $m = Select-String -Path $envFile -Pattern '^\s*APP_PORT\s*=\s*(\d+)' | Select-Object -First 1
     if ($m) { $appPort = [int]$m.Matches[0].Groups[1].Value }
+    # فعال‌سازی پلاک‌خوان با -Ocr → INSTALL_OCR=true در .env.prod (بدون تکرار)
+    if ($Ocr) {
+        $txt = [System.IO.File]::ReadAllText($envFile)
+        if ($txt -match '(?m)^\s*INSTALL_OCR\s*=') {
+            $txt = [regex]::Replace($txt, '(?m)^(\s*INSTALL_OCR\s*=).*$', '$1true')
+        } else {
+            if (-not $txt.EndsWith("`n")) { $txt += "`r`n" }
+            $txt += "INSTALL_OCR=true`r`n"
+        }
+        [System.IO.File]::WriteAllText($envFile, $txt, (New-Object System.Text.UTF8Encoding($false)))
+        Write-Host "  ✔ پلاک‌خوان فعال شد (INSTALL_OCR=true) — build بک‌اند این بار سنگین‌تر است (torch CPU + EasyOCR)" -ForegroundColor Green
+        Write-Host "  ⚠ بار اولِ تست، مدل‌های EasyOCR (~۱۰۰MB) دانلود و روی volume «easyocr» ماندگار می‌شوند" -ForegroundColor Yellow
+    }
     # بک‌آپ پیش از ارتقا (اگر اسکریپت بک‌آپ موجود باشد) — بهترین تلاش
     $bak = Join-Path $root "scripts\backup-db.ps1"
     if (Test-Path $bak) {
@@ -170,6 +186,11 @@ if ($Prod) {
     docker compose --env-file $envFile -f (Join-Path $root "docker-compose.prod.yml") up -d --build
     if ($LASTEXITCODE -ne 0) {
         Write-Host "  ✗ docker compose ناموفق — Docker Desktop روشن است؟ لاگ بالا را بررسی کن." -ForegroundColor Red
+        if ($appPort -eq 80) {
+            Write-Host "    اگر خطا «Bind for 0.0.0.0:80 failed: port is already allocated» بود → پورت ۸۰ سرور اشغال است:" -ForegroundColor Yellow
+            Write-Host "      docker ps --format \"table {{.Names}}\t{{.Ports}}\"   ← ببین چه کانتینری پورت ۸۰ را دارد" -ForegroundColor Yellow
+            Write-Host "      یا پورت سامانه را عوض کن:  .\scripts\prod-repair.ps1 -Port 8085 -SkipBuild" -ForegroundColor Yellow
+        }
         exit 1
     }
     # بررسی سلامت از طریق nginx (مسیر /health به بک‌اند پروکسی می‌شود)

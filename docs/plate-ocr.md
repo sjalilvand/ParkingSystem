@@ -145,3 +145,27 @@ Query:    lookup=true   → جستجوی پلاک در vehicles (نیازمند 
   می‌شود تا event-loop بلاک نشود.
 - **تشخیص کلاسیک:** برای عکس‌های نزدیک و واضح خوب است؛ برای عکس‌های راهبندِ دور/مورب
   مدل YOLO آموزش‌دیده به‌طور محسوس بهتر عمل می‌کند.
+
+## ۶. فعال‌سازی روی سرور (Docker / prod)
+
+```powershell
+# ۱) فعال‌سازی — سوییچ آماده (INSTALL_OCR=true را در .env.prod ثبت و build می‌کند):
+.\UPDATE-AND-RUN.ps1 -Prod -Ocr
+
+#   یا دستی:
+#      خط INSTALL_OCR=true به .env.prod اضافه کنید، سپس:
+#      docker compose --env-file .env.prod -f docker-compose.prod.yml build backend
+#      docker compose --env-file .env.prod -f docker-compose.prod.yml up -d
+
+# ۲) بررسی وضعیت موتور:
+#      http://<سرور>/api/v1/plate-ocr/status
+# ۳) تست:
+#      • منوی سامانه: «آزمایش پلاک‌خوان ← پلاک‌خوان OCR»  (مسیر /plate-ocr)
+#      • صفحهٔ مستقل:  http://<سرور>/plate-test/
+```
+
+- بیلد بار اول سنگین‌تر است (torch CPU حدود ۲۲۰MB + opencv/easyocr)؛ لایه‌های بعدی کش می‌شوند.
+- بار اول اجرای OCR، مدل‌های EasyOCR (حدود ۱۰۰MB) دانلود و روی volume «easyocr» ماندگار
+  می‌شوند — rebuildهای بعدی آن را حفظ می‌کنند (به اینترنت نیاز دارد، فقط یک‌بار).
+- وزن‌های اختیاری YOLO/CRNN را اگر داشتید در `backend/models/` بگذارید
+  (`plate_det_best.pt` / `crnn_best.pt`) تا به‌جای تشخیص کلاسیک استفاده شوند.
