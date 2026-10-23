@@ -20,6 +20,17 @@ from app.realtime.router import router as ws_router
 async def lifespan(app: FastAPI):
     import asyncio
     manager.set_loop(asyncio.get_running_loop())
+    # §۲ — اسکیمای شبیه‌ساز پیش از سرو دادن درخواست‌ها (idempotent).
+    # بدون این، /simulator/* روی DB خالیِ تازه‌ساخته 500 می‌دهد (no such table).
+    # خطا بوت را نمی‌شکند — فقط لاگ می‌شود (سامانهٔ اصلی مستقل از شبیه‌ساز است).
+    from loguru import logger
+
+    from app.db.sim_session import ensure_sim_schema, sim_db_label
+    try:
+        await ensure_sim_schema()
+        logger.info(f"[lifespan] simulator schema ready — {sim_db_label()}")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"[lifespan] simulator schema ensure FAILED (simulator may 500): {exc}")
     # p0005: اطمینان از partial بودن ایندکس نشست باز روی SQLite (ورود دوبارهٔ پلاک بعد از خروج)
     try:
         async with engine.begin() as conn:

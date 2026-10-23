@@ -13,7 +13,7 @@ from app.modules.parking.cad_models import CadParkingSpot
 
 router = APIRouter(prefix="/cad-parking", tags=["CadParking"])
 
-VALID_STATUS = ("free", "occupied", "reserved", "disabled", "maintenance")
+VALID_STATUS = ("free", "occupied", "reserved", "disabled", "maintenance", "context")
 
 
 class ImportRequest(BaseModel):
@@ -74,6 +74,9 @@ async def import_spots(body: ImportRequest, db: AsyncSession = Depends(get_db), 
                 "confidence": spot.get("confidence"),
                 "notes": str(spot.get("notes") or "")[:250],
             }
+            # status فقط وقتی معتبر است پاس داده می‌شود (مثلاً «context» برای زمینهٔ نقشه)
+            if spot.get("status") in VALID_STATUS:
+                values["status"] = spot["status"]
 
             existing = existing_map.get(code)
             if existing:

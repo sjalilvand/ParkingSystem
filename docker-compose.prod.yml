@@ -45,11 +45,16 @@ services:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-parking}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-parking_db}
       REDIS_URL: redis://redis:6379/0
       MINIO_ENDPOINT: minio:9000
+      # شبیه‌ساز: SQLite مطلق روی volume — فایل نسبی ./sim_parking.db در کانتینر
+      # بی‌ثبات است (با هر rebuild پاک می‌شود و گاهی 500 می‌داد)
+      SIM_DATABASE_URL: sqlite+aiosqlite:////data/sim_parking.db
     # مهاجرت امن (p0001..p0007) داخل کانتینر و پیش از بوت‌استرپ
     command: sh -c "python -m scripts.migrate_prod_safe && python -m scripts.bootstrap_prod && uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2"
     volumes:
       # ماندگاری مدل‌های EasyOCR (فقط وقتی INSTALL_OCR=true — وگرنه بی‌اثر است)
       - easyocr:/root/.EasyOCR
+      # دیتابیس شبیه‌ساز — ماندگار روی rebuild
+      - simdata:/data
     depends_on:
       postgres:
         condition: service_healthy
@@ -73,6 +78,7 @@ volumes:
   pgdata:
   miniodata:
   easyocr:
+  simdata:
 
 networks:
   psnet:

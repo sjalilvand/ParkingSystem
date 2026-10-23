@@ -14,6 +14,7 @@ export const CAD_STATUS: Record<string, { fa: string; color: string }> = {
   reserved: { fa: 'رزرو', color: '#f6b73c' },
   disabled: { fa: 'غیرفعال', color: '#8193aa' },
   maintenance: { fa: 'تعمیرات', color: '#9b7cf5' },
+  context: { fa: 'زمینهٔ نقشه', color: '#90A4AE' },
 }
 
 interface Spot {
@@ -143,6 +144,8 @@ export default function CadMap() {
   })
 
   const spotsList = spots ?? []
+  const contextItems = useMemo(() => spotsList.filter((s) => s.status === 'context'), [spotsList])
+  const realSpots = useMemo(() => spotsList.filter((s) => s.status !== 'context'), [spotsList])
 
   const geo = useMemo(() => {
     let minX = 1e9, minY = 1e9, maxX = -1e9, maxY = -1e9
@@ -169,7 +172,7 @@ export default function CadMap() {
     return c
   }, [spotsList])
 
-  const labelSize = spotsList.length > 60 ? 9 : spotsList.length > 30 ? 11 : 13
+  const labelSize = realSpots.length > 60 ? 9 : realSpots.length > 30 ? 11 : 13
 
   return (
     <Stack spacing={2}>
@@ -217,7 +220,18 @@ export default function CadMap() {
             <Box dir="ltr" sx={{ width: '100%', overflowX: 'auto' }}>
               <svg viewBox="0 0 900 560" style={{ width: '100%', minWidth: 640, display: 'block' }}>
                 <rect x="0" y="0" width="900" height="560" fill="#FAFBFC" />
-                {geo && spotsList.map((s) => {
+                {/* زمینهٔ نقشه (مرز سایت/ساختمان‌ها) — زیر جاها، غیرکلیک‌پذیر */}
+                {geo && contextItems.map((s) => {
+                  const poly = parsePoly(s.polygon_json)
+                  if (poly.length < 3) return null
+                  return (
+                    <polygon key={s.id}
+                      points={poly.map((p) => `${geo.tx(p.x)},${geo.ty(p.y)}`).join(' ')}
+                      fill="#CFD8DC" fillOpacity="0.35" stroke="#78909C"
+                      strokeWidth="1.5" strokeDasharray="6 4" />
+                  )
+                })}
+                {geo && realSpots.map((s) => {
                   const poly = parsePoly(s.polygon_json)
                   if (poly.length < 3) return null
                   const col = CAD_STATUS[s.status]?.color ?? '#90A4AE'
