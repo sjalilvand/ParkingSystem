@@ -10,6 +10,7 @@ import {
 import { api, apiErrorFa } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
 import PlateBox from '../components/PlateBox'
+import SimBanner from '../components/SimBanner'
 
 interface OcrPlate {
   raw?: string | null
@@ -139,6 +140,7 @@ export default function PlateOcr() {
 
   return (
     <Stack spacing={2}>
+      <SimBanner />
       <Typography variant="h6" fontWeight={800}>📷 پلاک‌خوان (OCR) — آپلود عکس خودرو و تشخیص پلاک</Typography>
 
       {/* وضعیت موتور */}

@@ -9,6 +9,7 @@ import {
   Add, CleaningServices, Delete, PlayArrow, Refresh, Science, Summarize,
 } from '@mui/icons-material'
 import { api, apiErrorFa } from '../api/client'
+import SimBanner from '../components/SimBanner'
 
 interface Summary {
   complexes: number; towers: number; units: number; residents: number
@@ -98,6 +99,7 @@ export default function ScenarioBuilder() {
 
   return (
     <Stack spacing={2}>
+      <SimBanner />
       <Stack direction="row" spacing={1} alignItems="center">
         <Science color="primary" />
         <Typography variant="h6" fontWeight={800}>سناریوساز — ساخت و پاکسازی داده‌ها</Typography>

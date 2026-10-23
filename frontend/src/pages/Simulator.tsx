@@ -12,6 +12,7 @@ import { useLiveEvents } from '../api/ws'
 import { decisionFa } from '../app/theme'
 import PlateBox from '../components/PlateBox'
 import { faDate } from '../utils/format'
+import SimBanner from '../components/SimBanner'
 
 interface SimEvent { time: string; gate: string; direction: 'IN' | 'OUT'; plate: string
   kind?: string; decision?: string; reason?: string; barrier?: string
@@ -208,6 +209,7 @@ export default function Simulator() {
 
   return (
     <Stack spacing={2}>
+      <SimBanner />
       <Typography variant="h6" fontWeight={800}>🎮 شبیه‌ساز تردد و جریمه — نسخه کامل</Typography>
       {err && <Alert severity="error">{err}</Alert>}
 

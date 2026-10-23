@@ -6,6 +6,7 @@ import {
 import { PlayArrow, Science } from '@mui/icons-material'
 import { api } from '../api/client'
 import JalaliDatePicker from '../components/JalaliDateTime'
+import SimBanner from '../components/SimBanner'
 
 interface Cond { field: string; op: string; value?: unknown }
 interface Act { action: string; params?: Record<string, unknown> }
@@ -109,6 +110,7 @@ export default function RuleTester() {
 
   return (
     <Stack spacing={2}>
+      <SimBanner />
       <Stack direction="row" spacing={1} alignItems="center">
         <Science color="primary" />
         <Typography variant="h6" fontWeight={800}>آزمایش قوانین ورود/خروج (بدون راهبند و پرداخت واقعی)</Typography>
