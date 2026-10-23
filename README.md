@@ -28,6 +28,12 @@ Run everything from repo root:
 
     .\start-all.ps1
 
+**به‌روزرسانی و اجرای سریع (توصیه‌شده برای سرورها):**
+
+    .\UPDATE-AND-RUN.ps1          # git pull + نصب وابستگی‌ها + alembic + build + اجرا
+    .\UPDATE-AND-RUN.ps1 -Prod    # حالت production با docker-compose.prod.yml
+    .\UPDATE-AND-RUN.ps1 -SkipPull  # فقط اجرا
+
 Or individually:
 
     .\start-backend.ps1     # FastAPI on :8000  (Swagger: /api/docs)
