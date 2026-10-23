@@ -6,6 +6,9 @@
 پیش‌فرض: docs/cad/parking_spots_import.json (خروجی واقعی DXF کارفرما:
 ۸۴ جای بلوک A طبقه ‎-۲‎ + ۳۰ جای سطحی + مرز سایت + ۳ فوت‌پرینت برج)
 منطق همان POST /cad-parking/import است (upsert بر اساس parking_code).
+
+نکته: bootstrap_prod همین منطق را برای «seed اولیه» صدا می‌زند (فقط وقتی
+جدول cad_parking_spots خالی باشد) — پس با اولین بوت، نقشه CAD پر است.
 """
 import asyncio
 import json
@@ -15,76 +18,92 @@ from pathlib import Path
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-DEFAULT_JSON = Path(__file__).resolve().parents[1] / "docs" / "cad" / "parking_spots_import.json"
+BACKEND_DIR = Path(__file__).resolve().parents[1]
 
 VALID_STATUS = ("free", "occupied", "reserved", "disabled", "maintenance", "context")
 
 
-async def main(path: Path) -> None:
+def find_default_json() -> Path | None:
+    """مسیر پیش‌فرض JSON: داخل کانتینر /app/docs/cad/... یا در نسخهٔ سورس، ریشهٔ repo."""
+    for candidate in (BACKEND_DIR / "docs" / "cad" / "parking_spots_import.json",
+                      BACKEND_DIR.parent / "docs" / "cad" / "parking_spots_import.json"):
+        if candidate.exists():
+            return candidate
+    return None
+
+
+async def import_from_json(db, path: Path) -> tuple[int, int, int]:
+    """Upsert جایگاه‌ها از فایل JSON روی session داده‌شده. خروجی: (created, updated, skipped)."""
     from sqlalchemy import select
 
-    from app.db.session import AsyncSessionLocal
     from app.modules.parking.cad_models import CadParkingSpot
 
     raw = json.loads(path.read_text(encoding="utf-8"))
     items = raw["parking_spots"] if isinstance(raw, dict) else raw
     items = [s for s in items if isinstance(s, dict) and (s.get("parking_id") or s.get("parking_code"))]
-    print(f"json: {path} — {len(items)} item(s)")
 
     created = updated = skipped = 0
+    codes = [str(s.get("parking_id") or s.get("parking_code")).strip() for s in items]
+    existing: dict[str, CadParkingSpot] = {}
+    rows = (await db.execute(
+        select(CadParkingSpot).where(CadParkingSpot.parking_code.in_(codes))
+    )).scalars().all()
+    for r in rows:
+        existing[r.parking_code] = r
+
+    for s in items:
+        code = str(s.get("parking_id") or s.get("parking_code")).strip()
+        poly = s.get("polygon") or []
+        center = s.get("center") or {}
+        cx, cy = center.get("x"), center.get("y")
+        if (cx is None or cy is None) and len(poly) >= 3:
+            try:
+                cx = sum(p["x"] for p in poly) / len(poly)
+                cy = sum(p["y"] for p in poly) / len(poly)
+            except Exception:
+                cx = cy = None
+        values = {
+            "display_name": s.get("display_name") or f"پارکینگ {code}",
+            "source_drawing": s.get("source_drawing"),
+            "source_layer": s.get("source_layer"),
+            "source_entity_handle": s.get("source_entity_handle"),
+            "polygon_json": poly,
+            "center_x": cx, "center_y": cy,
+            "area": s.get("area_dxf_unit2") or s.get("area"),
+            "rotation": s.get("rotation_degree") or 0,
+            "parking_type": s.get("parking_type"),
+            "confidence": s.get("confidence"),
+            "notes": str(s.get("notes") or "")[:250],
+        }
+        # status فقط وقتی در JSON معتبر است پاس داده می‌شود — پس re-import
+        # هرگز وضعیتِ (اشغال/آزاد/…) که اپراتور دستی عوض کرده را بازنویسی نمی‌کند.
+        if s.get("status") in VALID_STATUS:
+            values["status"] = s["status"]
+
+        row = existing.get(code)
+        if row is not None:
+            for k, v in values.items():
+                if v is not None:
+                    setattr(row, k, v)
+            updated += 1
+        else:
+            db.add(CadParkingSpot(parking_code=code, **values))
+            created += 1
+    await db.commit()
+    return created, updated, skipped
+
+
+async def main(path: Path) -> None:
+    from app.db.session import AsyncSessionLocal, engine
+
     async with AsyncSessionLocal() as db:
-        codes = [str(s.get("parking_id") or s.get("parking_code")).strip() for s in items]
-        existing = {}
-        rows = (await db.execute(
-            select(CadParkingSpot).where(CadParkingSpot.parking_code.in_(codes))
-        )).scalars().all()
-        for r in rows:
-            existing[r.parking_code] = r
-
-        for s in items:
-            code = str(s.get("parking_id") or s.get("parking_code")).strip()
-            poly = s.get("polygon") or []
-            center = s.get("center") or {}
-            cx, cy = center.get("x"), center.get("y")
-            if (cx is None or cy is None) and len(poly) >= 3:
-                try:
-                    cx = sum(p["x"] for p in poly) / len(poly)
-                    cy = sum(p["y"] for p in poly) / len(poly)
-                except Exception:
-                    cx = cy = None
-            values = {
-                "display_name": s.get("display_name") or f"پارکینگ {code}",
-                "source_drawing": s.get("source_drawing"),
-                "source_layer": s.get("source_layer"),
-                "source_entity_handle": s.get("source_entity_handle"),
-                "polygon_json": poly,
-                "center_x": cx, "center_y": cy,
-                "area": s.get("area_dxf_unit2") or s.get("area"),
-                "rotation": s.get("rotation_degree") or 0,
-                "parking_type": s.get("parking_type"),
-                "confidence": s.get("confidence"),
-                "notes": str(s.get("notes") or "")[:250],
-            }
-            if s.get("status") in VALID_STATUS:
-                values["status"] = s["status"]
-
-            row = existing.get(code)
-            if row is not None:
-                for k, v in values.items():
-                    if v is not None:
-                        setattr(row, k, v)
-                updated += 1
-            else:
-                db.add(CadParkingSpot(parking_code=code, **values))
-                created += 1
-        await db.commit()
-
-    print(f"created={created} updated={updated} skipped={skipped} — DONE")
-    await __import__("app.db.session", fromlist=["engine"]).engine.dispose()
+        created, updated, skipped = await import_from_json(db, path)
+        print(f"created={created} updated={updated} skipped={skipped} — DONE")
+    await engine.dispose()
 
 
 if __name__ == "__main__":
-    p = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_JSON
+    p = Path(sys.argv[1]) if len(sys.argv) > 1 else (find_default_json() or Path("docs/cad/parking_spots_import.json"))
     if not p.exists():
         print(f"json not found: {p}")
         sys.exit(1)

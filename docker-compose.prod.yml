@@ -55,6 +55,8 @@ services:
       - easyocr:/root/.EasyOCR
       # دیتابیس شبیه‌ساز — ماندگار روی rebuild
       - simdata:/data
+      # JSON جایگاه‌های CAD (خروجی DXF کارفرما) — برای seed خودکار bootstrap و import دستی
+      - ./docs/cad:/app/docs/cad:ro
     depends_on:
       postgres:
         condition: service_healthy

@@ -132,6 +132,25 @@ async def main():
         else:
             print(f"[bootstrap] plate regions already: {n}")
 
+        # --- جایگاه‌های CAD (فقط وقتی جدول خالی است — seed یک‌بار؛ وضعیت‌های دستی دست‌نخورده) ---
+        try:
+            from app.modules.parking.cad_models import CadParkingSpot
+
+            n_spots = await db.scalar(select(func.count()).select_from(CadParkingSpot))
+            if n_spots:
+                print(f"[bootstrap] cad spots already: {n_spots}")
+            else:
+                from scripts.import_cad_spots import find_default_json, import_from_json
+
+                json_path = find_default_json()
+                if json_path is None:
+                    print("[bootstrap] WARN cad json not found (docs/cad/parking_spots_import.json) — از دکمهٔ «بارگذاری خروجی AI (JSON)» در تب نقشه CAD استفاده کنید")
+                else:
+                    created, _updated, _skipped = await import_from_json(db, json_path)
+                    print(f"[bootstrap] cad spots seeded: {created} (از {json_path.name})")
+        except Exception as exc:  # seed نقشه هرگز نباید بوت را بترکاند (درس 502 قبلی)
+            print(f"[bootstrap] WARN cad seed skipped: {exc}")
+
         await db.commit()
 
     await engine.dispose()
