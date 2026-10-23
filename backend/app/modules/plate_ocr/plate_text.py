@@ -14,8 +14,13 @@ DIGITS = "0123456789"
 OFFICIAL_LETTERS = "بجدسصطعقلمنوهی"
 LETTERS = OFFICIAL_LETTERS
 
-# برای OCR محدود کردن allowlist به همین مجموعه دقت را بالا می‌برد
-OCR_ALLOWLIST = DIGITS + OFFICIAL_LETTERS
+# allowlist OCR — کلاس‌های «بومی» مدل EasyOCR فارسی.
+# ⚠️ اندازه‌گیری واقعی (اکتبر ۲۰۲۶، ۴ عکس خیابانی): مدل fa ارقام را به‌صورت
+# ارقام عربی شرقی (٠-٩) با اطمینان ۰٫۵-۰٫۹۹ می‌خواند؛ اجبار ارقام لاتین در
+# allowlist کلاس بومی را می‌بست → ارقام حذف یا با اطمینان ۰٫۱-۰٫۳ خوانده
+# می‌شدند (نمونه: فقط «ق» از کل پلاک!). normalize() ارقام عربی/فارسی را از
+# قبل به لاتین تبدیل می‌کند، پس خروجی مسیرهای بعدی تغییری نمی‌کند.
+OCR_ALLOWLIST = "٠١٢٣٤٥٦٧٨٩" + "۰۱۲۳۴۵۶۷۸۹" + OFFICIAL_LETTERS
 
 _P2E = {ord(p): str(d) for d, p in enumerate("۰۱۲۳۴۵۶۷۸۹")}
 _AR2E = {ord(a): str(d) for d, a in enumerate("٠١٢٣٤٥٦٧٨٩")}
@@ -27,7 +32,8 @@ PLATE_RE = re.compile(rf"^(\d{{2}})([{LETTERS}])(\d{{3}})(?:IR)?(\d{{2}})?$")
 # توجه: این نگاشت هیوریستیک است؛ کاندیدای حاصل با ضریب اطمینان کمتر رتبه می‌شود.
 _VIS_DIGIT_TO_LETTER = {
     "0": "ه", "1": "ل", "2": "ب", "3": "ع", "4": "ه",
-    "5": "ص", "6": "ط", "7": "ن", "8": "ه", "9": "ق",
+    # ٥ و د دوقلوی بصری‌اند — دو آزمایش واقعی: «د» پلاک به‌صورت «٥» خوانده شد
+    "5": "د", "6": "ط", "7": "ن", "8": "ه", "9": "ق",
 }
 
 # حروف پرتکرار پلاک ایران (به‌ترتیب فراوانی) — برای بازسازی حرف وسط وقتی OCR
@@ -36,7 +42,13 @@ _PRIOR_LETTERS = "بسلمهطقنو"
 
 REPAIR_DEL_CONF = 0.85      # ضریب اطمینان کاندیدای حاصل از حذف نویسهٔ اضافه
 REPAIR_LETTER_CONF = 0.60   # ضریب اطمینان کاندیدای حاصل از جایگزینی حرف
-REPAIR_SWAP_CONF = 0.45     # ضریب کاندیدای جابه‌جایی گروه‌های عدد (اتصال LTR/RTL)
+# ۰٫۸۵ — اندازه‌گیری اکتبر ۲۰۲۶ روی ۵ عکس واقعی: مدل fa گروه‌های عدد را به‌طور
+# «سیستماتیک» راست‌به‌چپ می‌خواند («545س38» به‌جای «38س545» با اطمینان ۰٫۹۷).
+# این خطای اتصال RTL/LTR است نه حدس — همهٔ ارقام سالم‌اند و فقط مرز گروه‌ها
+# جابه‌جا شده. ضریب ۰٫۴۵ خوانشِ درستِ ۰٫۹۷ را به ۰٫۴۴ سرکوب می‌کرد و زیر
+# آستانهٔ UI (۲۵٪) می‌برد → «صفر کاندیدا» یا کاندیدای زبالهٔ رأی‌خورده در رتبهٔ اول.
+REPAIR_SWAP_CONF = 0.85     # ضریب کاندیدای جابه‌جایی گروه‌های عدد (اتصال LTR/RTL)
+REPAIR_INSERT_CONF = 0.30   # ضریب کاندیدای درجِ رقمِ جای‌افتاده (خوانش ۵ نویسه‌ای)
 
 
 def repair_candidates(text: str) -> list[tuple[str, float]]:
@@ -74,6 +86,15 @@ def repair_candidates(text: str) -> list[tuple[str, float]]:
             if len(s) == 6 and s[:2].isdigit() and s[2].isdigit() and s[3:].isdigit():
                 for L in _PRIOR_LETTERS:
                     out.append((s[:2] + L + s[3:], REPAIR_LETTER_CONF))
+            elif len(s) == 6 and s[:3].isdigit() and s[3] in LETTERS and s[4:].isdigit():
+                # الگوی آینه‌ای پس از حذف از ۷ نویسه (خوانش واقعی ۲.jfif:
+                # «٥٤٥س٣٨» → حذف رقم اضافه → «۵۴۵س۳۸» → جابه‌جایی → «۳۸س۵۴۵»)
+                swapped = s[4:] + s[3] + s[:3]
+                if swapped not in seen:
+                    seen.add(swapped)
+                    n2, valid2 = validate(swapped)
+                    if valid2:
+                        out.append((n2, REPAIR_SWAP_CONF))
     elif len(t) == 6:
         # الگوی آینه‌ای: ۳رقم + حرف + ۲رقم → جابه‌جایی گروه‌ها (خطای اتصال قطعات)
         if t[:3].isdigit() and t[3] in LETTERS and t[4:].isdigit():
@@ -82,10 +103,31 @@ def repair_candidates(text: str) -> list[tuple[str, float]]:
             if valid:
                 out.append((n, REPAIR_SWAP_CONF))
     elif len(t) == 5:
-        # یک نویسه جا افتاده — بازسازی کم‌دقت است؛ فقط اگر وسطش رقمِ حرف‌خوانده
-        # باشد، حرف وسط را می‌سازیم و الگو را به‌هم می‌زنیم → رد شو (نویز زیاد).
-        pass
-    return out
+        # یک رقم جا افتاده (الگوی واقعی ۴.jpg: «11ق11» به‌جای «11ق111» — CRAFT
+        # ارقام تکراری مجاور را ادغام می‌کند). برای هر جای درج و هر رقم:
+        # فقط ترکیب‌هایی که قالب معتبر شوند («11قd11»/«11ق1d1»/«11ق11d») کاندیدا
+        # می‌شوند — سقف ۳۰ کاندیدا با ضریب ۰٫۳۰؛ رتبه‌بندی موتور بقیهٔ کار را
+        # می‌کند. حرفِ وسط دست‌نخورده می‌ماند (برخلاف حدسِ حرف، این‌جا حرف
+        # از قبل درست خوانده شده و فقط یک رقم گم است).
+        if any(ch in LETTERS for ch in t) and sum(ch.isdigit() for ch in t) == 4:
+            seen5: set[str] = set()
+            for i in range(len(t) + 1):
+                for d in DIGITS:
+                    s = t[:i] + d + t[i:]
+                    if s in seen5:
+                        continue
+                    seen5.add(s)
+                    n5, valid5 = validate(s)
+                    if valid5:
+                        out.append((n5, REPAIR_INSERT_CONF))
+    # ادغام تکراری‌ها — مسیرهای حذف مختلف می‌توانند همان متن را بسازند
+    # (مثل «۴۲۲۵۱۱۱»: حذف رقم دوم و سوم هر دو «۴۲۵۱۱۱» می‌دهند)؛ رأی‌شماری
+    # موتور تکرار را «تأیید خوانش مستقل» می‌داند و امتیاز ساختگی می‌سازد
+    merged: dict[str, float] = {}
+    for txt, cf in out:
+        if txt not in merged or merged[txt] < cf:
+            merged[txt] = cf
+    return sorted(merged.items(), key=lambda kv: -kv[1])
 
 
 def normalize(text: str) -> str:
