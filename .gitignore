@@ -39,6 +39,11 @@ Desktop.ini
 .env.prod.*
 !.env.prod.example
 
+# کلید حساب سرویس Google — هرگز کامیت نشود
+secrets/
+*.pem
+service-account*.json
+
 # gate-agent junk
 gate-agent/agent.db*
 *.db*
