@@ -1,35 +1,21 @@
-const CACHE_NAME = "parking-shell-v2"
-const PRECACHE = ["/", "/index.html", "/manifest.webmanifest"]
-
+// سرویس‌ورکر حذف شد — این نسخه فقط برای پاک‌سازی نسخه‌های قبلی روی مرورگرهای
+// قدیمی است: همهٔ کش‌ها را حذف و خودش را لغو‌ثبت می‌کند، سپس صفحه را تازه می‌کند.
 self.addEventListener("install", (event) => {
-  event.waitUntil(
-    caches.open(CACHE_NAME).then((c) => c.addAll(PRECACHE)).then(() => self.skipWaiting())
-  )
+  event.waitUntil(self.skipWaiting())
 })
 
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches.keys()
-      .then((keys) => Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k))))
-      .then(() => self.clients.claim())
+      .then((keys) => Promise.all(keys.map((k) => caches.delete(k))))
+      .then(() => self.registration.unregister())
+      .then(() => self.clients.matchAll({ type: "window" }))
+      .then((clients) => clients.forEach((c) => {
+        if ("navigate" in c) c.navigate(c.url)
+      }))
   )
 })
 
-self.addEventListener("fetch", (event) => {
-  const req = event.request
-  if (req.method !== "GET") return
-  const url = new URL(req.url)
-  if (url.origin !== location.origin) return
-  // API و WebSocket هرگز کش نمی‌شوند (داده همیشه تازه)
-  if (url.pathname.startsWith("/api/") || url.pathname.startsWith("/ws")) return
-
-  event.respondWith(
-    fetch(req)
-      .then((res) => {
-        const copy = res.clone()
-        caches.open(CACHE_NAME).then((c) => c.put(req, copy)).catch(() => {})
-        return res
-      })
-      .catch(() => caches.match(req).then((m) => m || caches.match("/index.html")))
-  )
+self.addEventListener("fetch", () => {
+  // هیچ مداخله‌ای — درخواست‌ها مستقیم به شبکه می‌روند
 })

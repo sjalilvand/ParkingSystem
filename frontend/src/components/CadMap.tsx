@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Alert, Box, Button, Card, CardContent, Chip, Dialog, DialogActions, DialogContent,
@@ -113,23 +113,52 @@ export default function CadMap() {
 
   // ----- زوم و پن -----
   const [view, setView] = useState<View>({ x: 0, y: 0, w: CANVAS_W, h: CANVAS_H })
+  const [atHome, setAtHome] = useState(true)
   const dragRef = useRef<{ x: number; y: number; vx: number; vy: number; moved: boolean } | null>(null)
   const lastDraggedRef = useRef(false)
 
+  // ----- اندازهٔ کادر نقشه — نقشه همیشه کل کادر را پر می‌کند (بدون حاشیهٔ خالی) -----
+  const wrapRef = useRef<HTMLDivElement>(null)
+  const [box, setBox] = useState({ w: 0, h: 0 })
+  useEffect(() => {
+    const el = wrapRef.current
+    if (!el || typeof ResizeObserver === 'undefined') return
+    const measure = () => setBox({ w: el.clientWidth, h: el.clientHeight })
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+
+  const aspect = box.w > 40 && box.h > 40 ? box.w / box.h : CANVAS_W / CANVAS_H
+
+  /** نمای خانه: کل بوم، گسترش‌یافته تا نسبت ابعاد کادر */
+  const home = useMemo<View>(() => {
+    let w = CANVAS_W, h = CANVAS_H
+    if (w / h < aspect) w = h * aspect
+    else h = w / aspect
+    return { x: (CANVAS_W - w) / 2, y: (CANVAS_H - h) / 2, w, h }
+  }, [aspect])
+
+  useEffect(() => { if (atHome) setView(home) }, [atHome, home])
+
   const clampView = (v: View): View => {
-    const w = Math.min(v.w, CANVAS_W), h = Math.min(v.h, CANVAS_H)
+    const w = Math.min(v.w, home.w), h = Math.min(v.h, home.h)
     return {
       w, h,
-      x: Math.min(Math.max(v.x, 0), CANVAS_W - w),
-      y: Math.min(Math.max(v.y, 0), CANVAS_H - h),
+      x: Math.min(Math.max(v.x, home.x), home.x + home.w - w),
+      y: Math.min(Math.max(v.y, home.y), home.y + home.h - h),
     }
   }
-  const zoom = (f: number) => setView((v) => {
-    const nw = Math.min(CANVAS_W, Math.max(CANVAS_W / 6, v.w / f))
-    const nh = nw * (CANVAS_H / CANVAS_W)
-    const cx = v.x + v.w / 2, cy = v.y + v.h / 2
-    return clampView({ x: cx - nw / 2, y: cy - nh / 2, w: nw, h: nh })
-  })
+  const zoom = (f: number) => {
+    setAtHome(false)
+    setView((v) => {
+      const nw = Math.min(home.w, Math.max(home.w / 6, v.w / f))
+      const nh = nw / aspect
+      const cx = v.x + v.w / 2, cy = v.y + v.h / 2
+      return clampView({ x: cx - nw / 2, y: cy - nh / 2, w: nw, h: nh })
+    })
+  }
 
   const importFile = useMutation({
     mutationFn: async (file: File) => {
@@ -237,6 +266,7 @@ export default function CadMap() {
   ), [contextItems])
 
   const onPointerDown = (e: ReactPointerEvent<SVGSVGElement>) => {
+    setAtHome(false)
     dragRef.current = { x: e.clientX, y: e.clientY, vx: view.x, vy: view.y, moved: false }
     try { e.currentTarget.setPointerCapture(e.pointerId) } catch { /* بی‌اهمیت */ }
   }
@@ -296,7 +326,8 @@ export default function CadMap() {
               هنوز جایگاهی وارد نشده — خروجی JSON مدل هوش مصنوعی را با دکمه «بارگذاری خروجی AI» وارد کنید.
             </Alert>
           ) : (
-            <Box dir="ltr" sx={{ position: 'relative', width: '100%', overflowX: 'auto' }}>
+            <Box dir="ltr" ref={wrapRef}
+              sx={{ position: 'relative', width: '100%', minWidth: 640, height: { xs: 460, md: 660 } }}>
               {/* دکمه‌های زوم */}
               <Stack spacing={0.5} sx={{ position: 'absolute', top: 10, left: 10, zIndex: 2 }}>
                 <Tooltip title="بزرگ‌نمایی">
@@ -312,14 +343,14 @@ export default function CadMap() {
                   </IconButton>
                 </Tooltip>
                 <Tooltip title="نمای کامل">
-                  <IconButton size="small" onClick={() => setView({ x: 0, y: 0, w: CANVAS_W, h: CANVAS_H })}
+                  <IconButton size="small" onClick={() => { setAtHome(true); setView(home) }}
                     sx={{ bgcolor: '#fff', boxShadow: 1, '&:hover': { bgcolor: '#f0f3f5' } }}>
                     <CenterFocusStrong fontSize="small" />
                   </IconButton>
                 </Tooltip>
               </Stack>
               <svg viewBox={`${view.x} ${view.y} ${view.w} ${view.h}`}
-                style={{ width: '100%', minWidth: 640, display: 'block', cursor: dragRef.current ? 'grabbing' : 'grab', touchAction: 'none' }}
+                style={{ width: '100%', height: '100%', display: 'block', cursor: dragRef.current ? 'grabbing' : 'grab', touchAction: 'none' }}
                 onPointerDown={onPointerDown} onPointerMove={onPointerMove}
                 onPointerUp={onPointerUp} onPointerLeave={onPointerUp}>
                 <rect x="0" y="0" width={CANVAS_W} height={CANVAS_H} fill="#FAFBFC" />
@@ -358,15 +389,24 @@ export default function CadMap() {
                   const c = s.center_x != null && s.center_y != null
                     ? { x: s.center_x, y: s.center_y } : centroid(poly)
                   const name = (s.display_name ?? '').split('(')[0].trim()
+                  const area = /\(([^)]*)\)/.exec(s.display_name ?? '')?.[1]?.trim()
                   return (
                     <g key={s.id} style={{ pointerEvents: 'none' }}>
                       <polygon
                         points={poly.map((p) => `${geo.tx(p.x)},${geo.ty(p.y)}`).join(' ')}
                         fill="#D8E0E8" stroke="#8FA1B3" strokeWidth="1.6" strokeLinejoin="round" />
                       {name && (
-                        <text x={geo.tx(c.x)} y={geo.ty(c.y)} textAnchor="middle" dominantBaseline="central"
-                          fontSize="15" fontWeight="800" fill="#546E7A" style={{ userSelect: 'none' }}>
+                        <text x={geo.tx(c.x)} y={geo.ty(c.y) - (area ? 7 : 0)} textAnchor="middle" dominantBaseline="central"
+                          fontSize="17" fontWeight="900" fill="#3A4C5D"
+                          stroke="#FFFFFF" strokeWidth="3" paintOrder="stroke" style={{ userSelect: 'none' }}>
                           {name}
+                        </text>
+                      )}
+                      {area && (
+                        <text x={geo.tx(c.x)} y={geo.ty(c.y) + 11} textAnchor="middle" dominantBaseline="central"
+                          fontSize="10" fontWeight="700" fill="#5B6E7F"
+                          stroke="#FFFFFF" strokeWidth="2.4" paintOrder="stroke" style={{ userSelect: 'none' }}>
+                          {area}
                         </text>
                       )}
                     </g>
@@ -386,7 +426,7 @@ export default function CadMap() {
                     const q = poly[(i + 1) % poly.length]
                     return Math.hypot(q.x - p.x, q.y - p.y)
                   })) * geo.s
-                  const font = Math.min(13, Math.max(9, longPx * 0.30))
+                  const font = Math.min(14, Math.max(9.5, longPx * 0.32))
                   const inner = insetPoly(poly, 0.74)
                   return (
                     <g key={s.id} className="cad-spot" style={{ cursor: 'pointer' }}
