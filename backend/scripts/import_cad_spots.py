@@ -32,11 +32,21 @@ def find_default_json() -> Path | None:
     return None
 
 
-async def import_from_json(db, path: Path) -> tuple[int, int, int]:
-    """Upsert جایگاه‌ها از فایل JSON روی session داده‌شده. خروجی: (created, updated, skipped)."""
-    from sqlalchemy import select
+async def import_from_json(db, path: Path, purge: bool = False) -> tuple[int, int, int]:
+    """Upsert جایگاه‌ها از فایل JSON روی session داده‌شده. خروجی: (created, updated, skipped).
+
+    purge=True: ابتدا «همهٔ» جایگاه‌های موجود حذف می‌شوند — برای جایگزینی کامل نقشه
+    (مثلاً مهاجرت از نقشهٔ قدیمی TA_P2 به نقشهٔ واقعی planYARD). وضعیت‌های دستی اپراتور
+    هم پاک می‌شوند؛ پس فقط وقتی استفاده شود که جایگزینی کامل مدنظر است.
+    """
+    from sqlalchemy import delete, select
 
     from app.modules.parking.cad_models import CadParkingSpot
+
+    if purge:
+        n = (await db.execute(delete(CadParkingSpot))).rowcount
+        await db.commit()
+        print(f"[purge] {n} existing cad spots deleted")
 
     raw = json.loads(path.read_text(encoding="utf-8"))
     items = raw["parking_spots"] if isinstance(raw, dict) else raw
@@ -93,18 +103,25 @@ async def import_from_json(db, path: Path) -> tuple[int, int, int]:
     return created, updated, skipped
 
 
-async def main(path: Path) -> None:
+async def main(path: Path, purge: bool = False) -> None:
     from app.db.session import AsyncSessionLocal, engine
 
     async with AsyncSessionLocal() as db:
-        created, updated, skipped = await import_from_json(db, path)
+        created, updated, skipped = await import_from_json(db, path, purge=purge)
         print(f"created={created} updated={updated} skipped={skipped} — DONE")
     await engine.dispose()
 
 
 if __name__ == "__main__":
-    p = Path(sys.argv[1]) if len(sys.argv) > 1 else (find_default_json() or Path("docs/cad/parking_spots_import.json"))
+    import argparse
+
+    ap = argparse.ArgumentParser(description="ورود انبوه جایگاه‌های CAD از JSON")
+    ap.add_argument("path", nargs="?", default=None, help="مسیر JSON (پیش‌فرض: docs/cad/parking_spots_import.json)")
+    ap.add_argument("--purge", action="store_true",
+                    help="ابتدا همهٔ جایگاه‌های موجود حذف شوند (جایگزینی کامل نقشه)")
+    args = ap.parse_args()
+    p = Path(args.path) if args.path else (find_default_json() or Path("docs/cad/parking_spots_import.json"))
     if not p.exists():
         print(f"json not found: {p}")
         sys.exit(1)
-    asyncio.run(main(p))
+    asyncio.run(main(p, purge=args.purge))
