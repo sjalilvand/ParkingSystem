@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>راهنمای کاربران — سامانه مدیریت پارکینگ (برج‌های ارکیده)</title>
+<style>
+  :root{--primary:#312e81;--accent:#4f46e5;--bg:#f1f5f9;--card:#ffffff;--text:#0f172a;--muted:#475569;--border:#e2e8f0;--ok:#16a34a;--warn:#d97706;--bad:#dc2626;--info:#2563eb;}
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{font-family:'Vazirmatn','Segoe UI',Tahoma,Arial,sans-serif;background:var(--bg);color:var(--text);line-height:1.9;font-size:15px;}
+  .wrap{max-width:920px;margin:0 auto;padding:24px 16px 60px;}
+  header.hero{background:linear-gradient(135deg,#1e1b4b 0%,#4338ca 55%,#6366f1 100%);color:#fff;border-radius:16px;padding:36px 28px;margin-bottom:24px;}
+  header.hero h1{font-size:26px;margin-bottom:8px;}
+  header.hero p.sub{opacity:.92;font-size:15px;}
+  .badges{margin-top:14px;display:flex;flex-wrap:wrap;gap:8px;}
+  .badge{background:rgba(255,255,255,.16);border:1px solid rgba(255,255,255,.35);border-radius:999px;padding:3px 12px;font-size:12.5px;}
+  nav.toc{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px 22px;margin-bottom:24px;}
+  nav.toc h2{font-size:16px;color:var(--primary);margin-bottom:10px;}
+  nav.toc ol{padding-right:20px;columns:2;column-gap:32px;}
+  nav.toc a{color:var(--info);text-decoration:none;}
+  nav.toc a:hover{text-decoration:underline;}
+  section.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:22px 24px;margin-bottom:20px;}
+  h2.sec{font-size:19px;color:var(--primary);border-right:4px solid var(--accent);padding-right:12px;margin-bottom:14px;}
+  p{margin-bottom:10px;}
+  ul,ol{margin:0 0 12px;padding-right:22px;}
+  li{margin-bottom:6px;}
+  table{width:100%;border-collapse:collapse;margin:12px 0;font-size:14px;}
+  th{background:#eef2ff;color:var(--primary);text-align:right;padding:9px 12px;border:1px solid var(--border);}
+  td{padding:8px 12px;border:1px solid var(--border);vertical-align:top;}
+  tr:nth-child(even) td{background:#f8fafc;}
+  code{font-family:Consolas,'Courier New',monospace;direction:ltr;unicode-bidi:embed;background:#eef2ff;border:1px solid #dbeafe;border-radius:5px;padding:1px 6px;font-size:13px;color:#312e81;}
+  .callout{border-radius:10px;padding:12px 16px;margin:14px 0;border-right:5px solid;}
+  .callout.info{background:#eff6ff;border-color:var(--info);}
+  .callout.warn{background:#fffbeb;border-color:var(--warn);}
+  .callout.bad{background:#fef2f2;border-color:var(--bad);}
+  .callout.ok{background:#f0fdf4;border-color:var(--ok);}
+  .menu-line{display:flex;gap:10px;align-items:flex-start;margin:10px 0;}
+  .menu-line .chip{flex:0 0 auto;background:#eef2ff;color:var(--primary);border:1px solid #c7d2fe;border-radius:8px;padding:2px 12px;font-size:13px;font-weight:700;white-space:nowrap;}
+  .btn-print{position:fixed;top:16px;left:16px;background:var(--primary);color:#fff;border:none;border-radius:10px;padding:9px 18px;cursor:pointer;font-family:inherit;font-size:14px;box-shadow:0 4px 12px rgba(0,0,0,.18);z-index:9;}
+  .btn-print:hover{background:#4338ca;}
+  footer{text-align:center;color:var(--muted);font-size:13px;margin-top:28px;}
+  @media print{.btn-print{display:none;}body{background:#fff;}header.hero{border-radius:0;}section.card,nav.toc{border:none;page-break-inside:avoid;}}
+</style>
+</head>
+<body>
+<button class="btn-print" onclick="window.print()">🖨️ چاپ راهنما</button>
+<div class="wrap">
+
+<header class="hero">
+  <h1>راهنمای کاربران — سامانه مدیریت پارکینگ</h1>
+  <p class="sub">برج‌های ارکیده · کار با سامانه برای اپراتور گیت، مسئول محوطه و مدیران</p>
+  <div class="badges">
+    <span class="badge">نسخه ۱.۰</span>
+    <span class="badge">۱۴۰۵/۰۸/۰۱</span>
+    <span class="badge">مخاطب: همهٔ کاربران سامانه</span>
+  </div>
+</header>
+
+<nav class="toc">
+  <h2>فهرست مطالب</h2>
+  <ol>
+    <li><a href="#s0">شروع کار — ورود به سامانه</a></li>
+    <li><a href="#s1">آشنایی با منوی سامانه</a></li>
+    <li><a href="#s2">پنل گیت — ثبت ورود و خروج</a></li>
+    <li><a href="#s3">خودروها و مجوزهای تردد</a></li>
+    <li><a href="#s4">بازبینی پلاک (تصحیح خوانش خودکار)</a></li>
+    <li><a href="#s5">امور مالی — بدهی‌ها و تعرفه‌ها</a></li>
+    <li><a href="#s6">همگام‌سازی با شیت Google</a></li>
+    <li><a href="#s7">بخش شبیه‌ساز (محیط آزمایشی)</a></li>
+    <li><a href="#s8">کاربران و نقش‌ها</a></li>
+    <li><a href="#s9">پرسش‌های متداول</a></li>
+  </ol>
+</nav>
+
+<section class="card" id="s0">
+  <h2 class="sec">۱) شروع کار — ورود به سامانه</h2>
+  <ol>
+    <li>مرورگر را باز کنید و به آدرس سامانه بروید: <code>http://192.168.100.2</code> (اگر مدیر پورت دیگری داده باشد، مثل <code>http://192.168.100.2:8880</code>). سامانه روی موبایل و تبلت هم درست نمایش داده می‌شود و فارسی/راست‌چین است.</li>
+    <li>نام کاربری و رمز خود را وارد کنید و «ورود به سامانه» را بزنید. کاربران جدید را مدیر سامانه از بخش «کاربران و نقش‌ها» می‌سازد.</li>
+    <li>پس از ورود، نام کاربری و دکمهٔ خروج در بالای صفحه است؛ پایان کار حتماً Logout کنید.</li>
+    <li>در اولین ورود رمز خود را عوض کنید. اگر رمزتان را فراموش کردید، از مدیر سامانه بخواهید آن را بازنشانی کند (§۹).</li>
+  </ol>
+  <div class="callout info">هر کاربر فقط منوهایی را می‌بیند که مجوزشان را دارد. اپراتور گیت (نقش op1) مستقیماً «پنل گیت» را می‌بیند و صفحات مدیریتی برایش نمایش داده نمی‌شود — این طبیعی است.</div>
+</section>
+
+<section class="card" id="s1">
+  <h2 class="sec">۲) آشنایی با منوی سامانه</h2>
+  <p>منو دو بخش دارد: <b>«سامانه عملیاتی»</b> (کار روزمره) که به‌صورت پیش‌فرض باز است، و <b>«شبیه‌ساز و آزمون سناریوها»</b> (محیط تمرین) که جمع است. بالای منو دکمهٔ بزرگ و پین‌شدهٔ <b>«پنل گیت»</b> برای اپراتورها دیده می‌شود.</p>
+  <h3>بخش عملیاتی — ۱۱ گروه</h3>
+  <table>
+    <tr><th>گروه</th><th>آیتم‌ها</th><th>برای چه کاری؟</th></tr>
+    <tr><td>میز عملیات</td><td>داشبورد · مرکز عملیات</td><td>نمای کلی ظرفیت، تردد امروز و هشدارها</td></tr>
+    <tr><td>گیت و تردد</td><td>رویدادهای تردد · بازبینی پلاک</td><td>تاریخچهٔ ورود/خروج و تصحیح خوانش پلاک</td></tr>
+    <tr><td>ساختار و خودرو</td><td>ساختار مجتمع · خودروها</td><td>برج‌ها/واحدها و فهرست ۵۰۷ خودروی ساکن</td></tr>
+    <tr><td>مجوزهای تردد</td><td>مجوزها</td><td>تعریف مجوز عبور خودروهای مهمان/سرویس</td></tr>
+    <tr><td>پارکینگ و جایگاه‌ها</td><td>پارکینگ</td><td>نقشهٔ جایگاه‌ها و اشغال آن‌ها</td></tr>
+    <tr><td>امور مالی</td><td>بدهی‌ها · تعرفه‌ها</td><td>شارژ پارکینگ، بدهی ساکنان و تعریف تعرفه</td></tr>
+    <tr><td>تخلفات</td><td>تخلفات</td><td>پارک دبل‌صف، توقف در معبر و…</td></tr>
+    <tr><td>اطلاعات پایه و تنظیمات</td><td>اطلاعات پایه · طراح تنظیمات</td><td>فهرست‌های پایه (نام برج، انواع خودرو و…)</td></tr>
+    <tr><td>همگام‌سازی و انطباق</td><td>همگام‌سازی خودروها (Sheets)</td><td>اتصال به شیت Google مدیریت مجموعه</td></tr>
+    <tr><td>حوزهٔ عملیات میدانی</td><td>مسئول محوطه</td><td>ابزار کار مسئول محوطه</td></tr>
+    <tr><td>کاربران و امنیت</td><td>کاربران و نقش‌ها</td><td>ساخت کاربر و تعیین مجوزها (فقط admin)</td></tr>
+  </table>
+</section>
+
+<section class="card" id="s2">
+  <h2 class="sec">۳) پنل گیت — ثبت ورود و خروج</h2>
+  <p>پنل گیت صفحهٔ اصلی کار اپراتور ورودی است: ساده، درشت و بدون منوهای اضافه. کارهایی که از اینجا انجام می‌شود:</p>
+  <ul>
+    <li><b>ثبت ورود:</b> پلاک خودرو را وارد/انتخاب کنید. اگر خودرو در فهرست ساکنان باشد، مشخصات مالک و وضعیت مجوز و بدهی همان لحظه نشان داده می‌شود و تصمیم عبور راحت گرفته می‌شود. خودروی ناشناس را می‌توان به‌صورت <b>رویداد دستی</b> ثبت کرد.</li>
+    <li><b>ثبت خروج:</b> همان جست‌وجوی پلاک، خروج ثبت می‌شود و اگر هزینه‌ای داشته باشد، مبلغ محاسبه‌شده نمایش داده می‌شود.</li>
+    <li><b>پاکت پلاک:</b> برای هر خوانشِ دوربین، زاویه/نور/سرعت و میزان اطمینان ذخیره می‌شود؛ خوانش‌های با اطمینان کمتر از ۰٫۷۰ به‌جای عبور خودکار، به صف بازبینی می‌روند.</li>
+  </ul>
+  <div class="callout warn"><b>قاعدهٔ مهم:</b> اگر پلاک روی صفحه مشکوک بود یا با خودروی فیزیکی نمی‌خواند، هرگز عبور را تحمیل نکنید — از راه دستی ثبت کنید یا در صف بازبینی تصحیح بگذارید. همهٔ اصلاح‌ها با نام کاربر ثبت می‌شوند.</div>
+</section>
+
+<section class="card" id="s3">
+  <h2 class="sec">۴) خودروها و مجوزهای تردد</h2>
+  <div class="menu-line"><span class="chip">خودروها</span><div>فهرست کامل خودروهای ساکن (الان ۵۰۷ رکورد) با جست‌وجوی پلاک، نام مالک، واحد و برج. از همین صفحه مشخصات مالک، رنگ/مدل و وضعیت فعال بودن را ویرایش می‌کنند. پلاک با قالب ایرانی ثبت می‌شود، مثل <code>۱۲ ب ۳۴۵ ایران ۱۱</code>؛ سامانه پلاک‌های نادرست را نمی‌پذیرد.</div></div>
+  <div class="menu-line"><span class="chip">مجوزها</span><div>برای خودروهای غیرساکن (کارگر، سرویس، مهمان دائم) مجوز تردد با بازهٔ اعتبار تعریف می‌کنید. بعد از پایان بازه، سامانه خودش عبور را متوقف می‌کند.</div></div>
+  <div class="menu-line"><span class="chip">ساختار مجتمع</span><div>درخت برج‌ها، طبقات و واحدها؛ مبنای گزارش‌های مالی و تفکیک خودروهاست.</div></div>
+</section>
+
+<section class="card" id="s4">
+  <h2 class="sec">۵) بازبینی پلاک (تصحیح خوانش خودکار)</h2>
+  <p>وقتی دوربین یا موتور OCR پلاکی را با اطمینان کم بخواند، رکورد آن با برچسب <b>«نیازمند بازبینی»</b> به صف بازبینی می‌رود. روند کار:</p>
+  <ol>
+    <li>در منوی «گیت و تردد → بازبینی پلاک» صف موارد باز را باز کنید؛ متریک سرعت پاسخ (p95) بالای صفحه است.</li>
+    <li>عکس و خوانش اولیه را ببینید، مقدار درست را در فیلد پلاک وارد کنید و ثبت کنید.</li>
+    <li>سامانه <b>مقدار اصلی خوانده‌شده را جدا نگه می‌دارد</b> و اصلاح شما به‌همراه نام کاربر و زمان ثبت می‌شود — تاریخچه گم نمی‌شود و قابل ردیابی است.</li>
+  </ol>
+  <div class="callout ok">این صف روی هر موتوری کار می‌کند (OCR داخلی فعلی یا دوربین ANPR حرفه‌ای آینده)؛ پس هر چقدر هم سخت‌افزار بهتر شود، بازبینی انسانی لایهٔ تضمین کیفیت می‌ماند.</div>
+</section>
+
+<section class="card" id="s5">
+  <h2 class="sec">۶) امور مالی — بدهی‌ها و تعرفه‌ها</h2>
+  <div class="menu-line"><span class="chip">بدهی‌ها</span><div>بدهی ساکنان و خودروهای مهمان، پرداخت‌ها و مبلغ پرداخت‌شده/باقی‌مانده. همگام‌سازی Google هرگز این مقادیر را تغییر نمی‌دهد.</div></div>
+  <div class="menu-line"><span class="chip">تعرفه‌ها</span><div>تعریف نرخ‌های پارکینگ (ساعتی/ثابت/پله‌ای). تغییر تعرفه روی رویدادهای بعدی اعمال می‌شود و محاسبات قبلی دست نمی‌خورد.</div></div>
+</section>
+
+<section class="card" id="s6">
+  <h2 class="sec">۷) همگام‌سازی با شیت Google</h2>
+  <p>در منوی «همگام‌سازی و انطباق → همگام‌سازی خودروها (Sheets)»، فهرست خودروها که در شیت Google مجموعه نگه‌داری می‌شود، روزانه ساعت ۰۳:۰۰ با سامانه تطبیق داده می‌شود. کارهای شما در این صفحه:</p>
+  <ul>
+    <li><b>تست اتصال</b> — مطمئن شوید سامانه شیت را می‌بیند.</li>
+    <li><b>اجرای آزمایشی (Dry-run)</b> — ببینید چه تغییراتی اعمال می‌شد، بدون تغییر واقعی.</li>
+    <li><b>اجرای همگام‌سازی</b> — اعمال فوری تغییرات شیت.</li>
+    <li><b>صف تعارض</b> — ردیف‌های با پلاک اشتباه یا شناسهٔ تکراری؛ با دکمهٔ اعمال/رد و یادداشت تعیین تکلیف کنید.</li>
+  </ul>
+  <div class="callout info">جزئیات راه‌اندازی در سند جداگانهٔ «راهنمای اتصال Google Sheets» آمده است (docs/guides/google-sheets-guide.html).</div>
+</section>
+
+<section class="card" id="s7">
+  <h2 class="sec">۸) بخش شبیه‌ساز (محیط آزمایشی)</h2>
+  <p>بخش دوم منو (شبیه‌ساز و آزمون سناریوها) یک <b>زمین تمرین کاملاً جداست</b>: پایگاه‌دادهٔ شبیه‌ساز از پایگاه‌دادهٔ اصلی جداست و هیچ دادهٔ واقعی تغییر نمی‌کند. هر صفحهٔ این بخش نوار هشدار <b>«آزمایشی — فاقد اعتبار مالی و عملیاتی»</b> دارد.</p>
+  <ul>
+    <li><b>شبیه‌ساز ترافیک:</b> تمرین ورود/خروج، آموزش گام‌به‌گام ۵ فازی و ثبت رویداد دستی گیت.</li>
+    <li><b>کاتالوگ سناریوها (SIM-01 تا SIM-20):</b> ۲۰ سناریوی آزمون آماده با پیش‌شرط و نتیجهٔ مورد انتظار — برای پذیرش و آموزش.</li>
+    <li><b>سناریوساز و تستر قوانین:</b> ساخت دادهٔ آزمایشی و امتحان قواعد تردد بدون ریسک.</li>
+    <li><b>پلاک‌خوان OCR:</b> آپلود عکس موبایل و دیدن کیفیت خوانش (کالیبراسیون).</li>
+  </ul>
+  <div class="callout warn">خروجی‌های بخش شبیه‌ساز را در گزارش‌های رسمی و امور مالی استفاده نکنید — فقط آزمون و آموزش است.</div>
+</section>
+
+<section class="card" id="s8">
+  <h2 class="sec">۹) کاربران و نقش‌ها</h2>
+  <p>فقط admin به این بخش وارد می‌شود. برای هر همکار یک کاربر بسازید و فقط مجوزهای لازم را بدهید — منوی هر کاربر خودکار همان مجوزها را نشان می‌دهد و سطح API هم همان را اعمال می‌کند. نمونه:</p>
+  <table>
+    <tr><th>نقش</th><th>مجوزهای پیشنهادی</th><th>می‌بیند</th></tr>
+    <tr><td>اپراتور گیت (op1)</td><td>پنل گیت، رویدادهای تردد، بازبینی پلاک</td><td>فقط ابزار ورودی — بخش شبیه‌ساز را نمی‌بیند</td></tr>
+    <tr><td>مسئول محوطه</td><td>پارکینگ، حوزهٔ میدانی، تخلفات</td><td>جایگاه‌ها و تخلفات</td></tr>
+    <tr><td>مدیر مالی</td><td>بدهی‌ها، تعرفه‌ها، گزارش‌ها</td><td>بخش مالی</td></tr>
+    <tr><td>admin</td><td>همه‌چیز + کاربران و نقش‌ها</td><td>کل سامانه</td></tr>
+  </table>
+  <p>اگر لازم شد به کسی دسترسی شبیه‌ساز بدهید، مجوز <code>simulator.view</code> را از همین صفحه اضافه کنید.</p>
+</section>
+
+<section class="card" id="s9">
+  <h2 class="sec">۱۰) پرسش‌های متداول</h2>
+  <table>
+    <tr><th>مشکل</th><th>راه‌حل</th></tr>
+    <tr><td>صفحه می‌گوید «خطای شبکه — سرور در دسترس نیست»</td><td>آدرس را چک کنید: در حالت عادی <code>http://192.168.100.2</code> است نه <code>localhost:5173</code>. اگر آدرس درست است و باز خطا داد، از مدیر بخواهید وضعیت داکر سرور را ببیند: <code>docker compose -f docker-compose.prod.yml ps</code></td></tr>
+    <tr><td>رمزم را فراموش کرده‌ام</td><td>از admin بخواهید در «کاربران و نقش‌ها» رمز شما را بازنشانی کند. رمز admin را می‌توان روی سرور با اسکریپت <code>backend/scripts/reset_admin.py</code> برگرداند.</td></tr>
+    <tr><td>پلاک خودرو درست تشخیص داده نشد</td><td>در «بازبینی پلاک» همان رکورد را باز کنید و مقدار درست را ثبت کنید؛ مقدار اصلی و نام شما در سابقه می‌ماند.</td></tr>
+    <tr><td>خودروی مهمان می‌خواهد وارد شود</td><td>اگر مجوز دارد جست‌وجو می‌آید؛ اگر نه، رویداد دستی ثبت کنید و طبق مقررات مجموعه تصمیم بگیرید.</td></tr>
+    <tr><td>عددها یا پلاک فارسی به‌هم‌ریخته دیده می‌شود</td><td>مرورگر را به‌روز کنید؛ کروم/اج نسخهٔ جدید بهترین نمایش را دارد.</td></tr>
+    <tr><td>گزارش می‌خواهم چاپ کنم</td><td>در صفحهٔ گزارش دکمهٔ چاپ/خروجی همان جدول است؛ برای محدودهٔ تاریخ از تقویم شمسی بالای گزارش استفاده کنید.</td></tr>
+    <tr><td>تغییری در شیت Google دادم؛ کِی اعمال می‌شود؟</td><td>حداکثر تا ۲۴ ساعت بعد (۰۳:۰۰ روز بعد) یا فوراً با «اجرای همگام‌سازی» از پنل.</td></tr>
+  </table>
+  <div class="callout info"><b>پشتیبانی:</b> مسائل فنی (سرور خاموش، خطای داکر) به مدیر فنی؛ مسائل داده‌ای (اشتباه مالک/پلاک/بدهی) به مدیر سامانه گزارش شود.</div>
+</section>
+
+<footer>
+  سامانه مدیریت پارکینگ (برج‌های ارکیده) — راهنمای کاربران · نسخه ۱.۰ · ۱۴۰۵/۰۸/۰۱<br>
+  مسیر فایل در مخزن: <code>docs/guides/user-manual.html</code> · ساختار منو: <code>docs/menu-structure.md</code>
+</footer>
+
+</div>
+</body>
+</html>

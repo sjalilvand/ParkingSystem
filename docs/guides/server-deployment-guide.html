@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>راهنمای انتقال و استقرار روی سرور — سامانه مدیریت پارکینگ</title>
+<style>
+  :root{--primary:#14532d;--accent:#16a34a;--bg:#f1f5f9;--card:#ffffff;--text:#0f172a;--muted:#475569;--border:#e2e8f0;--warn:#d97706;--bad:#dc2626;--info:#2563eb;}
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{font-family:'Vazirmatn','Segoe UI',Tahoma,Arial,sans-serif;background:var(--bg);color:var(--text);line-height:1.9;font-size:15px;}
+  .wrap{max-width:940px;margin:0 auto;padding:24px 16px 60px;}
+  header.hero{background:linear-gradient(135deg,#052e16 0%,#166534 55%,#16a34a 100%);color:#fff;border-radius:16px;padding:36px 28px;margin-bottom:24px;}
+  header.hero h1{font-size:26px;margin-bottom:8px;}
+  header.hero p.sub{opacity:.92;font-size:15px;}
+  .badges{margin-top:14px;display:flex;flex-wrap:wrap;gap:8px;}
+  .badge{background:rgba(255,255,255,.16);border:1px solid rgba(255,255,255,.35);border-radius:999px;padding:3px 12px;font-size:12.5px;}
+  nav.toc{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px 22px;margin-bottom:24px;}
+  nav.toc h2{font-size:16px;color:var(--primary);margin-bottom:10px;}
+  nav.toc ol{padding-right:20px;columns:2;column-gap:32px;}
+  nav.toc a{color:var(--info);text-decoration:none;}
+  nav.toc a:hover{text-decoration:underline;}
+  section.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:22px 24px;margin-bottom:20px;}
+  h2.sec{font-size:19px;color:var(--primary);border-right:4px solid var(--accent);padding-right:12px;margin-bottom:14px;}
+  p{margin-bottom:10px;}
+  ul,ol{margin:0 0 12px;padding-right:22px;}
+  li{margin-bottom:6px;}
+  table{width:100%;border-collapse:collapse;margin:12px 0;font-size:14px;}
+  th{background:#f0fdf4;color:var(--primary);text-align:right;padding:9px 12px;border:1px solid var(--border);}
+  td{padding:8px 12px;border:1px solid var(--border);vertical-align:top;}
+  tr:nth-child(even) td{background:#f8fafc;}
+  code{font-family:Consolas,'Courier New',monospace;direction:ltr;unicode-bidi:embed;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:5px;padding:1px 6px;font-size:13px;color:#14532d;}
+  pre{direction:ltr;text-align:left;background:#0f172a;color:#e2e8f0;border-radius:10px;padding:14px 16px;overflow-x:auto;margin:12px 0;font-size:13px;line-height:1.7;}
+  pre code{background:none;border:none;color:#e2e8f0;padding:0;}
+  .callout{border-radius:10px;padding:12px 16px;margin:14px 0;border-right:5px solid;}
+  .callout.info{background:#eff6ff;border-color:var(--info);}
+  .callout.warn{background:#fffbeb;border-color:var(--warn);}
+  .callout.bad{background:#fef2f2;border-color:var(--bad);}
+  .callout.ok{background:#f0fdf4;border-color:var(--ok);}
+  .step{display:flex;gap:14px;margin:14px 0;}
+  .step .num{flex:0 0 34px;height:34px;border-radius:50%;background:var(--primary);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:bold;font-size:16px;}
+  .step .body{flex:1;}
+  .step .body h4{font-size:15px;margin-bottom:4px;color:var(--primary);}
+  .btn-print{position:fixed;top:16px;left:16px;background:var(--primary);color:#fff;border:none;border-radius:10px;padding:9px 18px;cursor:pointer;font-family:inherit;font-size:14px;box-shadow:0 4px 12px rgba(0,0,0,.18);z-index:9;}
+  .btn-print:hover{background:#166534;}
+  .flow{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:12px 0;}
+  .flow .box{background:#f0fdf4;border:1.5px solid #86efac;border-radius:10px;padding:8px 14px;font-size:13.5px;font-weight:600;}
+  .flow .arrow{color:var(--accent);font-size:20px;font-weight:bold;}
+  footer{text-align:center;color:var(--muted);font-size:13px;margin-top:28px;}
+  @media print{.btn-print{display:none;}body{background:#fff;}header.hero{border-radius:0;}section.card,nav.toc{border:none;page-break-inside:avoid;}}
+</style>
+</head>
+<body>
+<button class="btn-print" onclick="window.print()">🖨️ چاپ راهنما</button>
+<div class="wrap">
+
+<header class="hero">
+  <h1>راهنمای انتقال و استقرار روی سرور</h1>
+  <p class="sub">انتقال سامانه مدیریت پارکینگ (برج‌های ارکیده) از لپ‌تاپ به سرور مجموعه — http://192.168.100.2</p>
+  <div class="badges">
+    <span class="badge">نسخه ۱.۰</span>
+    <span class="badge">۱۴۰۵/۰۸/۰۱</span>
+    <span class="badge">مخاطب: مدیر فنی</span>
+    <span class="badge">زمان لازم: ≈ ۱ ساعت (بار اول)</span>
+  </div>
+</header>
+
+<nav class="toc">
+  <h2>فهرست مطالب</h2>
+  <ol>
+    <li><a href="#s0">معماری سامانه در یک نگاه</a></li>
+    <li><a href="#s1">پیش‌نیازهای سرور</a></li>
+    <li><a href="#s2">گام ۱ — نصب نرم‌افزارهای پایه</a></li>
+    <li><a href="#s3">گام ۲ — دریافت سورس از GitHub</a></li>
+    <li><a href="#s4">گام ۳ — ساخت فایل .env.prod</a></li>
+    <li><a href="#s5">گام ۴ — انتقال داده‌ها از لپ‌تاپ</a></li>
+    <li><a href="#s6">گام ۵ — استقرار با یک دستور</a></li>
+    <li><a href="#s7">گام ۶ — اعتبارسنجی نهایی</a></li>
+    <li><a href="#s8">اجرای خودکار پس از ری‌استارت سرور</a></li>
+    <li><a href="#s9">پشتیبان‌گیری منظم</a></li>
+    <li><a href="#s10">عیب‌یابی‌های شناخته‌شده</a></li>
+    <li><a href="#s11">به‌روزرسانی‌های بعدی</a></li>
+  </ol>
+</nav>
+
+<section class="card" id="s0">
+  <h2 class="sec">۱) معماری سامانه در یک نگاه</h2>
+  <p>کل سامانه با Docker اجرا می‌شود؛ پنج سرویس زیر روی سرور بالا می‌آیند و داده‌ها در volumeهای داکر ذخیره می‌شوند. فرانت‌اند نهایی (نسخهٔ build شده) داخل همان کانتینر nginx سرو می‌شود و نیازی به نصب Node روی سرور نیست.</p>
+  <table>
+    <tr><th>سرویس</th><th>نقش</th><th>توضیح</th></tr>
+    <tr><td><code>nginx</code></td><td>درگاه وب</td><td>صفحهٔ سامانه + پروکسی API و WebSocket روی پورت <code>APP_PORT</code> (سرور: 80)</td></tr>
+    <tr><td><code>backend</code></td><td>مغز سامانه (FastAPI)</td><td>مهاجرت‌های خودکار + بوت‌استرپ + API؛ دو worker</td></tr>
+    <tr><td><code>postgres</code></td><td>پایگاه‌داده</td><td>خودروها، تردد، مالی و… در volume <code>pgdata</code></td></tr>
+    <tr><td><code>redis</code></td><td>کش و صف</td><td>پیام‌رسانی لحظه‌ای و صف کارها</td></tr>
+    <tr><td><code>minio</code></td><td>فایل‌سرور</td><td>عکس خودروها و اسناد در volume <code>miniodata</code></td></tr>
+  </table>
+  <div class="flow">
+    <span class="box">مرورگر کاربر</span><span class="arrow">←</span>
+    <span class="box">nginx :80</span><span class="arrow">←</span>
+    <span class="box">backend :8000</span><span class="arrow">←</span>
+    <span class="box">postgres / redis / minio</span>
+  </div>
+</section>
+
+<section class="card" id="s1">
+  <h2 class="sec">۲) پیش‌نیازهای سرور</h2>
+  <table>
+    <tr><th>مورد</th><th>حداقل</th><th>توضیح</th></tr>
+    <tr><td>سیستم‌عامل</td><td>Windows 10/11 یا Windows Server</td><td>با دسترسی Administrator</td></tr>
+    <tr><td>RAM</td><td>۸ گیگابایت (پیشنهادی ۱۶)</td><td>هر چه بیشتر، پایدارتر</td></tr>
+    <tr><td>دیسک آزاد</td><td>۲۰ گیگابایت</td><td>برای ایمیج‌ها + volume دیتابیس + بک‌آپ‌ها</td></tr>
+    <tr><td>IP ثابت LAN</td><td><code>192.168.100.2</code></td><td>کاربران با همین آدرس وارد می‌شوند</td></tr>
+    <tr><td>اینترنت</td><td>لازم برای نصب اولیه</td><td>بار اول: دانلود ایمیج‌ها؛ بعد از آن آفلاین هم کار می‌کند</td></tr>
+    <tr><td>نرم‌افزار</td><td>Docker Desktop + Git + PowerShell 7</td><td>نصب در گام ۱</td></tr>
+  </table>
+  <div class="callout bad"><b>⛔ هرگز روی سرور «Reset to factory defaults» را در Docker Desktop نزنید و Docker را کامل حذف/نصب مجدد نکنید</b> — همهٔ volumeها (دیتابیس ۵۰۷ خودرو و عکس‌ها) پاک می‌شوند. اگر مشکلی پیش آمد اول بخش عیب‌یابی (§۱۱) را ببینید.</div>
+</section>
+
+<section class="card" id="s2">
+  <h2 class="sec">۳) گام ۱ — نصب نرم‌افزارهای پایه</h2>
+  <div class="step"><div class="num">۱</div><div class="body"><h4>Docker Desktop for Windows</h4><p>از <code>docker.com/products/docker-desktop</code> دانلود و نصب کنید (گزینهٔ WSL2 backend). پس از نصب، دو تنظیم حیاتی زیر را انجام دهید — تجربهٔ ما روی لپ‌تاپ نشان داد <b>آپدیت خودکار = فلپ موتور داکر</b>:</p>
+  <pre><code># در PowerShell — خاموش کردن دانلود خودکار آپدیت (علت اصلی ناپایداری موتور)
+$sf = "$env:APPDATA\Docker\settings-store.json"
+$j = Get-Content $sf -Raw | ConvertFrom-Json
+$j | Add-Member -NotePropertyName AutoDownloadUpdates -NotePropertyValue $false -Force
+$j | ConvertTo-Json -Depth 20 | Set-Content $sf -Encoding utf8</code></pre>
+  <p>در Settings → General گزینهٔ <b>Start Docker Desktop when you sign in</b> را فعال کنید تا بعد از ری‌استارت سرور، سامانه خودش بالا بیاید.</p></div></div>
+  <div class="step"><div class="num">۲</div><div class="body"><h4>Git for Windows</h4><p>از <code>git-scm.com/download/win</code> نصب کنید (گزینه‌های پیش‌فرض کافی است).</p></div></div>
+  <div class="step"><div class="num">۳</div><div class="body"><h4>PowerShell 7</h4><p>از <code>aka.ms/powershell</code> نصب کنید و همهٔ دستورها را در آن بزنید (سازگاری کامل با متن فارسی).</p></div></div>
+</section>
+
+<section class="card" id="s3">
+  <h2 class="sec">۴) گام ۲ — دریافت سورس از GitHub</h2>
+  <pre><code>cd E:\
+git clone https://github.com/sjalilvand/ParkingSystem.git ParkingSystem
+cd E:\ParkingSystem
+git config --global --add safe.directory E:/ParkingSystem
+git log --oneline -3        # باید آخرین کامیت‌ها را نشان دهد</code></pre>
+  <div class="callout warn">اگر خطای «dubious ownership» دیدید یعنی <code>safe.directory</code> را هنوز نزده‌اید — همان خط بالا را اجرا کنید. اگر مسیر پروژه روی سرور C: یا درایو دیگری است، در همهٔ دستورهای این راهنما مسیر را متناسب عوض کنید.</div>
+</section>
+
+<section class="card" id="s4">
+  <h2 class="sec">۵) گام ۳ — ساخت فایل .env.prod</h2>
+  <p>از نمونهٔ آماده کپی بگیرید و مقادیر <code>&lt;GENERATE&gt;</code> را پر کنید:</p>
+  <pre><code>Copy-Item .env.prod.example .env.prod
+notepad .env.prod</code></pre>
+  <table>
+    <tr><th>متغیر</th><th>مقدار روی سرور</th><th>توضیح</th></tr>
+    <tr><td><code>APP_SECRET_KEY</code> / <code>JWT_SECRET_KEY</code></td><td>رشتهٔ تصادفی بلند</td><td>تولید: <code>-join ((48..57)+(97..122) | Get-Random -Count 48)</code></td></tr>
+    <tr><td><code>POSTGRES_PASSWORD</code></td><td>رمز قوی</td><td>این همان رمزی است که در گام ۴ به سرور منتقل می‌شود؛ بعداً تغییرش ندهید (§۱۱-ب)</td></tr>
+    <tr><td><code>POSTGRES_USER</code> / <code>POSTGRES_DB</code></td><td><code>parking</code> / <code>parking_db</code></td><td>پیش‌فرض — دست نزنید</td></tr>
+    <tr><td><code>DEFAULT_ADMIN_PASSWORD</code></td><td>رمز قوی ادمین</td><td>فقط بار اول ساخته می‌شود؛ جایی امن یادداشت کنید</td></tr>
+    <tr><td><code>MINIO_SECRET_KEY</code></td><td>رمز قوی</td><td>باید با لپ‌تاپ یکی باشد تا فایل‌ها import شوند</td></tr>
+    <tr><td><code>GATE_API_KEY</code></td><td>رشتهٔ تصادفی</td><td>کلید ارتباط گیت‌ایجنت با بک‌اند</td></tr>
+    <tr><td><code>APP_PORT</code></td><td><code>80</code></td><td>روی سرور 80 تا کاربران فقط <code>http://192.168.100.2</code> بزنند (اگر 80 اشغال است: 8880)</td></tr>
+    <tr><td><code>CORS_ALLOWED_ORIGINS</code></td><td><code>http://192.168.100.2</code></td><td>همان آدرسی که کاربران باز می‌کنند</td></tr>
+  </table>
+  <div class="callout warn"><b>نکتهٔ طلایی:</b> رمزهای <code>POSTGRES_PASSWORD</code> و <code>MINIO_SECRET_KEY</code> را از لپ‌تاپ عیناً کپی کنید. رمز دیتابیس فقط در «بار اول ساخت volume» ثبت می‌شود و اگر بعداً در فایل عوضش کنید، اتصال بک‌اند می‌شکند (راه‌حل: §۱۱-ب).</div>
+</section>
+
+<section class="card" id="s5">
+  <h2 class="sec">۶) گام ۴ — انتقال داده‌ها از لپ‌تاپ به سرور</h2>
+  <p>داده‌های واقعی (۵۰۷ خودرو + عکس‌ها) در volumeهای داکر لپ‌تاپ هستند و با git منتقل نمی‌شوند. دو اسکریپت آمادهٔ <code>deploy/</code> این کار را انجام می‌دهند:</p>
+  <div class="flow">
+    <span class="box">لپ‌تاپ: export-data.ps1</span><span class="arrow">←</span>
+    <span class="box">فایل zip روی دسکتاپ</span><span class="arrow">←</span>
+    <span class="box">کپی با فلش/شبکه</span><span class="arrow">←</span>
+    <span class="box">سرور: import-data.ps1</span>
+  </div>
+  <div class="step"><div class="num">۱</div><div class="body"><h4>روی لپ‌تاپ — خروجی‌گیری</h4><pre><code>cd E:\ParkingSystem
+docker compose --env-file .env.prod -f docker-compose.prod.yml up -d
+powershell -File deploy\export-data.ps1</code></pre>
+  <p>اسکریپت خودش استک production را تشخیص می‌دهد، dump دیتابیس می‌گیرد، عکس‌های MinIO را mirror می‌کند و <code>parking-migration-…zip</code> را روی دسکتاپ می‌گذارد.</p></div></div>
+  <div class="step"><div class="num">۲</div><div class="body"><h4>انتقال فایل</h4><p>فایل zip را با فلش یا شبکه به سرور ببرید و از حالت فشرده خارج کنید (مثلاً <code>C:\parking-migration</code> شامل <code>parking_backup.sql</code> و پوشهٔ <code>minio</code>).</p></div></div>
+  <div class="step"><div class="num">۳</div><div class="body"><h4>روی سرور — بازگردانی</h4><pre><code>cd E:\ParkingSystem
+# اول postgres به‌تنهایی بالا بیاید:
+docker compose -f docker-compose.prod.yml --env-file .env.prod up -d postgres
+powershell -File deploy\import-data.ps1 -BackupDir "C:\parking-migration"</code></pre>
+  <p>خروجی موفق: <code>vehicles rows restored: 507</code> و <code>MinIO restore OK</code>.</p></div></div>
+</section>
+
+<section class="card" id="s6">
+  <h2 class="sec">۷) گام ۵ — استقرار با یک دستور</h2>
+  <pre><code>cd E:\ParkingSystem
+.\UPDATE-AND-RUN.ps1 -Prod</code></pre>
+  <p>این اسکریپت همهٔ کارها را خودکار انجام می‌دهد:</p>
+  <table>
+    <tr><th>گام اسکریپت</th><th>کار</th></tr>
+    <tr><td>[۱]</td><td><code>git pull</code> از GitHub (تغییرات محلی موقتاً stash و بعد برگردانده می‌شود)</td></tr>
+    <tr><td>[۲]</td><td>آماده‌سازی venv — در حالت Prod فقط برای گیت‌ایجنت است؛ خطای پایتون/venv <u>مانع استقرار نمی‌شود</u></td></tr>
+    <tr><td>[۳]</td><td>مهاجرت‌های دیتابیس — در Prod داخل کانتینر و با <code>migrate_prod_safe.py</code> اجرا می‌شود (امن برای دیتابیس‌های قدیمی)</td></tr>
+    <tr><td>[۴]</td><td>build فرانت‌اند — داخل کانتینر nginx هم build مجدد می‌شود</td></tr>
+    <tr><td>[۵]</td><td>توقف اجراهای قبلی و آزادسازی پورت‌ها</td></tr>
+    <tr><td>[۶]</td><td>بک‌آپ خودکار دیتابیس + <code>docker compose up -d --build</code></td></tr>
+    <tr><td>[۹]</td><td>بررسی سلامت تا ۶۰ ثانیه از <code>/health/live</code> و چاپ آدرس نهایی</td></tr>
+  </table>
+  <div class="callout ok"><b>خروجی موفق:</b> «<code>✔ سامانه در حالت production سالم است.</code>» و «آدرس سامانه: http://192.168.100.2» — کد خروج ۰. اگر کد ۲ شد، هنوز سلامت نیست؛ §۱۱ را ببینید.</div>
+</section>
+
+<section class="card" id="s7">
+  <h2 class="sec">۸) گام ۶ — اعتبارسنجی نهایی</h2>
+  <table>
+    <tr><th>#</th><th>کنترل</th><th>نتیجهٔ مورد انتظار</th></tr>
+    <tr><td>۱</td><td><code>docker compose -f docker-compose.prod.yml ps</code></td><td>هر ۵ کانتینر Up و postgres <code>healthy</code></td></tr>
+    <tr><td>۲</td><td><code>docker compose -f docker-compose.prod.yml logs backend | Select-Object -First 40</code></td><td>خط «<code>[migrate] ✔ مهاجرت‌ها تا head اعمال شد</code>»</td></tr>
+    <tr><td>۳</td><td>باز کردن <code>http://192.168.100.2</code> از یک کامپیوتر دیگر شبکه</td><td>صفحهٔ ورود سامانه</td></tr>
+    <tr><td>۴</td><td>ورود با <code>admin</code> و رمز <code>DEFAULT_ADMIN_PASSWORD</code></td><td>داشبورد + شمارش ۵۰۷ خودرو در «خودروها»</td></tr>
+    <tr><td>۵</td><td>ثبت یک ورود آزمایشی از «پنل گیت»</td><td>رویداد در «رویدادهای تردد» ثبت شود</td></tr>
+  </table>
+  <div class="callout info">از این لحظه چک‌لیست بازبینی (<code>docs/menu-review-checklist.md</code> نسخهٔ ۲) را روی سرور ادامه دهید — ستون «میدانی E:» همان‌جاست.</div>
+</section>
+
+<section class="card" id="s8">
+  <h2 class="sec">۹) اجرای خودکار پس از ری‌استارت سرور</h2>
+  <ul>
+    <li>همهٔ سرویس‌ها <code>restart: unless-stopped</code> دارند: هر وقت موتور داکر بالا بیاید، خودشان برمی‌گردند.</li>
+    <li>Docker Desktop را در Settings → General روی <b>Start when you sign in</b> بگذارید (گام ۱).</li>
+    <li>اگر سرور رمز کاربر دارد و لاگین خودکار نمی‌خواهید، کافی است بعد از هر بوت یک‌بار Docker Desktop را باز کنید — بقیه‌اش خودکار است.</li>
+  </ul>
+</section>
+
+<section class="card" id="s9">
+  <h2 class="sec">۱۰) پشتیبان‌گیری منظم</h2>
+  <p>قبل از هر به‌روزرسانی، <code>UPDATE-AND-RUN.ps1</code> خودش بک‌آپ می‌گیرد؛ برای بک‌آپ روزانهٔ خودکار، Task Scheduler را تنظیم کنید:</p>
+  <pre><code># ساخت وظیفهٔ روزانهٔ ۰۳:۳۰ (بعد از sync گوگل):
+schtasks /Create /TN "ParkingBackup" /SC DAILY /ST 03:30 /RL HIGHEST `
+  /TR "powershell -NoProfile -ExecutionPolicy Bypass -File E:\ParkingSystem\scripts\backup-db.ps1"</code></pre>
+  <p>بک‌آپ‌ها را هفته‌ای یک‌بار روی دیسک/فلش خارج از سرور هم کپی کنید. برای بازگردانی: <code>deploy\import-data.ps1 -BackupDir &lt;مسیر&gt;</code>.</p>
+</section>
+
+<section class="card" id="s10">
+  <h2 class="sec">۱۱) عیب‌یابی‌های شناخته‌شده (تجربهٔ واقعی استقرار)</h2>
+  <table>
+    <tr><th>نشانه</th><th>علت</th><th>راه‌حل</th></tr>
+    <tr><td><code>failed to connect … npipe:////./pipe/dockerDesktopLinuxEngine</code></td><td>Docker Desktop روشن نیست (نصب per-user است و ممکن است مسیر پیش‌فرض نباشد)</td><td>Docker Desktop را از Start Menu اجرا کنید و تا سبز شدن Engine صبر کنید؛ سپس دستور را تکرار کنید.</td></tr>
+    <tr><td>موتور داکر چند دقیقه بعد از بالا آمدن دوباره می‌افتد</td><td>آپدیت خودکار Docker Desktop</td><td>قطعهٔ کد <code>AutoDownloadUpdates=false</code> در گام ۱ — دقیقاً همین مشکل روی لپ‌تاپ حل شد.</td></tr>
+    <tr><td><code>dubious ownership in repository</code></td><td>مالک پوشه با کاربر فعلی فرق دارد</td><td><code>git config --global --add safe.directory E:/ParkingSystem</code></td></tr>
+    <tr><td>backend بالا نمی‌آید و لاگ می‌گوید <code>InvalidPasswordError</code></td><td>رمز <code>.env.prod</code> با رمز اولیهٔ volume نمی‌خواند</td><td>ب) راه‌حل سریع: <code>docker compose -f docker-compose.prod.yml exec postgres psql -U parking -d parking_db -c "ALTER USER parking WITH PASSWORD 'رمز-env.prod';"</code></td></tr>
+    <tr><td>پورت 80 پاسخ نمی‌دهد</td><td>پورت اشغال است یا APP_PORT چیز دیگری است</td><td><code>Select-String "^APP_PORT" .env.prod</code> را چک کنید؛ کاربران را به همان پورت بفرستید یا پورت آزاد بگذارید و دوباره استقرار بزنید.</td></tr>
+    <tr><td><code>head</code> در PowerShell شناخته نمی‌شود</td><td>دستور لینوکسی است</td><td>جایگزین: <code>... | Select-Object -First 40</code></td></tr>
+    <tr><td>خطای venv / «No Python at C:\Users\…»</td><td>venv کاربر قبلی خراب است</td><td>در حالت Prod بی‌اهمیت است (بک‌اند در کانتینر است). بعداً: پوشهٔ <code>backend\.venv</code> را پاک کنید و اسکریپت را دوباره بزنید.</td></tr>
+    <tr><td>تست اتصال پنل می‌گوید «سرور در دسترس نیست»</td><td>frontend را با آدرس dev باز کرده‌اید</td><td>در Prod آدرس درست <code>http://192.168.100.2</code> است، نه <code>localhost:5173</code> (آن مخصوص حالت توسعه است).</td></tr>
+  </table>
+  <div class="callout bad"><b>⛔ دو کار ممنوع روی سرور:</b> ۱) «Reset to factory defaults» در Docker Desktop (پاک شدن کل داده‌ها) ۲) حذف volumeهای <code>parkingsystem-prod_*</code> در Docker Desktop → Volumes.</div>
+</section>
+
+<section class="card" id="s11">
+  <h2 class="sec">۱۲) به‌روزرسانی‌های بعدی</h2>
+  <p>هر وقت نسخهٔ جدیدی روی GitHub قرار گرفت، روی سرور فقط همین را بزنید:</p>
+  <pre><code>cd E:\ParkingSystem
+.\UPDATE-AND-RUN.ps1 -Prod</code></pre>
+  <p>اسکریپت قبل از ارتقا خودش بک‌آپ می‌گیرد، آخرین کد را می‌کشد و سرویس‌ها را بدون از دست رفتن داده جایگزین می‌کند. داده‌ها در volumeها هستند و با build یا pull جدید آسیب نمی‌بینند.</p>
+</section>
+
+<footer>
+  سامانه مدیریت پارکینگ (برج‌های ارکیده) — راهنمای استقرار سرور · نسخه ۱.۰ · ۱۴۰۵/۰۸/۰۱<br>
+  مسیر فایل در مخزن: <code>docs/guides/server-deployment-guide.html</code> · مرجع فنی: <code>deploy/DEPLOY-GUIDE-WINDOWS.html</code> و <code>docs/deployment.md</code>
+</footer>
+
+</div>
+</body>
+</html>
