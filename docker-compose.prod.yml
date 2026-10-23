@@ -35,6 +35,9 @@ services:
   backend:
     build:
       context: ./backend
+      # INSTALL_OCR=true در .env.prod → نصب opencv/easyocr در تصویر (پلاک‌خوان داخل کانتینر)
+      args:
+        INSTALL_OCR: ${INSTALL_OCR:-false}
     restart: unless-stopped
     env_file:
       - .env.prod
@@ -44,6 +47,9 @@ services:
       MINIO_ENDPOINT: minio:9000
     # مهاجرت امن (p0001..p0007) داخل کانتینر و پیش از بوت‌استرپ
     command: sh -c "python -m scripts.migrate_prod_safe && python -m scripts.bootstrap_prod && uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2"
+    volumes:
+      # ماندگاری مدل‌های EasyOCR (فقط وقتی INSTALL_OCR=true — وگرنه بی‌اثر است)
+      - easyocr:/root/.EasyOCR
     depends_on:
       postgres:
         condition: service_healthy
@@ -66,6 +72,7 @@ services:
 volumes:
   pgdata:
   miniodata:
+  easyocr:
 
 networks:
   psnet:

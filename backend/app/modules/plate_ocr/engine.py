@@ -22,7 +22,13 @@ import threading
 import time
 from dataclasses import dataclass, field
 
-import numpy as np
+# numpy هم مثل cv2 اختیاری است — اپ باید بدون آن هم import شود (تصویر Docker سبک)
+try:
+    import numpy as np
+    HAS_NUMPY = True
+except ImportError:  # pragma: no cover
+    np = None  # type: ignore[assignment]
+    HAS_NUMPY = False
 
 try:
     import cv2
@@ -74,6 +80,7 @@ def capabilities(models_dir: str = "models") -> dict:
     pose_w = os.path.join(models_dir, "plate_pose_best.pt")
     crnn_w = os.path.join(models_dir, "crnn_best.pt")
     return {
+        "numpy": HAS_NUMPY,
         "opencv": HAS_CV2,
         "easyocr": has("easyocr"),
         "torch": has("torch"),

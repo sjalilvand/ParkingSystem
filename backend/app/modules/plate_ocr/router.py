@@ -14,8 +14,17 @@ from __future__ import annotations
 import secrets
 from functools import partial
 
-import cv2
-import numpy as np
+# وابستگی‌های OCR اختیاری‌اند (تصویر Docker سبک — requirements-ocr.txt جدا است)
+# ← اپ باید بدون cv2/numpy هم بوت شود؛ وضعیت واقعی از GET /plate-ocr/status قابل مشاهده است.
+try:
+    import cv2
+    import numpy as np
+    HAS_OCR_DEPS = True
+except ImportError:  # pragma: no cover — محیط بدون وابستگی‌های اختیاری OCR
+    cv2 = None  # type: ignore[assignment]
+    np = None   # type: ignore[assignment]
+    HAS_OCR_DEPS = False
+
 from fastapi import APIRouter, Depends, File, Header, Query, UploadFile
 from fastapi.responses import RedirectResponse
 from sqlalchemy import select
@@ -78,14 +87,21 @@ async def _authenticate(db: AsyncSession, x_api_key: str | None,
 async def status():
     """وضعیت موتور پلاک‌خوان — کدام بک‌اندها نصب/موجود هستند."""
     caps = capabilities(settings.PLATE_OCR_MODELS_DIR)
-    ocr_ready = caps["easyocr"] or (caps["crnn_weights"] and caps["torch"])
+    # بدون numpy/opencv حتی decode تصویر ممکن نیست — ready باید واقع‌بینانه باشد
+    base_ok = caps.get("numpy", False) and caps.get("opencv", False)
+    ocr_ready = base_ok and (caps["easyocr"] or (caps["crnn_weights"] and caps["torch"]))
+    hint = None if ocr_ready else (
+        "cd backend && pip install -r requirements-ocr.txt  (بار اول مدل‌های EasyOCR دانلود می‌شود)"
+        if base_ok else
+        "وابستگی‌های پایهٔ OCR نصب نیستند — نصب: cd backend && pip install -r requirements-ocr.txt"
+        "  |  در Docker: INSTALL_OCR=true در .env.prod سپس build مجدد backend"
+    )
     return {
         "success": True,
         "ready": ocr_ready,
         "models_dir": settings.PLATE_OCR_MODELS_DIR,
         "capabilities": caps,
-        "install_hint": None if ocr_ready else
-        "cd backend && pip install -r requirements-ocr.txt  (بار اول مدل‌های EasyOCR دانلود می‌شود)",
+        "install_hint": hint,
     }
 
 
@@ -102,6 +118,16 @@ async def read_plate(
     db: AsyncSession = Depends(get_db),
 ):
     """خواندن پلاک از تصویر آپلودشده (jpg/png/webp/bmp)."""
+    if not HAS_OCR_DEPS:
+        raise AppException(
+            "موتور پلاک‌خوان در این نصب فعال نیست — وابستگی‌های OCR (opencv/numpy) نصب نشده‌اند",
+            details={
+                "install_local": "cd backend && pip install -r requirements-ocr.txt",
+                "install_docker": "در .env.prod مقدار INSTALL_OCR=true و سپس .\\scripts\\prod-repair.ps1",
+                "status": "/api/v1/plate-ocr/status",
+            },
+        )
+
     user = await _authenticate(db, x_api_key, authorization, api_key)
 
     # بررسی نوع فایل
