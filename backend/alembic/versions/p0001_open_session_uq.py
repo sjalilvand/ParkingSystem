@@ -2,6 +2,9 @@
 
 - هر پلاک حداکثر یک نشست OPEN (سند بخش ۴: جلوگیری از چند جلسه فعال ناسازگار)
 - نشست‌های باز تکراری موجود به CLOSED_ANOMALY علامت می‌خورند (هیچ داده‌ای حذف نمی‌شود)
+- Idempotent: اگر ایندکس از قبل موجود باشد (پایگاه‌دادهٔ create_all که مدل‌ها
+  ایندکس را ساخته‌اند)، کل مهاجرت بدون خطا رد می‌شود — وجود ایندکس یعنی
+  dedup هم قبلاً برقرار بوده (ایندکس چند نشست OPEN برای یک پلاک را ممکن نمی‌کند).
 Revision ID: p0001_open_session_uq
 """
 from alembic import op
@@ -15,6 +18,10 @@ depends_on = None
 
 def upgrade() -> None:
     bind = op.get_bind()
+    idx_names = {i["name"] for i in sa.inspect(bind).get_indexes("parking_sessions")}
+    if "uq_open_session_plate" in idx_names:
+        print("  = uq_open_session_plate already exists → skip (create_all database)")
+        return
     bind.execute(sa.text("""
         UPDATE parking_sessions
         SET status = 'CLOSED_ANOMALY',
@@ -39,8 +46,8 @@ def upgrade() -> None:
         postgresql_where=sa.text("status = 'OPEN'"),
         sqlite_where=sa.text("status = 'OPEN'"),
     )
+    print("  + uq_open_session_plate (partial unique)")
 
 
 def downgrade() -> None:
     op.drop_index("uq_open_session_plate", table_name="parking_sessions")
-

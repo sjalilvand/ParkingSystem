@@ -67,6 +67,7 @@
   <ol>
     <li><a href="#s0">این اتصال چه کاری انجام می‌دهد؟</a></li>
     <li><a href="#s1">گام ۱ — ساخت حساب سرویس در Google Cloud</a></li>
+    <li><a href="#s1b">گام ۱-ب — اگر ساخت کلید ممنوع بود (سیاست سازمانی)</a></li>
     <li><a href="#s2">گام ۲ — اشتراک‌گذاری شیت با حساب سرویس</a></li>
     <li><a href="#s3">گام ۳ — ستون‌های استاندارد شیت</a></li>
     <li><a href="#s4">گام ۴ — نصب روی سرور با اسکریپت</a></li>
@@ -99,6 +100,38 @@
   <div class="step"><div class="num">۴</div><div class="body"><h4>ساخت حساب سرویس</h4><p><b>APIs &amp; Services → Credentials → + Create Credentials → Service account</b>. نام: <code>parking-readonly</code>. نقش (Role) لازم نیست — <b>Skip</b> را بزنید → <b>Done</b>.</p></div></div>
   <div class="step"><div class="num">۵</div><div class="body"><h4>دریافت فایل کلید JSON</h4><p>در فهرست Service accounts روی حساب ساخته‌شده کلیک کنید → تب <b>Keys</b> → <b>Add key → Create new key → JSON</b> → Create. یک فایل <code>.json</code> دانلود می‌شود. <b>ایمیل</b> حساب (شبیه <code>parking-readonly@parking-arkide.iam.gserviceaccount.com</code>) را یادداشت کنید — در گام بعد لازم است.</p></div></div>
   <div class="callout warn"><b>⚠ امنیت:</b> این فایل معتبرِ ورود است؛ به هیچ‌کس ندهید و در مخزن کد کامیت نکنید (پوشهٔ <code>secrets/</code> در <code>.gitignore</code> رزرو شده است).</div>
+</section>
+
+<section class="card" id="s1b">
+  <h2 class="sec">گام ۱-ب — خطای «Service account key creation is disabled» (سیاست سازمانی)</h2>
+  <p>اگر در تب <b>Keys</b> حساب سرویس با خطای زیر روبه‌رو شدید، یعنی سیاست امنیتی سازمان (یا «Secure by Default» گوگل) ساخت کلید حساب سرویس را در آن پروژه مسدود کرده است:</p>
+  <pre><code>Enforced Organization Policies IDs:
+  iam.disableServiceAccountKeyCreation</code></pre>
+  <p>خودِ حساب سرویس (مثلاً <code>parking-readonly</code> با وضعیت Enabled و «No keys») سالم است؛ فقط دانلود کلید JSON بسته است. دو راه‌حل دارید:</p>
+
+  <div class="step"><div class="num">A</div><div class="body"><h4>راه A — پروژهٔ جدید با جیمیل شخصی (سریع‌ترین؛ بدون نیاز به مدیر سازمان)</h4>
+  <p>سیاست سازمانی فقط روی پروژه‌های داخل «سازمان» اعمال می‌شود؛ پروژه‌ای که با یک <b>جیمیل شخصی</b> ساخته شود سازمان ندارد و ساخت کلید در آن آزاد است. شیت و پروژه لازم نیست هم‌حساب باشند — اشتراک شیت بین هر حسابی کار می‌کند:</p>
+  <ol>
+    <li>از حساب Google <b>شخصی</b> (جیمیل) وارد <code>console.cloud.google.com</code> شوید.</li>
+    <li><b>New Project</b> بسازید (نام: <code>parking-arkide</code>) و مطمئن شوید در بالای صفحه کنار پروژه عبارت «<b>No organization</b>» دیده می‌شود.</li>
+    <li><b>APIs &amp; Services → Library → Google Sheets API → Enable</b>.</li>
+    <li>حساب سرویس جدید بسازید (نام: <code>parking-readonly</code>) و این‌بار تب <b>Keys → Add key → Create new key → JSON</b> کار می‌کند و فایل دانلود می‌شود.</li>
+    <li>ایمیل <u>این</u> حساب سرویس جدید را کپی کنید و شیت خودروها را با نقش <b>Viewer</b> با آن به اشتراک بگذارید (گام ۲).</li>
+    <li>فایل JSON را در <code>E:\ParkingSystem\secrets\service-account.json</code> بگذارید و <code>setup-google-sync.ps1</code> را اجرا کنید (گام ۴). حساب سرویس قبلیِ پروژهٔ سازمانی را می‌توانید حذف کنید.</li>
+  </ol></div></div>
+
+  <div class="step"><div class="num">B</div><div class="body"><h4>راه B — استثناکردن همین پروژه با کمک مدیر سازمان</h4>
+  <p>اگر مدیر Google Workspace / Cloud Identity مجموعه در دسترس است، می‌تواند فقط برای <u>همین پروژه</u> استثنا بگذارد (بدون تغییر سیاست کل سازمان). به او بگویید:</p>
+  <ol>
+    <li>در Console: <b>IAM &amp; Admin → Organization Policies</b> → از انتخاب‌گرِ بالا همان پروژه را انتخاب کند → جست‌وجوی <code>iam.disableServiceAccountKeyCreation</code> → <b>Manage policy</b> → <b>Override parent's policy</b> → <b>Not enforced</b> → <b>Set policy</b>.</li>
+    <li>یا با gcloud:
+    <pre><code>gcloud org-policies disable-enforce iam.disableServiceAccountKeyCreation --project=PROJECT_ID</code></pre></li>
+    <li>برای این کار نقش <code>roles/orgpolicy.policyAdmin</code> لازم است؛ اگر خودتان مالک پروژه هستید، از صفحهٔ IAM همان پروژه می‌توانید این نقش را به خودتان بدهید و همان مراحل کنسول را انجام دهید.</li>
+  </ol>
+  <div class="callout warn">اگر بعد از Override هنوز بلاک بود: ۱) ممکن است «قفل دوم» نسخهٔ قدیمی همان محدودیت هم فعال باشد — هر دو را Not enforced کنید؛ ۲) اعمال سیاست گاهی تا <b>حدود یک ساعت</b> طول می‌کشد؛ ۳) چند دقیقه صبر و رفرش کنید. بعد از آزادشدن، روی همان حساب <code>parking-readonly</code> → تب <b>Keys</b> → <b>Add key → JSON</b> را بزنید.</div>
+  </div></div>
+
+  <div class="callout info"><b>چرا راه‌های دیگر نه؟</b> جایگزین رسمی کلید، Workload Identity Federation است که به زیرساخت ابری نیاز دارد و برای سرور داخل ساختمان قابل استفاده نیست؛ مسیر OAuth کاربر هم تغییر کد می‌خواهد. در صورت نیاز در نسخه‌های بعدی اضافه می‌شود.</div>
 </section>
 
 <section class="card" id="s2">
