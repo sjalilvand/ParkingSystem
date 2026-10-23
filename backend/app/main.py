@@ -2,7 +2,7 @@ import time
 import uuid
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -34,8 +34,49 @@ async def lifespan(app: FastAPI):
                         "WHERE status = 'OPEN'"))
     except Exception:
         pass
+    # الحاقیه §۴: زمان‌بند همگام‌سازی روزانهٔ Google Sheets (۰۳:۰۰ تهران)
+    sync_task = None
+    if settings.VEHICLE_SYNC_SCHEDULER and settings.GOOGLE_SHEETS_ENABLED:
+        sync_task = asyncio.create_task(_vehicle_sync_scheduler_loop())
     yield
+    if sync_task:
+        sync_task.cancel()
+        try:
+            await sync_task
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            pass
     await engine.dispose()
+
+
+async def _vehicle_sync_scheduler_loop():
+    """حلقهٔ زمان‌بندی: روزانه ساعت ۰۳:۰۰ به وقت تهران اجرای sync خودروها.
+    هر خطا فقط لاگ می‌شود — جریان اصلی سامانه هرگز متوقف نمی‌شود."""
+    from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo
+    from loguru import logger
+
+    tz = ZoneInfo("Asia/Tehran")
+    logger.info("Google Sheets sync scheduler armed (daily 03:00 Tehran)")
+    while True:
+        try:
+            now = datetime.now(tz)
+            run_at = now.replace(hour=max(0, min(23, settings.VEHICLE_SYNC_HOUR)),
+                                 minute=0, second=0, microsecond=0)
+            if run_at <= now:
+                run_at += timedelta(days=1)
+            await asyncio.sleep((run_at - now).total_seconds())
+            from app.db.session import AsyncSessionLocal
+            from app.modules.vehicle_sync.service import VehicleSyncService
+            async with AsyncSessionLocal() as db:
+                result = await VehicleSyncService(db).run(trigger="SCHEDULED")
+                logger.info(f"vehicle_sync scheduled run: {result.get('status')} stats={result.get('stats')}")
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"vehicle_sync scheduler error (retry in 10min): {exc}")
+            await asyncio.sleep(600)
 
 
 app = FastAPI(
@@ -115,6 +156,10 @@ async def health_database():
 
 app.include_router(api_router, prefix=settings.API_V1_PREFIX)
 app.include_router(ws_router)
+
+# الحاقیه §۴ — روترهای همگام‌سازی/انطباق (هر endpoint خودش احراز هویت دارد)
+from app.modules.vehicle_sync.router import router as vehicle_sync_router  # noqa: E402
+app.include_router(vehicle_sync_router, prefix=settings.API_V1_PREFIX)
 
 # صفحه تست پلاک‌خوان — http://localhost:8000/plate-test/
 import pathlib

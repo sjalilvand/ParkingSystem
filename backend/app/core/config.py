@@ -88,6 +88,37 @@ class Settings(BaseSettings):
     PLATE_OCR_MAX_IMAGE_PX: int = 2600      # بزرگ‌ترین ضلع مجاز ورودی
     PLATE_OCR_MIN_CONF: float = 0.25        # حداقل اطمینان پیش‌فرض OCR
 
+    # ------------------------------------------------------------------
+    # الحاقیه §۲ — جداسازی واقعی شبیه‌ساز از محیط عملیاتی
+    # SIM_DATABASE_URL: پایگاه‌دادهٔ جدا برای شبیه‌ساز/سناریوساز (پیش‌فرض:
+    #   SQLite فایل‌محلی). با SIM_STRICT=True برابری با DB اصلی fail-fast است.
+    # ------------------------------------------------------------------
+    SIM_DATABASE_URL: str = "sqlite+aiosqlite:///./sim_parking.db"
+    SIM_STRICT: bool = True
+
+    # ------------------------------------------------------------------
+    # الحاقیه §۳ — پاکت ثبت پلاک (زاویه/نور/سرعت) و مسیر تأیید انسانی
+    # مقادیر env فقط fallback هستند؛ مرجع زمان-اجرا از app_settings خوانده می‌شود.
+    # ------------------------------------------------------------------
+    PLATE_ENVELOPE_MAX_ANGLE_DEG: float = 35.0   # انحراف مجاز از عمود (درجه)
+    PLATE_ENVELOPE_MIN_LUX: float = 20.0         # حداقل روشنایی صحنه (تقریبی)
+    PLATE_ENVELOPE_MAX_SPEED_KMH: float = 20.0   # حداکثر سرعت مجاز عبور
+    PLATE_REVIEW_LOW_CONF: float = 0.55          # زیر این اطمینان → NEEDS_REVIEW
+
+    # ------------------------------------------------------------------
+    # الحاقیه §۴ — همگام‌سازی روزانه Google Sheets (شیت خودروها)
+    # حساب سرویس فقط‌خواندنی؛ کلید تطبیق = source_system + external_vehicle_id
+    # اجرای زمان‌بندی‌شده: روزانه ۰۳:۰۰ به وقت تهران + اجرای دستی از پنل.
+    # ------------------------------------------------------------------
+    GOOGLE_SHEETS_ENABLED: bool = True
+    GOOGLE_SHEETS_SPREADSHEET_ID: str = "1ZbiQl_9nab-CH0uR1i9dq6pevcCvY0SfyUuxpIyEjQQ"
+    GOOGLE_SHEETS_WORKSHEET: str = "خودروها"
+    GOOGLE_SERVICE_ACCOUNT_FILE: str = ""   # مسیر فایل JSON حساب سرویس
+    GOOGLE_SERVICE_ACCOUNT_JSON: str = ""   # یا محتوای JSON مستقیم
+    VEHICLE_SYNC_HOUR: int = 3              # ساعت اجرای روزانه (تهران)
+    VEHICLE_SYNC_MAX_ROWS: int = 5000
+    VEHICLE_SYNC_SCHEDULER: bool = True     # خاموش/روشن کردن حلقهٔ زمان‌بند
+
 
 _INSECURE_DEFAULTS = {"change-me-in-production", "gate-dev-key"}
 

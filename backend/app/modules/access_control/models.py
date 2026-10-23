@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import JSON, BigInteger, Boolean, DateTime, ForeignKey, Index, String, UniqueConstraint, text
+from sqlalchemy import JSON, BigInteger, Boolean, DateTime, ForeignKey, Index, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, TimestampMixin, new_uuid
@@ -24,6 +24,21 @@ class PlateRecognitionEvent(Base):
     source_event_id: Mapped[str] = mapped_column(String(64), index=True)
     processing_status: Mapped[str] = mapped_column(String(16), default="PROCESSED")
     raw_payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+    # ------------------------------------------------------------------
+    # الحاقیه §۳ — پاکت ثبت (زاویه/نور/سرعت) + مسیر تأیید انسانی
+    # مقدار اصلی plate_raw هرگز بازنویسی نمی‌شود؛ اصلاح در plate_corrected
+    # نگه داشته می‌شود و چه کسی/کِی/چرا هم ثبت است (audit trail کامل).
+    # review_status: AUTO_OK | NEEDS_REVIEW | CONFIRMED | CORRECTED | REJECTED
+    # ------------------------------------------------------------------
+    plate_corrected: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    plate_corrected_normalized: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    corrected_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    corrected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    correction_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    review_status: Mapped[str] = mapped_column(String(16), default="AUTO_OK", index=True)
+    capture_quality: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    processing_ms: Mapped[int | None] = mapped_column(nullable=True)
 
 
 class AccessEvent(Base, TimestampMixin):

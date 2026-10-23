@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 
-from app.db.session import AsyncSessionLocal
+from app.db.sim_session import SimSessionLocal as AsyncSessionLocal
 from app.modules.base_data.models import PlateRegion
 from app.modules.vehicles.models import Vehicle
 from app.realtime.manager import manager

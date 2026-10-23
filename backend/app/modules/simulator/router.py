@@ -76,3 +76,47 @@ async def scenario_reset(user: User = Depends(get_current_user)):
 async def scenario_manual(body: ManualEventIn, user: User = Depends(get_current_user)):
     """رویداد دستی — پلاک تایپی یا کشویی + جهت."""
     return await scenario.manual_event(body.plate_raw, body.direction, body.gate_code)
+
+
+# ---------------------------------------------------------------------------
+# الحاقیه §۲ — کاتالوگ ۲۰ سناریوی الزامی (SIM-01..SIM-20)
+# اجرا فقط روی پایگاه‌دادهٔ جداگانهٔ شبیه‌ساز انجام می‌شود.
+# ---------------------------------------------------------------------------
+from app.core.exceptions import NotFoundError  # noqa: E402
+from app.modules.simulator import sim_catalog  # noqa: E402
+
+
+@router.get("/scenarios")
+async def scenarios_list(user: User = Depends(get_current_user)):
+    """کاتالوگ کامل: شناسه، عنوان، پیش‌شرط، مراحل، نتیجهٔ مورد انتظار."""
+    return {"label": sim_catalog.SIM_LABEL, "items": sim_catalog.catalog_view()}
+
+
+@router.get("/scenarios/{sid}")
+async def scenarios_detail(sid: str, user: User = Depends(get_current_user)):
+    items = [s for s in sim_catalog.catalog_view() if s["id"] == sid.upper()]
+    if not items:
+        raise NotFoundError(f"سناریو {sid} یافت نشد")
+    return {"label": sim_catalog.SIM_LABEL, "item": items[0]}
+
+
+@router.post("/scenarios/{sid}/run")
+async def scenarios_run(sid: str, user: User = Depends(get_current_user)):
+    """اجرای خودکار سناریو روی DB شبیه‌ساز + داوری PASS/FAIL (برای SIM-20: میدانی)."""
+    try:
+        return await sim_catalog.run_scenario(sid.upper())
+    except KeyError:
+        raise NotFoundError(f"سناریو {sid} یافت نشد") from None
+
+
+@router.get("/isolation")
+async def isolation_info(user: User = Depends(get_current_user)):
+    """اطلاعات جداسازی: آدرس DB شبیه‌ساز (بدون پسورد) و برچسب الزامی."""
+    def _sim_db_safe() -> str:
+        from app.db.sim_session import sim_db_label
+        return sim_db_label()
+    return {
+        "label": sim_catalog.SIM_LABEL,
+        "sim_database": _sim_db_safe(),
+        "separated_from_operational": True,
+    }

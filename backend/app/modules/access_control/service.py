@@ -86,6 +86,8 @@ class GateDecisionService:
         client_decision: str | None = None,
         dry_run: bool = False,
         driver_request: str | None = None,
+        capture_quality: dict | None = None,
+        processing_ms: int | None = None,
     ) -> dict:
         now = datetime.now(timezone.utc)
         gate = (await db.execute(select(Gate).where(Gate.code == gate_code))).scalar_one_or_none()
@@ -103,11 +105,30 @@ class GateDecisionService:
         normalized = normalize_plate(plate_raw)
         warnings: list[str] = []
 
+        # الحاقیه §۳ — ارزیابی پاکت ثبت (زاویه/نور/سرعت/اطمینان) + مسیر بازبینی
+        from app.modules.plate_ocr.envelope import evaluate_capture, review_status_for
+        quality = dict(capture_quality or {})
+        env = await evaluate_capture(
+            db,
+            angle_deg=quality.get("angle_deg"),
+            lux=quality.get("lux"),
+            speed_kmh=quality.get("speed_kmh"),
+            confidence=confidence,
+            plate_normalized=normalized,
+        )
+        review_status = review_status_for(confidence, env)
+        if env.violations:
+            warnings.extend(f"ENVELOPE_{v}" for v in env.violations)
+        quality["envelope_ok"] = env.ok
+        quality["thresholds"] = env.thresholds
+
         pre = PlateRecognitionEvent(
             gate_id=gate.id, device_id=device_id, direction=direction,
             plate_raw=plate_raw, plate_normalized=normalized, confidence=confidence,
             captured_at=captured_at or now, received_at=now,
             source_event_id=source_event_id, raw_payload=raw_payload,
+            review_status=review_status, capture_quality=quality,
+            processing_ms=processing_ms,
         )
         if not dry_run:
             db.add(pre)
@@ -257,6 +278,12 @@ class GateDecisionService:
         except Exception:
             warnings.append("RULES_ENGINE_ERROR")
 
+        # الحاقیه §۳ — قفل ایمنی: خوانشِ خارج از پاکت یا کم‌اطمینان هرگز
+        # راهبند را خودکار باز نمی‌کند؛ به تأیید انسانی ارجاع می‌شود.
+        if review_status == "NEEDS_REVIEW" and decision in ("ALLOW", "ALLOW_WITH_WARNING"):
+            decision, reason = "REQUIRE_OPERATOR_APPROVAL", "ENVELOPE_REVIEW_REQUIRED"
+            warnings.append("ENVELOPE_REVIEW_REQUIRED")
+
         if is_manual:
             event_type = "MANUAL_ENTRY" if direction == "IN" else "MANUAL_EXIT"
         else:
@@ -374,6 +401,13 @@ class GateDecisionService:
         if confidence is not None:
             response["plate"]["confidence"] = confidence
         response["event_type"] = event_type
+        # الحاقیه §۳ — شفافیت بازبینی در پاسخ گیت
+        response["plate_review"] = {
+            "status": review_status,
+            "recognition_id": None if dry_run else pre.id,
+            "envelope_ok": env.ok,
+            "envelope_violations": env.violations,
+        }
         if rule_trace is not None:
             response["rule_trace"] = rule_trace
         if rule_overrides.get("message"):

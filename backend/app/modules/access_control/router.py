@@ -272,3 +272,133 @@ async def offline_snapshot(gate_code: str, db: AsyncSession = Depends(get_db), _
         "tariffs": [],
         "settings": {"unknown_plate_policy": "REQUIRE_OPERATOR_APPROVAL"},
     }
+
+
+# ---------------------------------------------------------------------------
+# الحاقیه §۳ — صف تأیید انسانی پلاک (NEEDS_REVIEW)
+# اصل حفظ سابقه: plate_raw اصلی هرگز تغییر نمی‌کند؛ اصلاح در ستون‌های
+# corrected_* ثبت می‌شود (مقدار + کاربر + زمان + یادداشت) و audit می‌ماند.
+# ---------------------------------------------------------------------------
+from fastapi import Query  # noqa: E402
+from pydantic import BaseModel  # noqa: E402
+from sqlalchemy import func  # noqa: E402
+
+from app.core.exceptions import NotFoundError  # noqa: E402
+from app.modules.access_control.models import PlateRecognitionEvent  # noqa: E402
+from app.shared.plate import normalize_plate  # noqa: E402
+
+
+class PlateReviewResolve(BaseModel):
+    action: str = "CONFIRM"          # CONFIRM | CORRECT | REJECT
+    plate_raw: str | None = None     # برای CORRECT — مقدار اصلاح‌شدهٔ تایپی
+    note: str | None = None
+
+
+@router.get("/plate-reviews")
+async def list_plate_reviews(
+    status: str = "NEEDS_REVIEW",
+    limit: int = Query(50, le=200),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    if not (await user_is_admin(db, user) or await user_has_permission(db, user, "gate.manual_access")):
+        raise ForbiddenError("مجوز بازبینی پلاک ندارید")
+    q = select(PlateRecognitionEvent).where(
+        PlateRecognitionEvent.review_status == status.upper())
+    total = (await db.execute(select(func.count()).select_from(
+        PlateRecognitionEvent).where(
+            PlateRecognitionEvent.review_status == status.upper()))).scalar_one()
+    rows = (await db.execute(q.order_by(
+        PlateRecognitionEvent.received_at.desc()).limit(limit))).scalars().all()
+    return {
+        "status": status.upper(), "total": total, "items": [{
+            "id": r.id, "gate_id": r.gate_id, "direction": r.direction,
+            "plate_raw": r.plate_raw, "plate_normalized": r.plate_normalized,
+            "plate_corrected": r.plate_corrected,
+            "confidence": r.confidence, "review_status": r.review_status,
+            "capture_quality": r.capture_quality,
+            "corrected_by": r.corrected_by, "corrected_at": (
+                r.corrected_at.isoformat() if r.corrected_at else None),
+            "correction_note": r.correction_note,
+            "captured_at": r.captured_at.isoformat() if r.captured_at else None,
+            "received_at": r.received_at.isoformat() if r.received_at else None,
+        } for r in rows],
+    }
+
+
+@router.get("/plate-reviews/metrics")
+async def plate_review_metrics(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """آمار بازبینی + صدک تأخیر پردازش (هدف الحاقیه: p95 < ۱ ثانیه)."""
+    if not (await user_is_admin(db, user) or await user_has_permission(db, user, "gate.manual_access")):
+        raise ForbiddenError("مجوز بازبینی پلاک ندارید")
+    counts: dict[str, int] = {}
+    for st in ("AUTO_OK", "NEEDS_REVIEW", "CONFIRMED", "CORRECTED", "REJECTED"):
+        counts[st] = (await db.execute(
+            select(func.count()).select_from(PlateRecognitionEvent)
+            .where(PlateRecognitionEvent.review_status == st))).scalar_one()
+    latencies = (await db.execute(
+        select(PlateRecognitionEvent.processing_ms)
+        .where(PlateRecognitionEvent.processing_ms.isnot(None))
+        .order_by(PlateRecognitionEvent.processing_ms.asc())
+        .limit(2000))).scalars().all()
+
+    def _pct(p: float) -> float | None:
+        if not latencies:
+            return None
+        idx = min(int(p * (len(latencies) - 1)), len(latencies) - 1)
+        return round(float(latencies[idx]), 1)
+
+    return {"counts": counts,
+            "processing_ms": {"p50": _pct(0.50), "p95": _pct(0.95),
+                              "target_p95_ms": 1000.0, "n": len(latencies)}}
+
+
+@router.post("/plate-reviews/{recognition_id}/resolve")
+async def resolve_plate_review(
+    recognition_id: str,
+    body: PlateReviewResolve,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """تأیید/اصلاح/رد پلاک توسط انسان — مقدار اصلی حفظ و اصلاح جداگانه ثبت می‌شود."""
+    if not (await user_is_admin(db, user) or await user_has_permission(db, user, "gate.manual_access")):
+        raise ForbiddenError("مجوز بازبینی پلاک ندارید")
+    rec = await db.get(PlateRecognitionEvent, recognition_id)
+    if rec is None:
+        raise NotFoundError("رکورد پلاک‌خوانی یافت نشد")
+    action = body.action.upper()
+    if action not in ("CONFIRM", "CORRECT", "REJECT"):
+        raise ForbiddenError("عملیات نامعتبر است (CONFIRM/CORRECT/REJECT)")
+    if action == "CORRECT":
+        if not body.plate_raw:
+            raise ForbiddenError("برای اصلاح، مقدار پلاک الزامی است")
+        rec.plate_corrected = body.plate_raw
+        rec.plate_corrected_normalized = normalize_plate(body.plate_raw) or None
+        rec.corrected_by = user.id
+        rec.corrected_at = datetime.now(timezone.utc)
+        rec.correction_note = body.note
+        rec.review_status = "CORRECTED"
+    elif action == "CONFIRM":
+        rec.review_status = "CONFIRMED"
+        if body.note:
+            rec.correction_note = body.note
+    else:
+        rec.review_status = "REJECTED"
+        if body.note:
+            rec.correction_note = body.note
+    await write_audit(db, user_id=user.id, action=f"PLATE_REVIEW_{action}",
+                      module="gate", entity_type="plate_recognition",
+                      entity_id=rec.id,
+                      old_values={"plate_raw": rec.plate_raw,
+                                  "review_status": "NEEDS_REVIEW"},
+                      new_values={"plate_corrected": rec.plate_corrected,
+                                  "review_status": rec.review_status,
+                                  "note": body.note})
+    await db.commit()
+    return {"success": True, "id": rec.id, "review_status": rec.review_status,
+            "plate_raw": rec.plate_raw,
+            "plate_corrected": rec.plate_corrected,
+            "plate_corrected_normalized": rec.plate_corrected_normalized}

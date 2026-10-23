@@ -16,7 +16,7 @@ from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.base import Base
-from app.db.session import AsyncSessionLocal
+from app.db.sim_session import SimSessionLocal as AsyncSessionLocal
 from app.modules.access_control.models import AccessEvent, ParkingSession
 from app.modules.complexes.models import Complex, Tower, Unit
 from app.modules.config_admin.models import AppSetting, EntryExitRule

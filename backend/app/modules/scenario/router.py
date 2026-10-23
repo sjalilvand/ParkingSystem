@@ -9,7 +9,7 @@ from app.api.deps import get_current_user
 from app.core.audit import write_audit
 from app.core.exceptions import ConflictError, NotFoundError
 from app.core.permissions import require_any_permission
-from app.db.session import get_db
+from app.db.sim_session import get_sim_db
 import app.main  # noqa - resolve all FK models
 
 from app.modules.access_control.models import (
@@ -59,7 +59,7 @@ class PurgeBody(BaseModel):
 
 
 @router.post("/purge")
-async def purge(body: PurgeBody, db: AsyncSession = Depends(get_db), user: User = Depends(require_any_permission("settings.publish"))):
+async def purge(body: PurgeBody, db: AsyncSession = Depends(get_sim_db), user: User = Depends(require_any_permission("settings.publish"))):
     cats = body.categories or list(PURGE_MAP.keys())
     unknown = [c for c in cats if c not in PURGE_MAP]
     if unknown:
@@ -102,7 +102,7 @@ class UnitBody(BaseModel):
 
 
 @router.post("/add-unit")
-async def add_unit(body: UnitBody, db: AsyncSession = Depends(get_db), user: User = Depends(require_any_permission("structure.edit", "settings.edit"))):
+async def add_unit(body: UnitBody, db: AsyncSession = Depends(get_sim_db), user: User = Depends(require_any_permission("structure.edit", "settings.edit"))):
     cx = (await db.execute(select(Complex))).scalars().first()
     if cx is None:
         cx = Complex(code="ORKID", name="مجتمع ارکیده")
@@ -137,7 +137,7 @@ class ResidentBody(BaseModel):
 
 
 @router.post("/add-resident")
-async def add_resident(body: ResidentBody, db: AsyncSession = Depends(get_db), user: User = Depends(require_any_permission("structure.edit", "settings.edit"))):
+async def add_resident(body: ResidentBody, db: AsyncSession = Depends(get_sim_db), user: User = Depends(require_any_permission("structure.edit", "settings.edit"))):
     unit = await db.get(Unit, body.unit_id)
     if not unit:
         raise NotFoundError("واحد یافت نشد")
@@ -174,7 +174,7 @@ class VehicleBody(BaseModel):
 
 
 @router.post("/add-vehicle")
-async def add_vehicle(body: VehicleBody, db: AsyncSession = Depends(get_db), user: User = Depends(require_any_permission("vehicles.create", "settings.edit"))):
+async def add_vehicle(body: VehicleBody, db: AsyncSession = Depends(get_sim_db), user: User = Depends(require_any_permission("vehicles.create", "settings.edit"))):
     from app.shared.plate import normalize_plate
     norm = normalize_plate(body.plate_raw) or body.plate_raw
     dup = (await db.execute(select(Vehicle).where(Vehicle.plate_normalized == norm))).scalars().first()
@@ -201,7 +201,7 @@ async def add_vehicle(body: VehicleBody, db: AsyncSession = Depends(get_db), use
 
 
 @router.post("/setup-default")
-async def setup_default(db: AsyncSession = Depends(get_db), user: User = Depends(require_any_permission("settings.publish"))):
+async def setup_default(db: AsyncSession = Depends(get_sim_db), user: User = Depends(require_any_permission("settings.publish"))):
     """سناریوی پیش‌فرض کارفرما: ۲ ساکن × ۳ ماشین + ۲ غریبه."""
     import datetime as _dt
     from app.shared.plate import normalize_plate
@@ -320,7 +320,7 @@ async def setup_default(db: AsyncSession = Depends(get_db), user: User = Depends
 
 
 @router.get("/summary")
-async def summary(db: AsyncSession = Depends(get_db), user: User = Depends(require_any_permission("settings.view"))):
+async def summary(db: AsyncSession = Depends(get_sim_db), user: User = Depends(require_any_permission("settings.view"))):
     counts = {}
     for name, model in [
         ("complexes", Complex), ("towers", Tower), ("units", Unit),
