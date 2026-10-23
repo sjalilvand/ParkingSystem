@@ -6,6 +6,7 @@ import DirectionsCarIcon from '@mui/icons-material/DirectionsCar'
 import { api } from '../api/client'
 import { jalaliDisplay } from '../utils/jalali'
 import CadMap, { CAD_STATUS } from '../components/CadMap'
+import ParkingDashboard from '../components/ParkingDashboard'
 
 interface Space {
   id: string; code: string; floor: number; zone?: string | null
@@ -90,6 +91,8 @@ export default function Parking() {
 
   return (
     <Stack spacing={2}>
+      {/* داشبورد یک‌نگاهی — بالای همهٔ تب‌ها */}
+      <ParkingDashboard />
       <Tabs value={tab} onChange={(_, v) => setTab(v)} sx={{ bgcolor: '#fff', borderRadius: 2, px: 1 }}>
         <Tab label="نمای سایت" />
         <Tab label="طبقات برج‌ها" />

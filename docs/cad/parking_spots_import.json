@@ -435,7 +435,8 @@
    "source_drawing": "planYARD.dxf",
    "source_layer": "Limit",
    "confidence": 0.99,
-   "notes": "بازسازی دقیق از تیک‌های واقعی planYARD.dxf — ردیف عمود غرب مسیر مرکزی (بین بلوک A و C)"
+   "notes": "بازسازی دقیق از تیک‌های واقعی planYARD.dxf — ردیف عمود غرب مسیر مرکزی (بین بلوک A و C)",
+   "status": "occupied"
   },
   {
    "parking_code": "N1-04",
@@ -551,7 +552,8 @@
    "source_drawing": "planYARD.dxf",
    "source_layer": "Limit",
    "confidence": 0.99,
-   "notes": "بازسازی دقیق از تیک‌های واقعی planYARD.dxf — ردیف عمود غرب مسیر مرکزی (بین بلوک A و C)"
+   "notes": "بازسازی دقیق از تیک‌های واقعی planYARD.dxf — ردیف عمود غرب مسیر مرکزی (بین بلوک A و C)",
+   "status": "occupied"
   },
   {
    "parking_code": "N1-08",
@@ -696,7 +698,8 @@
    "source_drawing": "planYARD.dxf",
    "source_layer": "Limit",
    "confidence": 0.99,
-   "notes": "بازسازی دقیق از تیک‌های واقعی planYARD.dxf — ردیف عمود شرق مسیر مرکزی (بین بلوک A و C)"
+   "notes": "بازسازی دقیق از تیک‌های واقعی planYARD.dxf — ردیف عمود شرق مسیر مرکزی (بین بلوک A و C)",
+   "status": "occupied"
   },
   {
    "parking_code": "N2-03",
@@ -783,7 +786,8 @@
    "source_drawing": "planYARD.dxf",
    "source_layer": "Limit",
    "confidence": 0.99,
-   "notes": "بازسازی دقیق از تیک‌های واقعی planYARD.dxf — ردیف عمود شرق مسیر مرکزی (بین بلوک A و C)"
+   "notes": "بازسازی دقیق از تیک‌های واقعی planYARD.dxf — ردیف عمود شرق مسیر مرکزی (بین بلوک A و C)",
+   "status": "occupied"
   },
   {
    "parking_code": "N2-06",
@@ -1073,7 +1077,8 @@
    "source_drawing": "planYARD.dxf",
    "source_layer": "Limit",
    "confidence": 0.99,
-   "notes": "بازسازی دقیق از تیک‌های واقعی planYARD.dxf — ردیف مورب شمال‌غرب (شمال بلوک A)"
+   "notes": "بازسازی دقیق از تیک‌های واقعی planYARD.dxf — ردیف مورب شمال‌غرب (شمال بلوک A)",
+   "status": "occupied"
   },
   {
    "parking_code": "S1-03",
@@ -1189,7 +1194,8 @@
    "source_drawing": "planYARD.dxf",
    "source_layer": "Limit",
    "confidence": 0.99,
-   "notes": "بازسازی دقیق از تیک‌های واقعی planYARD.dxf — ردیف مورب شمال‌غرب (شمال بلوک A)"
+   "notes": "بازسازی دقیق از تیک‌های واقعی planYARD.dxf — ردیف مورب شمال‌غرب (شمال بلوک A)",
+   "status": "occupied"
   },
   {
    "parking_code": "S1-07",
@@ -1276,7 +1282,8 @@
    "source_drawing": "planYARD.dxf",
    "source_layer": "Limit",
    "confidence": 0.99,
-   "notes": "بازسازی دقیق از تیک‌های واقعی planYARD.dxf — ردیف مورب شمال‌غرب (شمال بلوک A)"
+   "notes": "بازسازی دقیق از تیک‌های واقعی planYARD.dxf — ردیف مورب شمال‌غرب (شمال بلوک A)",
+   "status": "occupied"
   },
   {
    "parking_code": "S1-10",
@@ -1537,7 +1544,8 @@
    "source_drawing": "planYARD.dxf",
    "source_layer": "Limit",
    "confidence": 0.99,
-   "notes": "بازسازی دقیق از تیک‌های واقعی planYARD.dxf — ردیف مورب جنوب ۱ (مسیر جنوبی B–C)"
+   "notes": "بازسازی دقیق از تیک‌های واقعی planYARD.dxf — ردیف مورب جنوب ۱ (مسیر جنوبی B–C)",
+   "status": "occupied"
   },
   {
    "parking_code": "S3-02",
@@ -1769,7 +1777,8 @@
    "source_drawing": "planYARD.dxf",
    "source_layer": "Limit",
    "confidence": 0.99,
-   "notes": "بازسازی دقیق از تیک‌های واقعی planYARD.dxf — ردیف مورب جنوب ۲ (مسیر جنوبی B–C)"
+   "notes": "بازسازی دقیق از تیک‌های واقعی planYARD.dxf — ردیف مورب جنوب ۲ (مسیر جنوبی B–C)",
+   "status": "occupied"
   },
   {
    "parking_code": "S4-04",
@@ -1943,7 +1952,8 @@
    "source_drawing": "planYARD.dxf",
    "source_layer": "Limit",
    "confidence": 0.99,
-   "notes": "بازسازی دقیق از تیک‌های واقعی planYARD.dxf — ردیف مورب شرق (کنار ورودی)"
+   "notes": "بازسازی دقیق از تیک‌های واقعی planYARD.dxf — ردیف مورب شرق (کنار ورودی)",
+   "status": "occupied"
   },
   {
    "parking_code": "S5-05",
@@ -1973,6 +1983,317 @@
    "source_layer": "Limit",
    "confidence": 0.99,
    "notes": "بازسازی دقیق از تیک‌های واقعی planYARD.dxf — ردیف مورب شرق (کنار ورودی)"
+  },
+  {
+   "parking_id": "ROAD-1",
+   "display_name": "جادهٔ دسترسی اصلی (ورودی جنوبی)",
+   "status": "context",
+   "source_layer": "Road",
+   "source_drawing": "planYARD.dxf",
+   "parking_type": "road",
+   "polygon": [
+    {
+     "x": 53,
+     "y": 51
+    },
+    {
+     "x": 95,
+     "y": 76
+    },
+    {
+     "x": 104,
+     "y": 92
+    },
+    {
+     "x": 104,
+     "y": 126
+    }
+   ],
+   "center": {
+    "x": 89.0,
+    "y": 86.25
+   },
+   "notes": "w=6.5"
+  },
+  {
+   "parking_id": "ROAD-2",
+   "display_name": "معبر جنوب بلوک C (تغذیهٔ S4 و S5)",
+   "status": "context",
+   "source_layer": "Road",
+   "source_drawing": "planYARD.dxf",
+   "parking_type": "road",
+   "polygon": [
+    {
+     "x": 104,
+     "y": 126.5
+    },
+    {
+     "x": 177,
+     "y": 126
+    }
+   ],
+   "center": {
+    "x": 140.5,
+    "y": 126.25
+   },
+   "notes": "w=5.5"
+  },
+  {
+   "parking_id": "ROAD-3",
+   "display_name": "معبر ردیف S5",
+   "status": "context",
+   "source_layer": "Road",
+   "source_drawing": "planYARD.dxf",
+   "parking_type": "road",
+   "polygon": [
+    {
+     "x": 177,
+     "y": 126
+    },
+    {
+     "x": 181,
+     "y": 140
+    },
+    {
+     "x": 181,
+     "y": 158
+    }
+   ],
+   "center": {
+    "x": 179.67,
+    "y": 141.33
+   },
+   "notes": "w=4.5"
+  },
+  {
+   "parking_id": "ROAD-4",
+   "display_name": "معبر بین بلوک A و C (سرویس N1/N2)",
+   "status": "context",
+   "source_layer": "Road",
+   "source_drawing": "planYARD.dxf",
+   "parking_type": "road",
+   "polygon": [
+    {
+     "x": 104,
+     "y": 126
+    },
+    {
+     "x": 104,
+     "y": 132
+    },
+    {
+     "x": 108.5,
+     "y": 137
+    },
+    {
+     "x": 108.5,
+     "y": 156
+    },
+    {
+     "x": 115,
+     "y": 163
+    },
+    {
+     "x": 119,
+     "y": 170
+    },
+    {
+     "x": 119,
+     "y": 183
+    },
+    {
+     "x": 116,
+     "y": 190
+    }
+   ],
+   "center": {
+    "x": 111.75,
+    "y": 157.12
+   },
+   "notes": "w=5.0"
+  },
+  {
+   "parking_id": "ROAD-5",
+   "display_name": "معبر ردیف N3–N4",
+   "status": "context",
+   "source_layer": "Road",
+   "source_drawing": "planYARD.dxf",
+   "parking_type": "road",
+   "polygon": [
+    {
+     "x": 104,
+     "y": 130
+    },
+    {
+     "x": 94.5,
+     "y": 136
+    },
+    {
+     "x": 94.5,
+     "y": 158
+    },
+    {
+     "x": 90.5,
+     "y": 163
+    },
+    {
+     "x": 90.5,
+     "y": 188
+    }
+   ],
+   "center": {
+    "x": 94.8,
+    "y": 155.0
+   },
+   "notes": "w=4.5"
+  },
+  {
+   "parking_id": "ROAD-6",
+   "display_name": "معبر ردیف S1 و S2",
+   "status": "context",
+   "source_layer": "Road",
+   "source_drawing": "planYARD.dxf",
+   "parking_type": "road",
+   "polygon": [
+    {
+     "x": 44,
+     "y": 147
+    },
+    {
+     "x": 78,
+     "y": 138
+    },
+    {
+     "x": 91,
+     "y": 132
+    },
+    {
+     "x": 104,
+     "y": 127.2
+    }
+   ],
+   "center": {
+    "x": 79.25,
+    "y": 136.05
+   },
+   "notes": "w=4.5"
+  },
+  {
+   "parking_id": "ROW-N1",
+   "display_name": "ردیف N1",
+   "status": "context",
+   "source_layer": "RowLabel",
+   "source_drawing": "planYARD.dxf",
+   "parking_type": "row_label",
+   "polygon": [],
+   "center": {
+    "x": 93.4,
+    "y": 163.6
+   }
+  },
+  {
+   "parking_id": "ROW-N2",
+   "display_name": "ردیف N2",
+   "status": "context",
+   "source_layer": "RowLabel",
+   "source_drawing": "planYARD.dxf",
+   "parking_type": "row_label",
+   "polygon": [],
+   "center": {
+    "x": 104.4,
+    "y": 160.6
+   }
+  },
+  {
+   "parking_id": "ROW-N3",
+   "display_name": "ردیف N3",
+   "status": "context",
+   "source_layer": "RowLabel",
+   "source_drawing": "planYARD.dxf",
+   "parking_type": "row_label",
+   "polygon": [],
+   "center": {
+    "x": 86.4,
+    "y": 139.0
+   }
+  },
+  {
+   "parking_id": "ROW-N4",
+   "display_name": "ردیف N4",
+   "status": "context",
+   "source_layer": "RowLabel",
+   "source_drawing": "planYARD.dxf",
+   "parking_type": "row_label",
+   "polygon": [],
+   "center": {
+    "x": 97.4,
+    "y": 135.5
+   }
+  },
+  {
+   "parking_id": "ROW-S1",
+   "display_name": "ردیف S1",
+   "status": "context",
+   "source_layer": "RowLabel",
+   "source_drawing": "planYARD.dxf",
+   "parking_type": "row_label",
+   "polygon": [],
+   "center": {
+    "x": 35.6,
+    "y": 155.0
+   }
+  },
+  {
+   "parking_id": "ROW-S2",
+   "display_name": "ردیف S2",
+   "status": "context",
+   "source_layer": "RowLabel",
+   "source_drawing": "planYARD.dxf",
+   "parking_type": "row_label",
+   "polygon": [],
+   "center": {
+    "x": 37.6,
+    "y": 116.3
+   }
+  },
+  {
+   "parking_id": "ROW-S3",
+   "display_name": "ردیف S3",
+   "status": "context",
+   "source_layer": "RowLabel",
+   "source_drawing": "planYARD.dxf",
+   "parking_type": "row_label",
+   "polygon": [],
+   "center": {
+    "x": 110.4,
+    "y": 96.1
+   }
+  },
+  {
+   "parking_id": "ROW-S4",
+   "display_name": "ردیف S4",
+   "status": "context",
+   "source_layer": "RowLabel",
+   "source_drawing": "planYARD.dxf",
+   "parking_type": "row_label",
+   "polygon": [],
+   "center": {
+    "x": 104.0,
+    "y": 137.8
+   }
+  },
+  {
+   "parking_id": "ROW-S5",
+   "display_name": "ردیف S5",
+   "status": "context",
+   "source_layer": "RowLabel",
+   "source_drawing": "planYARD.dxf",
+   "parking_type": "row_label",
+   "polygon": [],
+   "center": {
+    "x": 189.5,
+    "y": 138.2
+   }
   }
  ]
 }

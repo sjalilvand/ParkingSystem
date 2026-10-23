@@ -1,11 +1,10 @@
-import { useMemo, useRef, useState } from 'react'
+import { useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Alert, Box, Button, Card, CardContent, Chip, Dialog, DialogActions, DialogContent,
-  DialogTitle,
-  LinearProgress, MenuItem, Stack, TextField, Typography,
+  DialogTitle, IconButton, LinearProgress, MenuItem, Stack, TextField, Tooltip, Typography,
 } from '@mui/material'
-import { DeleteSweep, Upload } from '@mui/icons-material'
+import { CenterFocusStrong, DeleteSweep, Upload, ZoomIn, ZoomOut } from '@mui/icons-material'
 import { api, apiErrorFa } from '../api/client'
 
 export const CAD_STATUS: Record<string, { fa: string; color: string }> = {
@@ -57,6 +56,44 @@ function extractSpots(j: unknown): { spots: Record<string, unknown>[]; source: s
 
 const CHUNK = 25
 
+/* ---------- هندسهٔ کمکی ---------- */
+const CANVAS_W = 1050
+const CANVAS_H = 950
+const PAD = 36
+
+function centroid(poly: { x: number; y: number }[]) {
+  return { x: poly.reduce((a, p) => a + p.x, 0) / poly.length, y: poly.reduce((a, p) => a + p.y, 0) / poly.length }
+}
+
+/** کوچک‌سازی چندضلعی به سمت مرکز — برای فاصلهٔ بصری بین جایگاه‌های چسبیده */
+function insetPoly(poly: { x: number; y: number }[], f: number) {
+  const c = centroid(poly)
+  return poly.map((p) => ({ x: c.x + (p.x - c.x) * f, y: c.y + (p.y - c.y) * f }))
+}
+
+/** زاویهٔ ضلع بلند چندضلعی (جهت طولانی جایگاه) — نرمال‌شده در [-90,90) */
+function longAxisDeg(poly: { x: number; y: number }[]) {
+  let best = -1, deg = 0
+  for (let i = 0; i < poly.length; i++) {
+    for (let j = i + 1; j < poly.length; j++) {
+      const dx = poly[j].x - poly[i].x, dy = poly[j].y - poly[i].y
+      const d2 = dx * dx + dy * dy
+      if (d2 > best) { best = d2; deg = (Math.atan2(dy, dx) * 180) / Math.PI }
+    }
+  }
+  while (deg >= 90) deg -= 180
+  while (deg < -90) deg += 180
+  return deg
+}
+
+/** عرض جاده از notes (قالب «w=6.5») با پیش‌فرض ۵ متر */
+function roadWidth(notes: string | null | undefined) {
+  const m = /w\s*=\s*([\d.]+)/.exec(notes ?? '')
+  return m ? parseFloat(m[1]) : 5
+}
+
+interface View { x: number; y: number; w: number; h: number }
+
 export default function CadMap() {
   const qc = useQueryClient()
   const [err, setErr] = useState('')
@@ -73,6 +110,26 @@ export default function CadMap() {
   const [sel, setSel] = useState<Spot | null>(null)
   const [selStatus, setSelStatus] = useState('free')
   const [selCode, setSelCode] = useState('')
+
+  // ----- زوم و پن -----
+  const [view, setView] = useState<View>({ x: 0, y: 0, w: CANVAS_W, h: CANVAS_H })
+  const dragRef = useRef<{ x: number; y: number; vx: number; vy: number; moved: boolean } | null>(null)
+  const lastDraggedRef = useRef(false)
+
+  const clampView = (v: View): View => {
+    const w = Math.min(v.w, CANVAS_W), h = Math.min(v.h, CANVAS_H)
+    return {
+      w, h,
+      x: Math.min(Math.max(v.x, 0), CANVAS_W - w),
+      y: Math.min(Math.max(v.y, 0), CANVAS_H - h),
+    }
+  }
+  const zoom = (f: number) => setView((v) => {
+    const nw = Math.min(CANVAS_W, Math.max(CANVAS_W / 6, v.w / f))
+    const nh = nw * (CANVAS_H / CANVAS_W)
+    const cx = v.x + v.w / 2, cy = v.y + v.h / 2
+    return clampView({ x: cx - nw / 2, y: cy - nh / 2, w: nw, h: nh })
+  })
 
   const importFile = useMutation({
     mutationFn: async (file: File) => {
@@ -123,7 +180,7 @@ export default function CadMap() {
     onSuccess: (r) => {
       setProgress(null)
       setErr('')
-      setMsg(`ورود کامل شد (منبع: ${r.source}): ${r.total} جایگاه — ${r.created} جدید، ${r.updated} به‌روزرسانی، ${r.skipped} رد شده`)
+      setMsg(`ورود کامل شد (منبع: ${r.source}): ${r.total} مورد — ${r.created} جدید، ${r.updated} به‌روزرسانی، ${r.skipped} رد شده`)
       qc.invalidateQueries({ queryKey: ['cad-spots'] })
     },
     onError: (e) => { setProgress(null); setErr(apiErrorFa(e)) },
@@ -131,7 +188,7 @@ export default function CadMap() {
 
   const clearAll = useMutation({
     mutationFn: async () => (await api.delete('/cad-parking/all')).data,
-    onSuccess: (r) => { setErr(''); setMsg(`${r.deleted} جایگاه پاک شد`); qc.invalidateQueries({ queryKey: ['cad-spots'] }) },
+    onSuccess: (r) => { setErr(''); setMsg(`${r.deleted} مورد پاک شد`); qc.invalidateQueries({ queryKey: ['cad-spots'] }) },
     onError: (e) => setErr(apiErrorFa(e)),
   })
 
@@ -157,12 +214,11 @@ export default function CadMap() {
     }
     if (minX > maxX) return null
     const w = maxX - minX || 1, h = maxY - minY || 1
-    const pad = 30
-    const s = Math.min((900 - pad * 2) / w, (560 - pad * 2) / h)
+    const s = Math.min((CANVAS_W - PAD * 2) / w, (CANVAS_H - PAD * 2) / h)
     return {
-      minX, minY,
-      tx: (x: number) => pad + (x - minX) * s,
-      ty: (y: number) => 560 - pad - (y - minY) * s,
+      minX, minY, s,
+      tx: (x: number) => PAD + (x - minX) * s,
+      ty: (y: number) => CANVAS_H - PAD - (y - minY) * s,
     }
   }, [spotsList])
 
@@ -172,7 +228,30 @@ export default function CadMap() {
     return c
   }, [spotsList])
 
-  const labelSize = realSpots.length > 60 ? 9 : realSpots.length > 30 ? 11 : 13
+  /* ---------- دسته‌بندی آیتم‌های زمینه ---------- */
+  const roads = useMemo(() => contextItems.filter((s) => s.source_layer === 'Road'), [contextItems])
+  const rowLabels = useMemo(() => contextItems.filter((s) => s.source_layer === 'RowLabel'), [contextItems])
+  const hulls = useMemo(() => contextItems.filter((s) => (s.source_layer ?? '').includes('hull')), [contextItems])
+  const buildings = useMemo(() => contextItems.filter(
+    (s) => s.source_layer !== 'Road' && s.source_layer !== 'RowLabel' && !(s.source_layer ?? '').includes('hull'),
+  ), [contextItems])
+
+  const onPointerDown = (e: ReactPointerEvent<SVGSVGElement>) => {
+    dragRef.current = { x: e.clientX, y: e.clientY, vx: view.x, vy: view.y, moved: false }
+    try { e.currentTarget.setPointerCapture(e.pointerId) } catch { /* بی‌اهمیت */ }
+  }
+  const onPointerMove = (e: ReactPointerEvent<SVGSVGElement>) => {
+    const d = dragRef.current
+    if (!d) return
+    const scale = view.w / e.currentTarget.clientWidth
+    const dx = (e.clientX - d.x) * scale, dy = (e.clientY - d.y) * scale
+    if (Math.abs(e.clientX - d.x) + Math.abs(e.clientY - d.y) > 6) d.moved = true
+    setView(clampView({ x: d.vx - dx, y: d.vy - dy, w: view.w, h: view.h }))
+  }
+  const onPointerUp = () => {
+    lastDraggedRef.current = dragRef.current?.moved ?? false
+    dragRef.current = null
+  }
 
   return (
     <Stack spacing={2}>
@@ -190,7 +269,7 @@ export default function CadMap() {
               onChange={(e) => { const f = e.target.files?.[0] ?? null; e.target.value = ''; if (f) importFile.mutate(f) }} ref={fileRef} />
           </Button>
           <Button variant="outlined" color="error" size="small" startIcon={<DeleteSweep />}
-            onClick={() => { if (window.confirm('حذف همه جایگاه‌های CAD؟')) clearAll.mutate() }}
+            onClick={() => { if (window.confirm('حذف همهٔ آیتم‌های نقشه CAD؟')) clearAll.mutate() }}
             disabled={!!progress || spotsList.length === 0}>
             پاک‌سازی همه
           </Button>
@@ -202,7 +281,7 @@ export default function CadMap() {
           <LinearProgress variant="determinate"
             value={Math.round((progress.done / progress.total) * 100)} />
           <Typography variant="caption" color="text.secondary">
-            در حال ورود: {progress.done} از {progress.total} جایگاه...
+            در حال ورود: {progress.done} از {progress.total} مورد...
           </Typography>
         </Box>
       )}
@@ -217,35 +296,128 @@ export default function CadMap() {
               هنوز جایگاهی وارد نشده — خروجی JSON مدل هوش مصنوعی را با دکمه «بارگذاری خروجی AI» وارد کنید.
             </Alert>
           ) : (
-            <Box dir="ltr" sx={{ width: '100%', overflowX: 'auto' }}>
-              <svg viewBox="0 0 900 560" style={{ width: '100%', minWidth: 640, display: 'block' }}>
-                <rect x="0" y="0" width="900" height="560" fill="#FAFBFC" />
-                {/* زمینهٔ نقشه (مرز سایت/ساختمان‌ها) — زیر جاها، غیرکلیک‌پذیر */}
-                {geo && contextItems.map((s) => {
+            <Box dir="ltr" sx={{ position: 'relative', width: '100%', overflowX: 'auto' }}>
+              {/* دکمه‌های زوم */}
+              <Stack spacing={0.5} sx={{ position: 'absolute', top: 10, left: 10, zIndex: 2 }}>
+                <Tooltip title="بزرگ‌نمایی">
+                  <IconButton size="small" onClick={() => zoom(1.3)}
+                    sx={{ bgcolor: '#fff', boxShadow: 1, '&:hover': { bgcolor: '#f0f3f5' } }}>
+                    <ZoomIn fontSize="small" />
+                  </IconButton>
+                </Tooltip>
+                <Tooltip title="کوچک‌نمایی">
+                  <IconButton size="small" onClick={() => zoom(1 / 1.3)}
+                    sx={{ bgcolor: '#fff', boxShadow: 1, '&:hover': { bgcolor: '#f0f3f5' } }}>
+                    <ZoomOut fontSize="small" />
+                  </IconButton>
+                </Tooltip>
+                <Tooltip title="نمای کامل">
+                  <IconButton size="small" onClick={() => setView({ x: 0, y: 0, w: CANVAS_W, h: CANVAS_H })}
+                    sx={{ bgcolor: '#fff', boxShadow: 1, '&:hover': { bgcolor: '#f0f3f5' } }}>
+                    <CenterFocusStrong fontSize="small" />
+                  </IconButton>
+                </Tooltip>
+              </Stack>
+              <svg viewBox={`${view.x} ${view.y} ${view.w} ${view.h}`}
+                style={{ width: '100%', minWidth: 640, display: 'block', cursor: dragRef.current ? 'grabbing' : 'grab', touchAction: 'none' }}
+                onPointerDown={onPointerDown} onPointerMove={onPointerMove}
+                onPointerUp={onPointerUp} onPointerLeave={onPointerUp}>
+                <rect x="0" y="0" width={CANVAS_W} height={CANVAS_H} fill="#FAFBFC" />
+
+                {/* ۱) محدودهٔ سایت */}
+                {geo && hulls.map((s) => {
                   const poly = parsePoly(s.polygon_json)
                   if (poly.length < 3) return null
                   return (
-                    <polygon key={s.id}
+                    <polygon key={s.id} style={{ pointerEvents: 'none' }}
                       points={poly.map((p) => `${geo.tx(p.x)},${geo.ty(p.y)}`).join(' ')}
-                      fill="#CFD8DC" fillOpacity="0.35" stroke="#78909C"
-                      strokeWidth="1.5" strokeDasharray="6 4" />
+                      fill="#EDF2EE" stroke="#9FB4A6" strokeWidth="2.2" strokeLinejoin="round" />
                   )
                 })}
+
+                {/* ۲) جاده‌ها — پلی‌لاین با پهنای واقعی از DXF */}
+                {geo && roads.map((r) => {
+                  const pts = parsePoly(r.polygon_json)
+                  if (pts.length < 2) return null
+                  const wPx = roadWidth(r.notes) * geo.s
+                  const d = pts.map((p, i) => `${i === 0 ? 'M' : 'L'} ${geo.tx(p.x)} ${geo.ty(p.y)}`).join(' ')
+                  return (
+                    <g key={r.id} style={{ pointerEvents: 'none' }}>
+                      <path d={d} fill="none" stroke="#C2CDD5" strokeWidth={wPx + 1.4} strokeLinecap="round" strokeLinejoin="round" />
+                      <path d={d} fill="none" stroke="#D8E0E5" strokeWidth={wPx} strokeLinecap="round" strokeLinejoin="round" />
+                      <path d={d} fill="none" stroke="#FFFFFF" strokeWidth={Math.max(0.9, geo.s * 0.22)}
+                        strokeDasharray={`${geo.s * 2.4} ${geo.s * 2}`} strokeLinecap="round" />
+                    </g>
+                  )
+                })}
+
+                {/* ۳) ساختمان‌ها — توپر و خوانا */}
+                {geo && buildings.map((s) => {
+                  const poly = parsePoly(s.polygon_json)
+                  if (poly.length < 3) return null
+                  const c = s.center_x != null && s.center_y != null
+                    ? { x: s.center_x, y: s.center_y } : centroid(poly)
+                  const name = (s.display_name ?? '').split('(')[0].trim()
+                  return (
+                    <g key={s.id} style={{ pointerEvents: 'none' }}>
+                      <polygon
+                        points={poly.map((p) => `${geo.tx(p.x)},${geo.ty(p.y)}`).join(' ')}
+                        fill="#D8E0E8" stroke="#8FA1B3" strokeWidth="1.6" strokeLinejoin="round" />
+                      {name && (
+                        <text x={geo.tx(c.x)} y={geo.ty(c.y)} textAnchor="middle" dominantBaseline="central"
+                          fontSize="15" fontWeight="800" fill="#546E7A" style={{ userSelect: 'none' }}>
+                          {name}
+                        </text>
+                      )}
+                    </g>
+                  )
+                })}
+
+                {/* ۴) جایگاه‌ها — با فاصلهٔ بصری (inset) و برچسب چرخیده خوانا */}
                 {geo && realSpots.map((s) => {
                   const poly = parsePoly(s.polygon_json)
                   if (poly.length < 3) return null
                   const col = CAD_STATUS[s.status]?.color ?? '#90A4AE'
-                  const cx = s.center_x ?? poly.reduce((a, p) => a + p.x, 0) / poly.length
-                  const cy = s.center_y ?? poly.reduce((a, p) => a + p.y, 0) / poly.length
+                  const c = s.center_x != null && s.center_y != null
+                    ? { x: s.center_x, y: s.center_y } : centroid(poly)
+                  const cx = geo.tx(c.x), cy = geo.ty(c.y)
+                  const deg = longAxisDeg(poly)
+                  const longPx = Math.max(...poly.map((p, i) => {
+                    const q = poly[(i + 1) % poly.length]
+                    return Math.hypot(q.x - p.x, q.y - p.y)
+                  })) * geo.s
+                  const font = Math.min(12.5, Math.max(8.5, longPx * 0.28))
+                  const inner = insetPoly(poly, 0.86)
                   return (
-                    <g key={s.id} style={{ cursor: 'pointer' }}
-                      onClick={() => { setSel(s); setSelStatus(s.status); setSelCode(s.parking_code) }}>
+                    <g key={s.id} className="cad-spot" style={{ cursor: 'pointer' }}
+                      onClick={() => { if (lastDraggedRef.current) return; setSel(s); setSelStatus(s.status); setSelCode(s.parking_code) }}>
                       <polygon
-                        points={poly.map((p) => `${geo.tx(p.x)},${geo.ty(p.y)}`).join(' ')}
-                        fill={col} fillOpacity="0.55" stroke={col} strokeWidth="2" />
-                      <text x={geo.tx(cx)} y={geo.ty(cy)}
-                        textAnchor="middle" fontSize={labelSize} fontWeight="bold" fill="#263238">
+                        points={inner.map((p) => `${geo.tx(p.x)},${geo.ty(p.y)}`).join(' ')}
+                        fill={col} fillOpacity="0.92" stroke="#FFFFFF" strokeWidth="0.8" strokeLinejoin="round" />
+                      <text x={cx} y={cy} transform={`rotate(${deg} ${cx} ${cy})`}
+                        textAnchor="middle" dominantBaseline="central"
+                        fontSize={font} fontWeight="700" fill="#132430"
+                        stroke="#FFFFFF" strokeWidth="2.6" paintOrder="stroke"
+                        style={{ userSelect: 'none' }}>
                         {s.parking_code}
+                      </text>
+                    </g>
+                  )
+                })}
+
+                {/* ۵) برچسب ردیف‌ها */}
+                {geo && rowLabels.map((s) => {
+                  if (s.center_x == null || s.center_y == null) return null
+                  const cx = geo.tx(s.center_x), cy = geo.ty(s.center_y)
+                  const name = s.display_name ?? s.parking_code
+                  const tw = name.length * 7.4 + 16
+                  return (
+                    <g key={s.id} style={{ pointerEvents: 'none' }}>
+                      <rect x={cx - tw / 2} y={cy - 10.5} width={tw} height={21} rx={7}
+                        fill="#37474F" fillOpacity="0.93" />
+                      <text x={cx} y={cy} textAnchor="middle" dominantBaseline="central"
+                        fontSize="12.5" fontWeight="800" fill="#FFFFFF" style={{ userSelect: 'none' }}>
+                        {name}
                       </text>
                     </g>
                   )
@@ -261,7 +433,7 @@ export default function CadMap() {
         <DialogContent>
           <TextField fullWidth select label="وضعیت" value={selStatus} margin="normal"
             onChange={(e) => setSelStatus(e.target.value)}>
-            {Object.entries(CAD_STATUS).map(([k, v]) => (
+            {Object.entries(CAD_STATUS).filter(([k]) => k !== 'context').map(([k, v]) => (
               <MenuItem key={k} value={k}>
                 <Stack direction="row" spacing={1} alignItems="center">
                   <Box sx={{ width: 14, height: 14, borderRadius: '50%', bgcolor: v.color }} />
