@@ -1025,6 +1025,16 @@ class PlateReader:
                 cands.append(_Candidate(fixed, conf * 0.95, f"{method}+enforce",
                                         True, box, None))
                 made_valid = True
+                # دوقلوی حرفی «٥» — آزمایش واقعی: «د» ۲۹د۷۲۸ و «ق» مگان هر دو
+                # به‌صورت ٥ خوانده می‌شوند؛ هر دو کاندیدا با ضریب برابر تا
+                # رأی‌شماری تکلیف را روشن کند
+                if len(norm) == 6 and norm[2] == '5' and fixed[2] == 'د':
+                    alt = fixed[:2] + 'ق' + fixed[3:]
+                    if alt not in emitted and pt.validate(alt)[1]:
+                        emitted.add(alt)
+                        cands.append(_Candidate(alt, conf * 0.95,
+                                                f"{method}+enforce",
+                                                True, box, None))
         for fixed, mul in pt.repair_candidates(norm):
             if fixed in emitted:
                 continue
@@ -1111,6 +1121,17 @@ class PlateReader:
                     variants.append((c_img, c_tag))
             hit_strong = False
             got_any = False
+
+            def _strong() -> bool:
+                # خروج زودهنگام فقط با خوانشِ واقعیِ قوی — کاندیدای حدسی
+                # (enforce/repair: حرفِ حدس‌زده‌شده) نباید واریانت‌های بعدی را
+                # قفل کند؛ اندازه‌گیری مگان: segِ کجِ «52د034»@۰٫۵۵ حلقه را قفل
+                # کرد و خوانشِ ۰٫۹۲۹ِ crop-enh هرگز اجرا نشد
+                return any(c.valid and c.conf >= 0.55
+                           and '+enforce' not in c.method
+                           and '+repair' not in c.method
+                           for c in cands)
+
             for v_img, v_tag in variants:
                 if cands and (time.perf_counter() - t0) > 14.0:
                     break
@@ -1122,7 +1143,7 @@ class PlateReader:
                     # خروج زودهنگام فقط با خوانشِ قوی — کاندیدای ضعیفِ ترمیمی
                     # نباید واریانت دقیق‌تر بعدی را قفل کند (۵.jpeg: ترمیمِ ضعیف
                     # seg خام در برابر «۲۲ د ۱۱۱» دقیق از seg-enhanced)
-                    if any(c.valid and c.conf >= 0.55 for c in cands):
+                    if _strong():
                         hit_strong = True
                         break
             if hit_strong:
@@ -1140,7 +1161,7 @@ class PlateReader:
                 ocr_crops_ms += time.perf_counter() - t2
                 if _feed(ocrs2x, "crop2x"):
                     got_any = True
-                    if any(c.valid and c.conf >= 0.55 for c in cands):
+                    if _strong():
                         valid_count += 1
                         continue
 
@@ -1154,7 +1175,7 @@ class PlateReader:
                 ocr_crops_ms += time.perf_counter() - t2
                 if _feed(ocrs_sh, "sharpen"):
                     got_any = True
-                    if any(c.valid and c.conf >= 0.55 for c in cands):
+                    if _strong():
                         valid_count += 1
                         continue
 
@@ -1229,6 +1250,21 @@ class PlateReader:
             else:
                 cur.score += 0.5 * min(c.score, 3.0)
                 cur.conf = max(cur.conf, c.conf)
+        # جریمهٔ حرفِ حدسی — اگر برای همین گروه‌های رقمی، خوانشِ واقعیِ حرف
+        # (بدون enforce/repair) موجود است، خانوادهٔ حدسی نباید با رأی‌های
+        # چندواریانتی بر آن غلبه کند (نمونهٔ واقعی: «76س624»@۰٫۳۷ واقعی در
+        # برابر «76ب624» حدسیِ چندرأیی)
+        _groups: dict[tuple[str, str], list[_Candidate]] = {}
+        for c in dedup.values():
+            if len(c.text) in (6, 8) and c.text[2] in pt.LETTERS:
+                _groups.setdefault((c.text[:2], c.text[3:6]), []).append(c)
+        for members in _groups.values():
+            if any('+enforce' not in m.method and '+repair' not in m.method
+                   for m in members):
+                for m in members:
+                    if '+enforce' in m.method or '+repair' in m.method:
+                        m.score *= 0.80
+
         ranked = sorted(dedup.values(), key=lambda c: -c.score)[:MAX_CANDIDATES]
 
         # الحاقیه کد استان — بعد از رأی‌شماری: کاندیدای حاصل، امتیازِ رأی‌خوردهٔ
