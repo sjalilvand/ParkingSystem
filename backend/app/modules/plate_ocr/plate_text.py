@@ -172,9 +172,36 @@ def validate(text: str) -> tuple[str, bool]:
     return t, bool(PLATE_RE.match(t))
 
 
+def _canonical_order(t: str) -> str:
+    """دفاعی — مرتب‌سازی کاندیدای معکوس به ترتیب قانونی [۲رقم][حرف][۳رقم][۲رقم استان].
+
+    مدل fa گاهی گروه‌های پلاک را RTL می‌خواند («976د77» به‌جای «77د976» و
+    «976د7746» به‌جای «77د97646»). اگر دقیقاً همان الگوی معکوس دیده شود
+    (تک‌حرف با گروه‌های رقمیِ ۳و۲ یا ۳و۴ / ۵و۲)، گروه‌ها جابه‌جا می‌شوند؛
+    ورودیِ از قبل قانونی (حرف در جایگاه ۲) دست‌نخورده برمی‌گردد.
+    """
+    if len(t) == 6 and t[2] not in LETTERS:
+        pos = [i for i, ch in enumerate(t) if not ch.isdigit()]
+        if len(pos) == 1:
+            i = pos[0]
+            pre, post = t[:i], t[i + 1:]
+            if len(pre) == 3 and len(post) == 2 and pre.isdigit() and post.isdigit():
+                return post + t[i] + pre          # «976د77» → «77د976»
+    if len(t) == 8 and t[2] not in LETTERS:
+        pos = [i for i, ch in enumerate(t) if not ch.isdigit()]
+        if len(pos) == 1:
+            i = pos[0]
+            pre, post = t[:i], t[i + 1:]
+            if len(pre) == 3 and len(post) == 4 and pre.isdigit() and post.isdigit():
+                return post[:2] + t[i] + pre + post[2:]   # «976د7746» → «77د97646»
+            if len(pre) == 5 and len(post) == 2 and pre.isdigit() and post.isdigit():
+                return post + t[i] + pre[2:] + pre[:2]    # «46976د77» → «77د97646»
+    return t
+
+
 def format_plate(t: str) -> str:
     """قالب خوانا برای نمایش: 12B345 → «۱۲ ب ۳۴۵» (نمایش RTL در UI انجام می‌شود)."""
-    t = normalize(t)
+    t = _canonical_order(normalize(t))
     if len(t) == 6:
         return f"{t[:2]} {t[2]} {t[3:]}"
     if len(t) == 8:
@@ -267,7 +294,7 @@ def to_system_normalized(plate_fa: str, letter_mapping: str | None = None) -> st
     """
     if not plate_fa:
         return None
-    t = normalize(plate_fa)
+    t = _canonical_order(normalize(plate_fa))
     if len(t) == 8:
         raw = f"{t[:2]} {t[2]} {t[3:6]} ایران {t[6:]}"
     elif len(t) == 6:

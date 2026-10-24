@@ -33,7 +33,9 @@ export default function PlateBox({ plate, size = 'md' }: Props) {
             <Box sx={seg}>{toFa(p.three)}</Box>
           </>
         ) : (
-          <Box sx={seg}>{(plate ?? '').trim() || '—'}</Box>
+          /* متن خام قابل تجزیه نیست — با جهت RTL رندر شود تا ترتیب گروه‌ها
+             مثل خواندن طبیعی پلاک باشد (۷۷ د ۹۷۶ نه ۹۷۶ د ۷۷) */
+          <Box sx={{ ...seg, direction: 'rtl' }}>{(plate ?? '').trim() || '—'}</Box>
         )}
       </Box>
       {/* کادر آبی کد استان */}

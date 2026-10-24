@@ -143,3 +143,36 @@ class TestTextualPipeline:
     ])
     def test_samples(self, raw, expect_valid):
         assert pt.validate(raw)[1] is expect_valid
+
+
+class TestCanonicalOrder:
+    """راند ۴ — مرتب‌سازی دفاعی کاندیداهای معکوس RTL (نمونه‌های واقعی کارفرما)."""
+
+    @pytest.mark.parametrize("raw,expected", [
+        # قانونی — دست‌نخورده
+        ("77د976", "77 د 976"),
+        ("52د034", "52 د 034"),
+        ("19ط382", "19 ط 382"),
+        ("77د97646", "77 د 976 | 46"),
+        # معکوس RTL — نمونه‌های اسکرین‌شات‌های اکتبر ۲۰۲۶
+        ("976د77", "77 د 976"),        # پلاک سبز ۷۷ د ۹۷۶
+        ("288ل12", "12 ل 288"),        # پلاک موقت ۱۲ ل ۲۸۸
+        ("976د7746", "77 د 976 | 46"),
+        ("46976د77", "77 د 976 | 46"),
+    ])
+    def test_format_plate_reorder(self, raw, expected):
+        assert pt.format_plate(raw) == expected
+
+    @pytest.mark.parametrize("raw,expected", [
+        ("77د97646", "77D976IR46"),
+        ("976د7746", "77D976IR46"),
+        ("46976د77", "77D976IR46"),
+        ("288ل12", "12L288"),
+    ])
+    def test_system_reorder(self, raw, expected):
+        assert pt.to_system_normalized(raw) == expected
+
+    def test_canonical_passthrough(self):
+        # ورودی از قبل قانونی نباید هیچ تغییری کند
+        assert pt._canonical_order("77د97646") == "77د97646"
+        assert pt._canonical_order("12ب345") == "12ب345"
