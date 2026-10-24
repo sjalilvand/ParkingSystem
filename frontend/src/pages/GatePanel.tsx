@@ -12,6 +12,7 @@ import { api, apiErrorFa } from '../api/client'
 import { useLiveEvents } from '../api/ws'
 import { decisionColors, decisionFa, reasonFa } from '../app/theme'
 import PlateBox from '../components/PlateBox'
+import CameraBox from '../components/CameraBox'
 import { parsePlateRaw } from '../components/PlateInput'
 import { durationFa, faDate, money } from '../utils/format'
 import { formatJalali } from '../components/JalaliDateTime'
@@ -97,7 +98,8 @@ function GateSide({ direction, live, defaultPlate }: { direction: 'IN' | 'OUT'; 
   const [busy, setBusy] = useState(false)
   const [paid, setPaid] = useState(false)
   const [fined, setFined] = useState(false)
-  const gateKey = useRef('gate-dev-key')
+  const gateKeyRef = useRef('gate-dev-key')
+  const [gateKey, setGateKey] = useState('gate-dev-key')
   const lastLive = useRef<string | null>(null)
 
   useEffect(() => {
@@ -113,11 +115,17 @@ function GateSide({ direction, live, defaultPlate }: { direction: 'IN' | 'OUT'; 
     colors: Record<string, string>
   } | null>(null)
   const [driverReq, setDriverReq] = useState<string | null>(null)
-  const [camTick, setCamTick] = useState(0)
+  // پلاک خوانده‌شده از دوربین (کپچر دستی) → پر شدن فیلد پلاک
   useEffect(() => {
-    const t = setInterval(() => setCamTick((x) => x + 1), 2500)
-    return () => clearInterval(t)
-  }, [])
+    const onCam = (e: Event) => {
+      const d = (e as CustomEvent<{ side: string; plate: string }>).detail
+      if (d?.plate && (d.side === (isEntry ? 'IN' : 'OUT'))) {
+        setPlate((cur) => (cur ? cur : d.plate))
+      }
+    }
+    window.addEventListener('camera-plate', onCam)
+    return () => window.removeEventListener('camera-plate', onCam)
+  }, [isEntry])
   const [receipt, setReceipt] = useState<null | {
     template: { name: string; paper_width_mm: number; sections: { key: string; visible: boolean }[]; header_text?: string | null; footer_text?: string | null; show_trial_badge: boolean }
     data: Record<string, string | number | null>
@@ -128,7 +136,12 @@ function GateSide({ direction, live, defaultPlate }: { direction: 'IN' | 'OUT'; 
 
   // کلید گیت از سرور (چون در production با dev-key فرق دارد)
   useEffect(() => {
-    api.get('/ops/gate-key').then((r) => { if (r.data?.key) gateKey.current = r.data.key }).catch(() => {})
+    api.get('/ops/gate-key').then((r) => {
+      if (r.data?.key) {
+        gateKeyRef.current = r.data.key
+        setGateKey(r.data.key)
+      }
+    }).catch(() => {})
   }, [])
 
   // تشخیص زنده ساکن/مهمان هنگام تایپ
@@ -186,7 +199,7 @@ function GateSide({ direction, live, defaultPlate }: { direction: 'IN' | 'OUT'; 
         gate_code: gateCode, direction, plate_raw: plate,
         source_event_id: crypto.randomUUID(), confidence: 97.5,
         driver_request: driverReq || undefined,
-      }, { headers: { 'X-API-Key': gateKey.current } })
+      }, { headers: { 'X-API-Key': gateKeyRef.current } })
       setResult(r.data)
       setDriverReq(null)
     } catch (err) {
@@ -280,16 +293,7 @@ function GateSide({ direction, live, defaultPlate }: { direction: 'IN' | 'OUT'; 
             </Button>
           ))}
         </form>
-        <Box sx={{ mb: 2, borderRadius: 2, overflow: 'hidden', border: '2px solid #E3EAF2', position: 'relative' }}>
-            <img
-              src={`http://localhost:8000/api/v1/camera/snapshot/${isEntry ? 'IN' : 'OUT'}?t=${camTick}&api_key=gate-dev-key`}
-              alt={isEntry ? 'دوربین ورود' : 'دوربین خروج'}
-              style={{ width: '100%', display: 'block', aspectRatio: '16/6', objectFit: 'cover', backgroundColor: '#111' }}
-              onError={(e) => { (e.target as HTMLImageElement).style.opacity = '0.3' }}
-            />
-            <Chip size="small" label={isEntry ? '📹 دوربین ورود — زنده' : '📹 دوربین خروج — زنده'}
-              sx={{ position: 'absolute', top: 8, right: 8, bgcolor: 'rgba(0,0,0,.55)', color: '#fff' }} />
-          </Box>
+        <CameraBox side={isEntry ? 'IN' : 'OUT'} gateKey={gateKey} />
         {driverReq && (
           <Alert severity="info" sx={{ mt: 1 }}
             action={<Button size="small" onClick={() => setDriverReq(null)}>لغو</Button>}>

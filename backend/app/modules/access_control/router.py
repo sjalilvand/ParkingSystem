@@ -1,9 +1,10 @@
 import json
 import secrets
 import time
+import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -129,6 +130,178 @@ async def plate_detected(body: PlateDetectedRequest, db: AsyncSession = Depends(
         return result
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
+
+
+# ---------------------------------------------------------------------------
+# الحاقیه §۶ — سناریو A: دریافت مستقیم رویداد از دوربین‌های پلاک‌خوان ANPR
+#   (Hikvision / Dahua / UpCam / عمومی). دوربین به این آدرس POST می‌زند:
+#     http://<سرور>:<پورت>/api/v1/gate/events/anpr/GATE-IN-01/IN?api_key=<کلید گیت>
+#   بدنهٔ پذیرفته‌شده: JSON تودرتو / XML / متن ساده / multipart (ISAPI) —
+#   همچنین پلاک می‌تواند در خود query string باشد (?plate=12ب345ایران11).
+# ---------------------------------------------------------------------------
+_ANPR_PLATE_KEYS = (
+    "plate", "platenumber", "plate_number", "plateno", "plate_no", "platestring",
+    "licenseplate", "license_plate", "lpnumber", "carNumber".lower(),
+    "platenos", "carnumber", "licencenumber", "licensenumber",
+)
+
+
+async def _require_gate_key_relaxed(
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+    api_key: str | None = None,
+) -> None:
+    """احراز دوربین: X-API-Key یا api_key در query (دوربین‌ها هدر نمی‌فرستند) یا Bearer."""
+    if x_api_key and secrets.compare_digest(x_api_key, settings.GATE_API_KEY):
+        return
+    if api_key and secrets.compare_digest(api_key, settings.GATE_API_KEY):
+        return
+    if credentials is not None:
+        try:
+            payload = decode_token(credentials.credentials)
+            if payload.get("type") == "access":
+                return
+        except Exception:
+            pass
+    raise HTTPException(status_code=401, detail="GATE_AUTH_FAILED")
+
+
+def _dig_plate(obj) -> str | None:
+    keys = set(_ANPR_PLATE_KEYS)
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            if str(k).lower() in keys and isinstance(v, (str, int)) and str(v).strip():
+                return str(v).strip()
+        for v in obj.values():
+            r = _dig_plate(v)
+            if r:
+                return r
+    elif isinstance(obj, list):
+        for v in obj:
+            r = _dig_plate(v)
+            if r:
+                return r
+    return None
+
+
+def _plate_from_text(text: str) -> str | None:
+    import re
+    alt = "|".join(re.escape(k) for k in _ANPR_PLATE_KEYS)
+    m = re.search(rf'"(?:{alt})"\s*:\s*"([^"]+)"', text, re.I)
+    if m:
+        return m.group(1)
+    m = re.search(rf"<(?:{alt})>\s*([^<]+?)\s*</", text, re.I)
+    if m:
+        return m.group(1)
+    # الگوی مستقیم پلاک ایرانی در متن: 12ب345ایران11 / 12B345IR11 / ۱۲ ب ۳۴۵ ایران ۱۱
+    m = re.search(r"\d{2}[\s\u200c]*[بپتثجچخدذرزژسشصضطظعغفقکگلمنوهابیاA-Zآ-ی][\s\u200c]*\d{3}"
+                  r"(?:[\s\u200c]*(?:ایران|IR|ir))?(?:[\s\u200c]*\d{2})?", text)
+    if m:
+        return m.group(0).strip()
+    return None
+
+
+def _extract_anpr_plate(raw_body: bytes, content_type: str) -> str | None:
+    """استخراج پلاک از JSON / XML / متن / multipart."""
+    text = (raw_body or b"").decode("utf-8", "replace")
+    if not text.strip():
+        return None
+    ct = (content_type or "").lower()
+    if "json" in ct or text.lstrip().startswith(("{", "[")):
+        try:
+            import json
+            return _dig_plate(json.loads(text))
+        except Exception:
+            pass
+    if "multipart" in ct:
+        # همهٔ بخش‌های متنی multipart را باهم ببین (ISAPI: XML + JPEG)
+        try:
+            from email.parser import Parser
+            from email.policy import default as epolicy
+            msg = Parser(policy=epolicy).parsestr(
+                "Content-Type: " + (content_type or "") + "\r\n\r\n" + text)
+            for part in msg.walk():
+                if part.get_content_type().startswith(("text/", "application/json", "application/xml")):
+                    try:
+                        payload = part.get_payload(decode=True) or b""
+                        found = _plate_from_text(payload.decode("utf-8", "replace"))
+                        if found:
+                            return found
+                        import json as _json
+                        try:
+                            found = _dig_plate(_json.loads(payload.decode("utf-8", "replace")))
+                            if found:
+                                return found
+                        except Exception:
+                            pass
+                    except Exception:
+                        continue
+        except Exception:
+            pass
+        return _plate_from_text(text)
+    return _plate_from_text(text)
+
+
+async def _handle_anpr(request: Request, db: AsyncSession,
+                       gate_code: str | None, direction: str | None,
+                       _: object) -> dict:
+    # ۱) پلاک در query string (بسیاری از دوربین‌ها فقط query می‌فرستند)
+    plate = request.query_params.get("plate") or request.query_params.get("PlateNo") \
+        or request.query_params.get("plateNumber")
+    raw_body = await request.body()
+    ct = request.headers.get("content-type", "")
+    # ۲) پلاک در بدنه (JSON/XML/text/multipart)
+    if not plate:
+        plate = _extract_anpr_plate(raw_body, ct)
+    if not plate:
+        raise HTTPException(status_code=422,
+                            detail="PLATE_NOT_FOUND_IN_PAYLOAD — پلاک در query یا بدنهٔ ارسالی یافت نشد")
+    gate_code = (gate_code or request.query_params.get("gate") or request.query_params.get("gate_code")
+                 or "GATE-IN-01").upper()
+    direction = (direction or request.query_params.get("direction") or "IN").upper()
+    if direction not in ("IN", "OUT"):
+        direction = "IN"
+    try:
+        confidence = float(request.query_params.get("confidence") or 0) or None
+    except (TypeError, ValueError):
+        confidence = None
+    try:
+        result = await GateDecisionService.process_plate_event(
+            db,
+            gate_code=gate_code,
+            direction=direction,
+            plate_raw=plate,
+            source_event_id=f"anpr-{uuid.uuid4()}",
+            confidence=confidence,
+            raw_payload={"source": "anpr-camera",
+                         "content_type": ct,
+                         "query": dict(request.query_params)},
+        )
+        await _notify_gate_decision(db, gate_code, plate, result)
+        return {
+            "ok": True,
+            "decision": result.get("decision"),
+            "decision_reason": result.get("decision_reason"),
+            "barrier_action": result.get("barrier_action"),
+            "duplicate": result.get("duplicate", False),
+            "plate": result.get("plate", {}).get("normalized"),
+        }
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
+@router.post("/events/anpr")
+async def anpr_event(request: Request,
+                     db: AsyncSession = Depends(get_db),
+                     _: object = Depends(_require_gate_key_relaxed)):
+    return await _handle_anpr(request, db, None, None, _)
+
+
+@router.post("/events/anpr/{gate_code}/{direction}")
+async def anpr_event_gate(request: Request, gate_code: str, direction: str,
+                          db: AsyncSession = Depends(get_db),
+                          _: object = Depends(_require_gate_key_relaxed)):
+    return await _handle_anpr(request, db, gate_code, direction, _)
 
 
 @router.post("/access/check")

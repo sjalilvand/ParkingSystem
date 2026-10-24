@@ -106,6 +106,28 @@ class Settings(BaseSettings):
     PLATE_REVIEW_LOW_CONF: float = 0.70          # زیر این اطمینان → NEEDS_REVIEW (کالیبراسیون واقعی: عکس سخت ۰٫۴۵-۰٫۶۷)
 
     # ------------------------------------------------------------------
+    # الحاقیه §۶ — دوربین‌های گیت (سناریو A/B) و حلقهٔ OCR خودکار
+    # سناریو A: دوربین ANPR (Hikvision/Dahua) خودش پلاک می‌خواند و رویداد
+    #   HTTP POST می‌فرستد به /api/v1/gate/events/anpr/...  (کلید گیت)
+    # سناریو B: دوربین RTSP معمولی → حلقهٔ poller بک‌اند فریم می‌گیرد،
+    #   با موتور EasyOCR داخلی پلاک می‌خواند و رویداد گیت می‌سازد.
+    # CAMERA_SNAPSHOT_DIR: محل ذخیرهٔ فریم‌ها (در Docker: /data روی volume ماندگار)
+    # CAMERA_POLL_ENABLED: حلقهٔ OCR خودکار (فقط وقتی وابستگی‌های OCR نصب باشند)
+    # CAMERA_POLL_INTERVAL: فاصلهٔ خواندن پلاک از هر دوربین (ثانیه)
+    # CAMERA_MIN_CONF: حداقل اطمینان برای ثبت رویداد از دوربین
+    # CAMERA_DEDUPE_TTL: پلاک تکراری در این بازه دوباره رویداد نمی‌سازد (ثانیه)
+    # BARRIER_RELAY_URL: اگر تنظیم شود، فرمان راهبند به این URL POST می‌شود
+    #   (رلهٔ واقعی راهبند — خالی = فقط ثبت رویداد و اعلان)
+    # ------------------------------------------------------------------
+    CAMERA_SNAPSHOT_DIR: str = "logs/cameras"
+    CAMERA_POLL_ENABLED: bool = True
+    CAMERA_POLL_INTERVAL: float = 10.0
+    CAMERA_MIN_CONF: float = 0.30
+    CAMERA_DEDUPE_TTL: float = 20.0
+    CAMERA_CONNECT_TIMEOUT: float = 8.0
+    BARRIER_RELAY_URL: str = ""
+
+    # ------------------------------------------------------------------
     # الحاقیه §۴ — همگام‌سازی روزانه Google Sheets (شیت خودروها)
     # حساب سرویس فقط‌خواندنی؛ کلید تطبیق = source_system + external_vehicle_id
     # اجرای زمان‌بندی‌شده: روزانه ۰۳:۰۰ به وقت تهران + اجرای دستی از پنل.

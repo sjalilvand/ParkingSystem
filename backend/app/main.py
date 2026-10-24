@@ -68,7 +68,25 @@ async def lifespan(app: FastAPI):
             logger.warning(f"[lifespan] plate-ocr warmup skipped: {exc}")
 
     _threading.Thread(target=_ocr_warmup, daemon=True).start()
+
+    # الحاقیه §۶ — حلقهٔ دوربین‌های گیت (سناریو B): RTSP → OCR داخلی → رویداد گیت
+    # فقط با وابستگی‌های OCR (INSTALL_OCR=true) و CAMERA_POLL_ENABLED=true اجرا می‌شود.
+    poller_task = None
+    try:
+        from app.modules.camera import poller as camera_poller
+        poller_task = camera_poller.start()
+        if poller_task is not None:
+            logger.info("[lifespan] camera poller started")
+    except Exception as exc:  # noqa: BLE001 — دوربین هرگز بوت را نبندد
+        logger.warning(f"[lifespan] camera poller start FAILED: {exc}")
+
     yield
+    if poller_task:
+        try:
+            from app.modules.camera import poller as camera_poller
+            await camera_poller.stop()
+        except Exception:  # noqa: BLE001
+            pass
     if sync_task:
         sync_task.cancel()
         try:
