@@ -128,6 +128,9 @@ else { $nodeCmd = (Get-Command node -ErrorAction SilentlyContinue).Source }
 if (-not $nodeCmd) { Write-Host "  ✗ Node یافت نشد (tools\node یا PATH)" -ForegroundColor Red; exit 1 }
 $npmCmd = $nodeCmd.Replace("node.exe", "npm.cmd")
 if (-not (Test-Path $npmCmd)) { $npmCmd = (Get-Command npm.cmd -ErrorAction SilentlyContinue).Source }
+# Node باید در PATH جلسه باشد — وگرنه npm.cmd فرزندِ cmd ارور «node is not recognized» می‌دهد
+$nodeDir = Split-Path -Parent $nodeCmd
+if ($nodeDir -and (($env:PATH -split ';') -notcontains $nodeDir)) { $env:PATH = "$nodeDir;$env:PATH" }
 Write-Host "  Node: $nodeCmd" -ForegroundColor Gray
 
 if (-not (Test-Path (Join-Path $frontend "node_modules"))) {
