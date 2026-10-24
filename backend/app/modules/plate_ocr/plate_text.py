@@ -56,19 +56,31 @@ _ARABIC_FIX = str.maketrans({"ك": "ک", "ي": "ی", "ى": "ی", "ھ": "ه", "�
 
 PLATE_RE = re.compile(rf"^(\d{{2}})([{LETTERS}])(\d{{3}})(?:IR)?(\d{{2}})?$")
 
-# نگاشت "شباهت بصری" رقم→حرف (فقط حروف رسمی) — وقتی OCR حرف وسط را رقم خوانده.
+# نگاشت "شباهت بصری" رقم→حرف (فقط حروف رسمی) — وقتی OCR حرف وسط پلاک را رقم خوانده.
 # توجه: این نگاشت هیوریستیک است؛ کاندیدای حاصل با ضریب اطمینان کمتر رتبه می‌شود.
+# مقدار لیستی = چند حدس به‌ترتیب اولویت:
+#   ۹→[ق،ع] — سایپای شب: حرف ع «٩» خوانده شد؛
+#   ۲→[ب،م] — پژوی شب: مِ «94م994» به‌صورت «٢» خوانده شد («٩٤٢٩٩٤٤»)
 _VIS_DIGIT_TO_LETTER = {
-    "0": "ه", "1": "ل", "2": "ب", "3": "ع", "4": "ه",
+    "0": "ه", "1": "ل", "2": ["ب", "م"], "3": "ع", "4": "ه",
     # ٥ و د دوقلوی بصری‌اند — دو آزمایش واقعی: «د» پلاک به‌صورت «٥» خوانده شد
-    "5": "د", "6": "ط", "7": "ن", "8": "ه", "9": "ق",
+    "5": "د", "6": "ط", "7": "ن", "8": "ه", "9": ["ق", "ع"],
 }
+
+
+def _vis_letters(ch: str) -> list[str]:
+    """حدس‌های حرفِ برای رقمی که جای حرف خوانده شده — همیشه لیست (شاید خالی)."""
+    v = _VIS_DIGIT_TO_LETTER.get(ch)
+    if v is None:
+        return []
+    return [v] if isinstance(v, str) else list(v)
 
 # حروف پرتکرار پلاک ایران (به‌ترتیب فراوانی) — برای بازسازی حرف وسط وقتی OCR
 # آن را رقم خوانده است (مثال واقعی: «ب» → «۸» و متن ۷ نویسه‌ای نامعتبر).
-# «د» در آزمایش‌های میدانی مکرر دیده شد (۲۹د۷۲۸، ۲۲د111، ۷۷د۹76) و حذفش
-# خانوادهٔ ترمیمِ پلاک‌های «…د…» را از دست می‌داد (مگان: ۵۴ق۲۴۲ با دِ پلاک)
-_PRIOR_LETTERS = "بسدلمهطقنو"
+# «د» در آزمایش‌های میدانی مکرر دیده شد (۲۹د۷۲۸، ۲۲د111، ۷۷د۹76)؛
+# «ع» هم افزوده شد — سایپای شب: «٨٧٩» + «٥٧٨٥» ← حذف رقم زائد ← «87؟578» و
+# حرف واقعی ع بود؛ بدون ع در فهرست، کاندیدای درست هرگز ساخته نمی‌شد.
+_PRIOR_LETTERS = "بسدلمهطقنوع"
 
 REPAIR_DEL_CONF = 0.85      # ضریب اطمینان کاندیدای حاصل از حذف نویسهٔ اضافه
 REPAIR_LETTER_CONF = 0.60   # ضریب اطمینان کاندیدای حاصل از جایگزینی حرف
@@ -114,7 +126,11 @@ def repair_candidates(text: str) -> list[tuple[str, float]]:
                 out.append((n, REPAIR_DEL_CONF))
                 continue
             if len(s) == 6 and s[:2].isdigit() and s[2].isdigit() and s[3:].isdigit():
-                for L in _PRIOR_LETTERS:
+                # حرفِ حدسی: اول «حرفِ شبیه» همان رقم (نگاشت بصری — مانند ۹→ع/ق)،
+                # بعد حروف پرتکرار — سقف ۴ حدس برای جلوگیری از سیل کاندیدا
+                guesses = _vis_letters(s[2]) + [L for L in _PRIOR_LETTERS
+                                                if L not in _vis_letters(s[2])]
+                for L in guesses[:4]:
                     out.append((s[:2] + L + s[3:], REPAIR_LETTER_CONF))
             elif len(s) == 6 and s[:3].isdigit() and s[3] in LETTERS and s[4:].isdigit():
                 # الگوی آینه‌ای پس از حذف از ۷ نویسه (خوانش واقعی ۲.jfif:
@@ -229,7 +245,8 @@ def enforce_format(text: str) -> str:
     out = []
     for i, ch in enumerate(t):
         if i == 2:
-            out.append(ch if ch in LETTERS else _VIS_DIGIT_TO_LETTER.get(ch, "ب"))
+            vis = _vis_letters(ch)
+            out.append(ch if ch in LETTERS else (vis[0] if vis else "ب"))
         else:
             out.append(ch if ch.isdigit() else "0")
     return "".join(out)
@@ -243,6 +260,17 @@ def assemble_from_pieces(pieces: list[tuple[float, str, float]]) -> list[tuple[s
     ترکیبی که بتوان آن را به قالب ایران «۲رقم + حرف + ۳رقم (+۲رقم استان)»
     رساند، کاندیدای معتبر است.
 
+    ترتیب اتصال (آزمایش شب اکتبر ۲۰۲۶ — پژو ۹۴م۹۹۴): قطعات با x صعودی مرتب
+    و برای هر ترکیب، «ترتیب RTL» (از راست به چپ — ۲رقم، حرف، ۳رقم، استان)
+    اول آزمایش می‌شود؛ چون پلاک ایران از راست خوانده می‌شود و در حالت
+    امتیاز برابر، هرما در دیکشنری خروجی تعیین‌کنندهٔ برنده است — نسخهٔ قبلی
+    ترتیب LTR را اول می‌گذاشت و «59ه29944» (غلط) بر «94ب99445» (درست) می‌برد.
+
+    کاندیداهای جایگزین حرف: خوانش‌هایی که حرف وسطشان «حدس زده شده»
+    (مسیر enforce) با حروف پرتکرار پلاک هم به‌صورت موازی ساخته می‌شوند
+    (×۰٫۷۰) — پژوی شب: «94ب99445» از حرفِ حدسی + «94م99445» (حرف واقعی م)
+    در لیست می‌ماند تا تطبیق با خودروهای ثبت‌شده بتواند پیدا کند.
+
     امتیازدهی: کمینهٔ اطمینان قطعات؛ ضریب‌ها:
       * استفاده از قطعات بیشتر → ×(۱ + ۰٫۰۶×(r−۱))
       * داشتن کد استان (۸ نویسه) → +۰٫۱۰
@@ -254,6 +282,7 @@ def assemble_from_pieces(pieces: list[tuple[float, str, float]]) -> list[tuple[s
     from itertools import combinations
 
     out: dict[str, float] = {}
+    enforced: set[str] = set()      # متن‌هایی که حرف وسطشان حدس زده شده
     toks = []
     for x, t, c in pieces:
         nt = normalize(t)
@@ -261,9 +290,12 @@ def assemble_from_pieces(pieces: list[tuple[float, str, float]]) -> list[tuple[s
             toks.append((float(x), nt, float(c)))
     if not toks:
         return []
+    toks.sort(key=lambda t: t[0])   # چپ → راست (ترتیب فیزیکی پلاک)
     for r in range(1, min(4, len(toks)) + 1):
         for combo in combinations(toks, r):
-            for seq in (combo, tuple(reversed(combo))):
+            # RTL اول — پلاک ایران از راست خوانده می‌شود؛ در امتیاز برابر،
+            # هرما (اولین درج در out) باید نسخهٔ RTL باشد
+            for seq in (tuple(reversed(combo)), combo):
                 s = "".join(t for _, t, _ in seq)
                 if not (6 <= len(s) <= 8):
                     continue
@@ -277,6 +309,7 @@ def assemble_from_pieces(pieces: list[tuple[float, str, float]]) -> list[tuple[s
                         score += 0.10
                     if s2 != s:            # حرف وسط حدس‌زده‌شده (enforce)
                         score *= 0.80
+                        enforced.add(n)
                     if r == 1:             # قطعهٔ واحد چسبیده — کم‌اتکاتر
                         score *= 0.85
                     if n not in out or out[n] < score:
@@ -291,6 +324,18 @@ def assemble_from_pieces(pieces: list[tuple[float, str, float]]) -> list[tuple[s
                         score2 = min_conf * (1.0 + 0.06 * (r - 1)) * 0.75 * mul
                         if n2 not in out or out[n2] < score2:
                             out[n2] = round(min(0.99, score2), 4)
+    # کاندیداهای جایگزین حرف — فقط برای حرفِ حدسیِ enforce (اطمینان ×۰٫۷۰):
+    # حرف واقعی (م/س/ل/...) در لیست می‌ماند تا جستجوی خودروهای ثبت‌شده شانس
+    # تطبیق داشته باشد؛ رتبه‌بندی موتور نویز را پایین نگه می‌دارد
+    for base_txt, base_sc in list(out.items()):
+        if base_txt not in enforced or len(base_txt) not in (6, 8):
+            continue
+        for L in _PRIOR_LETTERS[:4]:
+            if L == base_txt[2]:
+                continue
+            alt = base_txt[:2] + L + base_txt[3:]
+            if validate(alt)[1] and alt not in out:
+                out[alt] = round(base_sc * 0.70, 4)
     return sorted(out.items(), key=lambda kv: -kv[1])
 
 

@@ -48,7 +48,7 @@ BOX_EXPAND = 0.08
 # ۰٫۱۲ — اندازه‌گیری واقعی (اکتبر ۲۰۲۶): خوانش‌های درست عکس‌های خیابانی اغلب
 # ۰٫۱۵-۰٫۴۵‌اند؛ دروازهٔ ۰٫۲۰ آن‌ها را پیش از اسمبلر حذف می‌کرد → «صفر کاندیدا»
 MIN_CANDIDATE_CONF = 0.12
-MAX_CANDIDATES = 8
+MAX_CANDIDATES = 12   # ۱۲ — خانوادهٔ ترمیمیِ پلاک واقعی (مثل 87ع578 سایپای شب) جا نمی‌شد
 
 PLATE_COLORS_FA = {
     "white": "سفید (شخصی)",
@@ -641,7 +641,10 @@ class PlateReader:
                         # هم از assemble و هم از enforce → رأی دوبرابر)
                         if len(pieces) >= 2:
                             try:
-                                for assembled, sc in pt.assemble_from_pieces(pieces)[:3]:
+                                # سقف ۱۰ — خانوادهٔ ترمیمیِ حرف واقعی (مثل 87ع578)
+                                # در امتیاز برابر دیرتر درج می‌شود؛ سقف کوچک‌تر آن
+                                # را پیش از رسیدن به موتور حذف می‌کرد
+                                for assembled, sc in pt.assemble_from_pieces(pieces)[:10]:
                                     if sc >= MIN_CANDIDATE_CONF:
                                         out.append((assembled, min(0.99, sc), "easyocr-assemble"))
                             except Exception:
@@ -994,13 +997,38 @@ class PlateReader:
         for bb, _txt, _conf in res:
             xs = [p[0] for p in bb]
             ys = [p[1] for p in bb]
-            x1, y1, x2, y2 = min(xs) * s, min(ys) * s, max(xs) * s, max(ys) * s
+            boxes.append((min(xs) * s, min(ys) * s, max(xs) * s, max(ys) * s))
+        # الحاقیه شب — ادغام جعبه‌های هم‌خط «قبل از» فیلتر نسبت: CRAFT پلاکِ کج
+        # را دو تکه می‌دهد (سایپای شب: «٨٧ 9» + «٥٧٨» با نسبت ~۱٫۵ — فیلتر قدیمی
+        # >۲ هر دو را حذف می‌کرد و پلاک کامل گم می‌شد)
+        merged_any = True
+        while merged_any:
+            merged_any = False
+            for i in range(len(boxes)):
+                for j in range(i + 1, len(boxes)):
+                    a, b = boxes[i], boxes[j]
+                    xo = min(a[2], b[2]) - max(a[0], b[0])
+                    yo = min(a[3], b[3]) - max(a[1], b[1])
+                    ha, hb = a[3] - a[1], b[3] - b[1]
+                    if xo > 0 and yo > 0.45 * min(ha, hb):
+                        boxes[i] = (min(a[0], b[0]), min(a[1], b[1]),
+                                    max(a[2], b[2]), max(a[3], b[3]))
+                        boxes.pop(j)
+                        merged_any = True
+                        break
+                if merged_any:
+                    break
+        # فیلتر نسبت/مساحت — کف نسبت ۲٫۰→۱٫۳ (پلاک کج ~۱۵ درجه)
+        filtered: list[tuple] = []
+        for bx in boxes:
+            x1, y1, x2, y2 = bx
             w_, h_ = x2 - x1, y2 - y1
-            if h_ < 8 or w_ < 2.0 * h_ or w_ > 9.5 * h_:
+            if h_ < 8 or w_ < 1.3 * h_ or w_ > 9.5 * h_:
                 continue
             if w_ * h_ < 0.0008 * W * H:
                 continue
-            boxes.append((int(x1), int(y1), int(x2), int(y2)))
+            filtered.append((int(x1), int(y1), int(x2), int(y2)))
+        boxes = filtered
         # حذف هم‌پوشان + اولویت نسبت ابعاد
         uniq: list[tuple] = []
         for b in sorted(boxes, key=_detect_priority, reverse=True):
@@ -1066,6 +1094,15 @@ class PlateReader:
         # خوانش متمرکز کد استان هر برش — کلید: جعبهٔ تشخیص
         prov_by_box: dict[tuple, list[tuple[str, float]]] = {}
 
+        # الحاقیه شب — تصویر تاریک: ماسک سفید/قاب کلاسیک ناپایدار است
+        # (اندازه‌گیری پژو/سایپای شب: mean ۴۱-۴۸ → تشخیص صفر یا باکس اشتباه)
+        dark_image = False
+        if HAS_CV2 and bgr is not None and bgr.size:
+            try:
+                dark_image = float(cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY).mean()) < 80.0
+            except Exception:
+                pass
+
         t1 = time.perf_counter()
         dets = self._detect(bgr)          # تشخیص روی تصویر خام — مقاوم‌تر
         detect_ms = round((time.perf_counter() - t1) * 1000)
@@ -1107,10 +1144,6 @@ class PlateReader:
             # خوانش کل برش + بخش اصلی (بدون نوار پرچم/کادر/کد استان — ۵.jpeg)
             crop_raw = self._plain_crop(bgr, box, enhance_img=False)
             crop_enh = self._plain_crop(bgr, box)
-            # مسیر کد استان — قبل از خوانش اصلی اجرا می‌شود تا با خروجِ
-            # زودهنگامِ مسیرهای بعدی هم در دست بماند (۲ فراخوانی OCR ریز)
-            if (time.perf_counter() - t0) < 10.0:
-                prov_by_box[box] = self._province_candidates(crop_raw, crop_enh)
             variants: list[tuple] = []
             for c_img, c_tag in (
                     (crop_raw, "crop"),
@@ -1119,6 +1152,10 @@ class PlateReader:
                     (self._seg_main(crop_enh) if crop_enh is not None else None, "seg-enh")):
                 if c_img is not None:
                     variants.append((c_img, c_tag))
+            # حالت شب — فقط برش خام و enhance: واریانت‌های تکمیلی روی باکس‌های
+            # مشکوکِ detect فقط زمان می‌سوزند (پژوی شب: باکس اشتباه ~۳٫۵ ثانیه)
+            if dark_image:
+                variants = [v for v in variants if v[1] in ("crop", "crop-enh")]
             hit_strong = False
             got_any = False
 
@@ -1146,10 +1183,19 @@ class PlateReader:
                     if _strong():
                         hit_strong = True
                         break
+            # خوانش متمرکز کد استان — فقط وقتی از این باکس کاندیدای معتبری
+            # ساخته شده (برای باکس بی‌ثمر ~۱ تا ۲ ثانیه صرفه‌جویی؛ ادغام کد استان
+            # فقط روی کاندیدای معتبر اعمال می‌شود)
+            if got_any and (time.perf_counter() - t0) < 10.0:
+                prov_by_box[box] = self._province_candidates(crop_raw, crop_enh)
             if hit_strong:
                 valid_count += 1
                 continue
             if crop_raw is None:
+                continue
+            # حالت شب — برشِ بی‌ثمر را با مسیرهای گران (2x/تیش/وارپ) دنبال نکن؛
+            # مسیر اصلیِ شب «مکان‌یابی کل-تصویر» است
+            if dark_image and not got_any:
                 continue
 
             # مسیر ۲: بزرگ‌نمایی ۲ برابری — خوانش‌های ریز/بلوری را نجات می‌دهد
@@ -1208,22 +1254,37 @@ class PlateReader:
         else:
             t3 = time.perf_counter()
             locate_boxes = self._fullimage_locate(bgr)
+            # اولویت با مساحت — بلوک متن پلاک بزرگ‌ترین جعبهٔ سالم است؛
+            # جعبه‌های کوچک زباله نباید بودجهٔ 2x را ببرند
+            locate_boxes = sorted(locate_boxes,
+                                  key=lambda b: (b[2] - b[0]) * (b[3] - b[1]),
+                                  reverse=True)
             located_any = False
+            locate_valid: tuple | None = None
+            lcrop_by_box: dict[tuple, "np.ndarray"] = {}
             for li, lb in enumerate(locate_boxes[:3]):
                 lcrop = self._margin_crop(bgr, lb)
                 if lcrop is None:
                     continue
+                lcrop_by_box[lb] = lcrop
                 lvariants = [lcrop]
                 # واریانت ۲x فقط برای جعبهٔ نخست — هر جعبه اضافه ~۱ تا ۲ ثانیه
                 if li == 0 and lcrop.shape[0] < 260:
                     lvariants.append(cv2.resize(lcrop, None, fx=2, fy=2,
                                                 interpolation=cv2.INTER_CUBIC))
+                # واریانت بخش اصلی (حذف نوار پرچم/کادر استان) — سایپای شب:
+                # بهترین خوانش با «۸۷» درست فقط از همین واریانت آمد
+                if li == 0:
+                    lseg = self._seg_main(lcrop)
+                    if lseg is not None:
+                        lvariants.append(lseg)
                 for lv in lvariants:
                     for text, conf, m in self._ocr_crop(lv):
                         if conf < MIN_CANDIDATE_CONF:
                             continue
                         if self._collect(cands, text, conf, f"locate+{m}", lb):
                             located_any = True
+                            locate_valid = locate_valid or lb
             if not located_any and not locate_boxes:
                 # آخرین لنگر (رفتار قدیمی): OCR مستقیم کل تصویر — دقت پایین‌تر
                 fi = bgr
@@ -1235,6 +1296,13 @@ class PlateReader:
                     if conf < MIN_CANDIDATE_CONF:
                         continue
                     self._collect(cands, text, conf, f"fullimage+{m}", None)
+            # الحاقیه کد استان برای برشِ مکان‌یابی‌شده — پیش‌تر فقط باکس‌های
+            # detect کد می‌گرفتند (پژوی شب: برنده از مسیر locate بود و بدون
+            # کد استان می‌ماند)
+            if locate_valid is not None and (time.perf_counter() - t0) < 12.0:
+                lv_img = lcrop_by_box.get(locate_valid)
+                if lv_img is not None:
+                    prov_by_box[locate_valid] = self._province_candidates(lv_img, lv_img)
             fullimage_ms = time.perf_counter() - t3
 
         # حذف تکراری + رأی‌شماری + امتیازدهی — تکرار یک متن در واریانت‌های
@@ -1265,7 +1333,20 @@ class PlateReader:
                     if '+enforce' in m.method or '+repair' in m.method:
                         m.score *= 0.80
 
-        ranked = sorted(dedup.values(), key=lambda c: -c.score)[:MAX_CANDIDATES]
+        ranked = sorted(dedup.values(), key=lambda c: -c.score)
+        # فروپاشی خانوادهٔ حرف — ارقام یکسان با حرفِ متفاوت عملاً یک خوانش‌اند؛
+        # ۱۰ واریانت حرف، کاندیداهای با الگوی رقم متفاوت (ممکن است پلاک درست
+        # باشند) را از لیست می‌اندازند — حداکثر ۳ نماینده از هر خانوادهٔ ارقامی
+        final: list[_Candidate] = []
+        fam_count: dict[str, int] = {}
+        for c in ranked:
+            fam = (c.text[:2] + c.text[3:]) if (len(c.text) in (6, 8) and c.text[2] in pt.LETTERS) else c.text
+            n = fam_count.get(fam, 0)
+            if n >= 3:
+                continue
+            fam_count[fam] = n + 1
+            final.append(c)
+        ranked = final[:MAX_CANDIDATES]
 
         # الحاقیه کد استان — بعد از رأی‌شماری: کاندیدای حاصل، امتیازِ رأی‌خوردهٔ
         # کاندیدای پایه را به ارث می‌برد (۸رقمِ ساخته‌شده از ۶رقمِ پررأی نباید
