@@ -82,11 +82,13 @@ export default function CameraBox({ side, gateKey }: { side: 'IN' | 'OUT'; gateK
     setDialog(true)
   }
 
-  const _save = async () => {
+  const _save = async (override?: { rtsp?: string; enabled?: boolean }) => {
     setBusy(true); setMsg(null)
     try {
+      const rtsp = override?.rtsp ?? draft.rtsp
+      const enabled = override?.enabled ?? draft.enabled
       await api.put('/camera/config', {
-        sides: { ...(cfg?.sides ?? {}), [side]: { ...(camCfg ?? {}), rtsp: draft.rtsp, enabled: draft.enabled } },
+        sides: { ...(cfg?.sides ?? {}), [side]: { ...(camCfg ?? {}), rtsp, enabled } },
         poll_interval: Number(draftGlobal.interval) || 10, ocr: draftGlobal.ocr,
       })
       await loadCfg()
@@ -103,6 +105,11 @@ export default function CameraBox({ side, gateKey }: { side: 'IN' | 'OUT'; gateK
     setBusy(true); setMsg(null)
     try {
       const r = await api.post(`/camera/test/${side}`)
+      if (r.data?.suggested_rtsp) {
+        // سرور مسیر درست دوربین را پیدا کرد — خودکار اعمال و ذخیره می‌شود
+        await _save({ rtsp: r.data.suggested_rtsp, enabled: true })
+        setDraft((d) => ({ ...d, rtsp: r.data.suggested_rtsp, enabled: true }))
+      }
       setMsg({ kind: 'ok', text: r.data?.message ?? 'اتصال موفق بود' })
       setTestPreview(true)
     } catch (err) {
@@ -142,6 +149,24 @@ export default function CameraBox({ side, gateKey }: { side: 'IN' | 'OUT'; gateK
   }
 
   const anprUrl = `${window.location.origin}/api/v1/gate/events/anpr/${camCfg?.gate_code || `GATE-${side}-01`}/${camCfg?.direction || side}?api_key=${gateKey}`
+
+  // مسیرهای آمادهٔ برندها — با پایهٔ آدرسِ واردشده ترکیب می‌شوند
+  const applyPreset = (path: string) => {
+    const m = draft.rtsp.match(/^(rtsp:\/\/[^/\s]+)/i)
+    if (m) {
+      setDraft((d) => ({ ...d, rtsp: m[1] + path }))
+      setMsg(null)
+    } else {
+      setMsg({ kind: 'err', text: 'اول پایهٔ آدرس با رمز را وارد کنید؛ مثال: rtsp://admin:1234@192.168.100.230:554/stream0' })
+    }
+  }
+  const presets = [
+    { label: 'شهاب / عمومی', path: '/stream0' },
+    { label: 'هایک‌ویژن', path: '/Streaming/Channels/101' },
+    { label: 'داهوا', path: '/cam/realmonitor?channel=1&subtype=0' },
+    { label: 'یونی‌ویو', path: '/media/video1' },
+    { label: 'های‌سیلیکون', path: '/h264/ch1/main/av_stream' },
+  ]
 
   const imgSrc = live
     ? `/api/v1/camera/snapshot/${side}?t=${tick}&api_key=${encodeURIComponent(gateKey)}`
@@ -211,9 +236,17 @@ export default function CameraBox({ side, gateKey }: { side: 'IN' | 'OUT'; gateK
         <DialogContent dividers>
           <Stack spacing={2}>
             <TextField size="small" label={`آدرس RTSP دوربین ${sideFa(side)}`}
-              placeholder="rtsp://user:pass@192.168.1.108:554/Streaming/Channels/101"
+              placeholder="rtsp://admin:1234@192.168.100.230:554/stream0"
               value={draft.rtsp} onChange={(e) => setDraft((d) => ({ ...d, rtsp: e.target.value }))}
-              fullWidth multiline maxRows={2} />
+              fullWidth multiline maxRows={2}
+              helperText="اگر مسیر دقیق را نمی‌دانید، فقط پایهٔ آدرس را بنویسید (rtsp://user:pass@IP:554) و «تست اتصال» بزنید — سرور خودش مسیر درست را پیدا می‌کند" />
+            <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap" alignItems="center">
+              <Typography variant="caption" color="text.secondary">مسیر آمادهٔ برند:</Typography>
+              {presets.map((p) => (
+                <Chip key={p.path} size="small" variant="outlined" clickable
+                  label={p.label} onClick={() => applyPreset(p.path)} />
+              ))}
+            </Stack>
             <FormControlLabel
               control={<Switch checked={draft.enabled} onChange={(e) => setDraft((d) => ({ ...d, enabled: e.target.checked }))} />}
               label="دوربین فعال باشد (نمایش زنده + خواندن خودکار پلاک)" />

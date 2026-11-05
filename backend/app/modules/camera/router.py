@@ -136,6 +136,95 @@ def _capture_frame_sync(rtsp: str, out_path: Path) -> None:
             pass
 
 
+# ---------------------------------------------------------------------------
+# تشخیص خودکار مسیر RTSP — دوربین‌های ایرانی/OEM (شهاب، FullHan، های‌سیلیکون، …)
+#   دوربین‌های غیر هایک‌ویژن/داهوا معمولاً مسیر stream متفاوتی دارند؛ اگر آدرس
+#   ثبت‌شده باز نشد، مسیرهای رایج برندها با همان اعتبارنامه امتحان می‌شوند.
+# ---------------------------------------------------------------------------
+RTSP_PROBE_PATHS = [
+    "",                                      # بدون مسیر (stream پیش‌فرض برخی OEMها)
+    "/stream0",                              # FullHan / شهاب / عمومی — main stream
+    "/stream1",                              # FullHan / عمومی — sub stream
+    "/h264/ch1/main/av_stream",               # HiSilicon / EZVIZ / Tiandy
+    "/Streaming/Channels/101",                # Hikvision / HiWatch
+    "/cam/realmonitor?channel=1&subtype=0",   # Dahua / Imou
+    "/live/ch00_0",                           # Ambarella / ONVIF عمومی
+    "/media/video1",                          # Uniview
+    "/ch0_0.h264",                            # Xiaomi / برخی OEM
+    "/1/1",                                   # Tiandy (قالب جدید)
+]
+
+
+def _rtsp_base(rtsp: str) -> tuple[str, str, str]:
+    """(پایهٔ rtsp://user:pass@host:port، کاربر، رمز) از URL ثبت‌شده."""
+    from urllib.parse import urlsplit
+    try:
+        p = urlsplit(rtsp.strip())
+        userinfo = p.username or ""
+        if p.password:
+            userinfo += f":{p.password}"
+        base = "rtsp://"
+        if userinfo:
+            base += userinfo + "@"
+        base += p.hostname or ""
+        if p.port:
+            base += f":{p.port}"
+        return base, p.username or "", p.password or ""
+    except Exception:  # noqa: BLE001
+        return rtsp.rstrip("/"), "", ""
+
+
+def _open_rtsp_once(url: str, timeout_ms: int = 4000) -> bool:
+    """یک تلاش باز کردن + خواندن یک فریم با timeout کوتاه (برای probe)."""
+    cap = cv2.VideoCapture()
+    try:
+        try:
+            cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, timeout_ms)
+            cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, timeout_ms)
+        except Exception:  # noqa: BLE001 — نسخه‌های قدیمی OpenCV این props را ندارند
+            pass
+        if not cap.open(url, cv2.CAP_FFMPEG):
+            return False
+        ok, frame = cap.read()
+        return bool(ok and frame is not None and frame.size > 0)
+    except Exception:  # noqa: BLE001
+        return False
+    finally:
+        try:
+            cap.release()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _probe_rtsp_sync(rtsp: str) -> tuple[str | None, list[str]]:
+    """مسیرهای رایج برندها را با همان user/pass امتحان می‌کند.
+    خروجی: (اولین URL کار کرده یا None، فهرست «مسیر → نتیجه» بدون رمز برای عیب‌یابی)"""
+    from urllib.parse import quote
+    base, user, pw = _rtsp_base(rtsp)
+    tried: list[str] = ["(آدرس ثبت‌شده) → باز نشد"]
+    candidates = [base + p for p in RTSP_PROBE_PATHS]
+    if user:
+        # قالب XiongMai/xmeye — اعتبارنامه داخل query
+        candidates.append(
+            f"{base}/user={quote(user)}&password={quote(pw)}&channel=1&stream=0.sdp?real_stream")
+    seen = {rtsp.strip()}
+    for c in candidates:
+        if c in seen:
+            continue
+        seen.add(c)
+        shown = c.split("@")[-1] if "@" in c else c   # رمز در گزارش نمی‌آید
+        if _open_rtsp_once(c):
+            tried.append(f"{shown} → کار کرد ✔")
+            return c, tried
+        tried.append(f"{shown} → باز نشد")
+    return None, tried
+
+
+def _no_pass(url: str) -> str:
+    """URL بدون رمز برای نمایش در پیام UI."""
+    return config_store.mask_rtsp(url or "")
+
+
 def _grabber_frame(side: str) -> tuple | None:
     """اگر poller برای این سمت گیرندهٔ زنده دارد، آخرین فریم آن."""
     g = poller._grabbers.get(side)
@@ -288,20 +377,44 @@ async def test_camera(side: str,
         raise _exc("OpenCV نصب نیست (INSTALL_OCR=true + build مجدد)",
                    "OCR_DEPS_MISSING", 503)
 
+    import anyio
     t0 = time.perf_counter()
+    out = Path(settings.CAMERA_SNAPSHOT_DIR) / f"cam-test-{side}.jpg"
     try:
-        import anyio
-        out = Path(settings.CAMERA_SNAPSHOT_DIR) / f"cam-test-{side}.jpg"
         await asyncio.wait_for(
             anyio.to_thread.run_sync(_capture_frame_sync, rtsp, out),
             timeout=settings.CAMERA_CONNECT_TIMEOUT + 10)
-    except AppException:
-        raise
-    except asyncio.TimeoutError:
-        raise _exc("زمان تست به پایان رسید — دوربین پاسخ نداد", "CAMERA_TIMEOUT", 504)
-    except Exception as exc:  # noqa: BLE001
-        raise _exc(f"تست ناموفق: {type(exc).__name__}: {exc}",
-                   "CAMERA_TEST_FAILED", 502)
+    except Exception as first_exc:  # noqa: BLE001
+        # تشخیص خودکار مسیر — دوربین‌های غیرهایک‌ویژن (مثل شهاب) مسیر دیگری دارند
+        found: str | None = None
+        tried: list[str] = []
+        try:
+            found, tried = await asyncio.wait_for(
+                anyio.to_thread.run_sync(_probe_rtsp_sync, rtsp),
+                timeout=settings.CAMERA_CONNECT_TIMEOUT + 40)
+        except Exception:  # noqa: BLE001
+            found, tried = None, []
+        if found:
+            try:
+                await asyncio.wait_for(
+                    anyio.to_thread.run_sync(_capture_frame_sync, found, out),
+                    timeout=settings.CAMERA_CONNECT_TIMEOUT + 10)
+            except Exception:  # noqa: BLE001
+                found = None
+        if found:
+            ms = round((time.perf_counter() - t0) * 1000)
+            return {
+                "success": True, "side": side, "latency_ms": ms,
+                "suggested_rtsp": found,
+                "message": ("آدرس ثبت‌شده باز نشد، ولی مسیر درست دوربین خودکار شناسایی شد ✔\n"
+                            f"{_no_pass(found)}\n"
+                            "ذخیره کنید تا خواندن خودکار با همین مسیر شروع شود."),
+                "frame_url": f"/api/v1/camera/test-frame/{side}?t={int(time.time())}",
+            }
+        first_msg = getattr(first_exc, "message", None) or str(first_exc)
+        raise _exc(
+            f"اتصال RTSP باز نشد — رمز دوربین یا مسیر stream را بررسی کنید. ({first_msg})",
+            "CAMERA_UNREACHABLE", 502, {"tried": tried})
     ms = round((time.perf_counter() - t0) * 1000)
     return {
         "success": True, "side": side, "latency_ms": ms,
