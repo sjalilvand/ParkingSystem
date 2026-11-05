@@ -145,14 +145,39 @@ RTSP_PROBE_PATHS = [
     "",                                      # بدون مسیر (stream پیش‌فرض برخی OEMها)
     "/stream0",                              # FullHan / شهاب / عمومی — main stream
     "/stream1",                              # FullHan / عمومی — sub stream
+    "/11",                                   # OEM چینی (۱۱ = کانال۱/جریان اصلی) — رایج‌ترین فرمت دوربین‌های ۱۰۸۰p چینی
+    "/12",                                   # OEM چینی — کانال۱/جریان فرعی
+    "/0",                                    # OEM — جریان اصلی
+    "/1/cif",                                # OEM / V380
     "/h264/ch1/main/av_stream",               # HiSilicon / EZVIZ / Tiandy
     "/Streaming/Channels/101",                # Hikvision / HiWatch
     "/cam/realmonitor?channel=1&subtype=0",   # Dahua / Imou
-    "/live/ch00_0",                           # Ambarella / ONVIF عمومی
+    "/cam/realmonitor",                       # XMEye (قالب ساده)
+    "/live/ch00_0",                           # Ambarella / V380
+    "/live/ch0",                              # V380
     "/media/video1",                          # Uniview
+    "/onvif1",                                # YOOSEE/OEM — جریان اصلی
+    "/onvif2",                                # YOOSEE/OEM — جریان فرعی
     "/ch0_0.h264",                            # Xiaomi / برخی OEM
+    "/live0.264",                             # OEM
+    "/live1.264",                             # OEM
+    "/h264_stream",                           # OEM
+    "/av0_0",                                 # JVT
+    "/cam1/h264",                             # OEM
+    "/ucast/11",                              # OEM / V380
+    "/h264/ch1/sub/av_stream",                # HiSilicon — جریان فرعی
     "/1/1",                                   # Tiandy (قالب جدید)
 ]
+
+# استریم MJPEG روی HTTP (اگر RTSP اصلاً فعال نباشد) — cv2/ffmpeg هر دو را می‌خوانند
+HTTP_MJPEG_PATHS = [
+    "/videostream.cgi",        # OEM کلاسیک
+    "/mjpg/video.mjpg",
+    "/videostream.asf",        # ASF روی HTTP
+]
+
+# پورت‌های رایج سرویس ONVIF برای کشف خودکار نشانی استریم
+ONVIF_PORTS = (80, 8899, 8080)
 
 
 def _rtsp_base(rtsp: str) -> tuple[str, str, str]:
@@ -196,36 +221,165 @@ def _open_rtsp_once(url: str, timeout_ms: int = 4000) -> bool:
             pass
 
 
+def _onvif_stream_uri(host: str, user: str, pw: str,
+                      timeout: float = 4.0) -> tuple[str | None, list[str]]:
+    """کشف خودکار نشانی استریم از سرویس ONVIF دوربین (GetProfiles → GetStreamUri).
+    اگر دوربین ONVIF داشته باشد، مسیر/پورت دقیق را خودش می‌گوید — حتی اگر
+    پورت RTSP غیر از 554 باشد.
+    خروجی: (URI با اعتبارنامهٔ تزریق‌شده یا None، گزارش تلاش‌ها بدون رمز)"""
+    import base64
+    import hashlib
+    import os as _os
+    import re
+    from datetime import datetime, timezone
+    from urllib.parse import quote, urlsplit
+
+    import httpx
+
+    notes: list[str] = []
+    combos: list[tuple[str, str]] = []
+    if user:
+        combos.append((user, pw))
+    for c in (("admin", "admin"), ("admin", "")):
+        if c not in combos:
+            combos.append(c)
+
+    def _sec(u: str, p: str, digest_mode: bool) -> str:
+        nonce = _os.urandom(16)
+        created = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        if digest_mode:
+            pwd_xml = ('<wsse:Password Type="http://docs.oasis-open.org/wss/2004/01/'
+                       'oasis-200401-wss-username-token-profile-1.0#PasswordDigest">'
+                       + base64.b64encode(
+                           hashlib.sha1(nonce + created.encode() + p.encode()).digest()
+                       ).decode() + "</wsse:Password>")
+        else:
+            pwd_xml = ('<wsse:Password Type="http://docs.oasis-open.org/wss/2004/01/'
+                       'oasis-200401-wss-username-token-profile-1.0#PasswordText">'
+                       + p + "</wsse:Password>")
+        return (
+            '<s:Header><wsse:Security s:mustUnderstand="1" xmlns:wsse='
+            '"http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd">'
+            f"<wsse:UsernameToken><wsse:Username>{u}</wsse:Username>{pwd_xml}"
+            '<wsse:Nonce EncodingType="http://docs.oasis-open.org/wss/2004/01/'
+            'oasis-200401-wss-soap-message-security-1.0#Base64Binary">'
+            + base64.b64encode(nonce).decode() + "</wsse:Nonce>"
+            '<wsu:Created xmlns:wsu="http://docs.oasis-open.org/wss/2004/01/'
+            'oasis-200401-wss-wssecurity-utility-1.0.xsd">' + created + "</wsu:Created>"
+            "</wsse:UsernameToken></wsse:Security></s:Header>"
+        )
+
+    def _call(url: str, sec_xml: str, body: str) -> str:
+        xml = ('<?xml version="1.0" encoding="UTF-8"?>'
+               '<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope" '
+               'xmlns:tt="http://www.onvif.org/ver10/schema">'
+               + sec_xml + body + "</s:Envelope>")
+        r = httpx.post(url, content=xml.encode(),
+                       headers={"Content-Type": "application/soap+xml; charset=utf-8"},
+                       timeout=timeout)
+        return r.text if r.status_code == 200 else ""
+
+    for port in ONVIF_PORTS:
+        url = f"http://{host}:{port}/onvif/device_service"
+        for u, p in combos:
+            for digest_mode in (True, False):
+                try:
+                    prof = _call(url, _sec(u, p, digest_mode),
+                                 '<s:Body><GetProfiles xmlns="http://www.onvif.org/ver10/media/wsdl"/>'
+                                 "</s:Body>")
+                    if "GetProfilesResponse" not in prof:
+                        continue
+                    m = re.search(r'<(?:\w+:)?Profiles[^>]*\btoken="([^"]+)"', prof)
+                    if not m:
+                        continue
+                    stream = _call(url, _sec(u, p, digest_mode),
+                                   '<s:Body><GetStreamUri xmlns="http://www.onvif.org/ver10/media/wsdl">'
+                                   "<StreamSetup><Stream xmlns=\"http://www.onvif.org/ver10/schema\">"
+                                   "RTP-Unicast</Stream><Transport xmlns=\"http://www.onvif.org/ver10/schema\">"
+                                   "<Protocol>RTSP</Protocol></Transport></StreamSetup>"
+                                   f"<ProfileToken>{m.group(1)}</ProfileToken></GetStreamUri></s:Body>")
+                    m2 = re.search(r"<(?:\w+:)?Uri>([^<]+)</(?:\w+:)?Uri>", stream)
+                    if not m2:
+                        continue
+                    uri = m2.group(1).strip()
+                    if "@" not in uri and uri.lower().startswith("rtsp://"):
+                        # تزریق اعتبارنامه در URI برگشتهٔ دوربین
+                        parts = urlsplit(uri)
+                        uri = f"rtsp://{quote(u)}:{quote(p)}@{parts.netloc}{parts.path}"
+                        if parts.query:
+                            uri += "?" + parts.query
+                    notes.append(f"ONVIF پورت {port} → نشانی استریم گرفته شد ✔")
+                    return uri, notes
+                except Exception:  # noqa: BLE001 — پورت بعدی/ترکیب بعدی
+                    continue
+        notes.append(f"ONVIF پورت {port} → پاسخ نداد")
+    return None, notes
+
+
 def _probe_rtsp_sync(rtsp: str) -> tuple[str | None, list[str]]:
-    """مسیرهای رایج برندها را با همان user/pass امتحان می‌کند.
-    اگر آدرس اصلاً user/pass نداشت، ترکیب‌های پیش‌فرض رایج (admin:admin و
-    admin با رمز خالی) روی ۴ مسیر اول هم امتحان می‌شوند — دوربین‌های ایرانی
-    اغلب یا بدون رمزند یا همان admin/admin دارند.
+    """مسیرهای رایج برندها را با همان user/pass امتحان می‌کند؛ در صورت شکست:
+    ۱) ترکیب‌های پیش‌فرض OEM (admin:admin / admin بدون رمز)
+    ۲) استریم MJPEG روی HTTP
+    ۳) کشف خودکار ONVIF (نشانی را از خود دوربین می‌پرسد)
     خروجی: (اولین URL کار کرده یا None، فهرست «مسیر → نتیجه» بدون رمز برای عیب‌یابی)"""
     from urllib.parse import quote
     base, user, pw = _rtsp_base(rtsp)
+    # host[:port] بدون اعتبارنامه و بدون scheme — چه با رمز چه بدون رمز
+    host = base.split("@")[-1]
+    if host.startswith("rtsp://"):
+        host = host[len("rtsp://"):]
+    http_user = user or "admin"
+    http_pw = pw or "admin"
     tried: list[str] = ["(آدرس ثبت‌شده) → باز نشد"]
+
+    def _try(url: str) -> tuple[str, bool]:
+        shown = url.split("@")[-1] if "@" in url else url   # رمز در گزارش نمی‌آید
+        return shown, _open_rtsp_once(url)
+
     candidates = [base + p for p in RTSP_PROBE_PATHS]
     if user:
-        # قالب XiongMai/xmeye — اعتبارنامه داخل query
+        # قالب XiongMai/xmeye — اعتبارنامه داخل query (دو امضای رایج)
+        candidates.append(f"{base}/user={user}_password={pw}_channel=1_stream=0.sdp")
         candidates.append(
             f"{base}/user={quote(user)}&password={quote(pw)}&channel=1&stream=0.sdp?real_stream")
     else:
-        # آدرس بدون رمز — پیش‌فرض‌های رایج OEMها (فقط روی ۴ مسیر پرتکرار)
+        # آدرس بدون رمز — پیش‌فرض‌های رایج OEMها (روی ۵ مسیر پرتکرار)
         host_part = base[len("rtsp://"):]
         for cred in ("admin:admin@", "admin:@"):
-            for p in RTSP_PROBE_PATHS[1:5]:
+            for p in RTSP_PROBE_PATHS[1:6]:
                 candidates.append(f"rtsp://{cred}{host_part}{p}")
+
+    # استریم MJPEG روی HTTP (اگر RTSP غیرفعال/غیرموجود باشد) — روی پورت ۸۰، بدون پورت RTSP
+    http_host = host.split(":")[0]
+    for p in HTTP_MJPEG_PATHS:
+        sep = "&" if "?" in p else "?"
+        candidates.append(f"http://{http_host}{p}{sep}user={quote(http_user)}&pwd={quote(http_pw)}")
+        candidates.append(f"http://{http_host}{p}")
+
     seen = {rtsp.strip()}
     for c in candidates:
         if c in seen:
             continue
         seen.add(c)
-        shown = c.split("@")[-1] if "@" in c else c   # رمز در گزارش نمی‌آید
-        if _open_rtsp_once(c):
+        shown, ok = _try(c)
+        if ok:
             tried.append(f"{shown} → کار کرد ✔")
             return c, tried
         tried.append(f"{shown} → باز نشد")
+
+    # آخرین راه: پرسیدن خودِ دوربین از طریق ONVIF
+    try:
+        onvif_host = host.split(":")[0]
+        uri, notes = _onvif_stream_uri(onvif_host, user, pw)
+        tried.extend(notes)
+        if uri:
+            shown, ok = _try(uri)
+            if ok:
+                tried.append("ONVIF URI → کار کرد ✔")
+                return uri, tried
+            tried.append("ONVIF URI → باز نشد")
+    except Exception:  # noqa: BLE001
+        tried.append("ONVIF → خطا")
     return None, tried
 
 
