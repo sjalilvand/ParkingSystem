@@ -61,7 +61,17 @@ if (-not $SkipPull) {
             git fetch origin
             git reset --hard origin/main
         }
-        if ($dirty) { git stash pop 2>$null | Out-Null }
+        if ($dirty) {
+            # بازگرداندن تغییرات محلی. اگر با نسخهٔ جدید تداخل داشت، نشانگرهای
+            # «<<<<<<<» هرگز نباید در درخت کار بمانند — همان چیزی که یک‌بار
+            # router.py را خراب کرد و بک‌اند با SyntaxError کرش‌لوپ شد (502).
+            # نسخهٔ گیت ملاک است؛ نسخهٔ محلی در stash@{0} حفظ می‌شود.
+            git stash pop 2>&1 | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "  ⚠ تغییرات محلی با نسخهٔ جدید تداخل داشت — نسخهٔ گیت اعمال شد؛ نسخهٔ محلی در stash@{0} حفظ است" -ForegroundColor Yellow
+                git reset --hard HEAD | Out-Null
+            }
+        }
     } else {
         Write-Host "  از قبل به‌روز است ($($local.Substring(0,7)))" -ForegroundColor Green
     }
