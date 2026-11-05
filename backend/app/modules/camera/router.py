@@ -523,7 +523,9 @@ async def poller_status(x_api_key: str | None = Header(default=None, alias="X-AP
                         api_key: str | None = Query(default=None),
                         db: AsyncSession = Depends(get_db)):
     await _authenticate(db, x_api_key, authorization, api_key)
-    st = poller.status_snapshot()
+    # وضعیت واقعی worker رهبر از Redis — با workers=2 وضعیت محلیِ worker
+    # غیرِرهبر همه‌جا «قطع» نشان می‌داد (چیپ «قطع» چشمک‌زن در پنل گیت)
+    st = await poller.status_for_api()
     # زمان‌ها را ISO کن تا در UI قابل نمایش باشد
     for s in st["sides"].values():
         if s.get("last_frame_ts"):

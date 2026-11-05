@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import threading
 import time
 import uuid
@@ -392,7 +393,66 @@ async def _process_frame(side: str, gate_code: str, direction: str, bgr) -> None
 # رهبری (workers>1 → فقط یک worker دوربین‌ها را می‌خواند)
 # ---------------------------------------------------------------------------
 _LEADER_KEY = "parkingsystem:camera-poller-leader"
+_REDIS_STATUS_KEY = "parkingsystem:camera-poller-status"
 _worker_id = str(uuid.uuid4())
+
+# کلاینت پایدار Redis برای انتشار وضعیت رهبر (بازسازی در خطا + backoff ۳۰ ثانیه)
+_status_redis = None
+_status_redis_backoff = 0.0
+
+
+def _get_status_redis():
+    global _status_redis, _status_redis_backoff
+    if _status_redis is not None:
+        return _status_redis
+    if time.monotonic() < _status_redis_backoff:
+        return None                      # خطای اخیر — تا ۳۰ ثانیه دوباره تلاش نکن
+    try:
+        import redis.asyncio as aioredis
+        _status_redis = aioredis.from_url(settings.REDIS_URL, socket_timeout=2)
+        return _status_redis
+    except Exception:  # noqa: BLE001
+        _status_redis_backoff = time.monotonic() + 30
+        return None
+
+
+async def _publish_status() -> None:
+    """رهبر وضعیت واقعی دوربین‌ها را در Redis می‌نویسد (TTL ۱۰ ثانیه).
+
+    با uvicorn --workers 2 فقط workerِ رهبر گیرندهٔ دوربین را دارد؛ اگر
+    درخواست poller-status به worker دیگر برسد، بدون این انتشار وضعیتِ
+    محلیِ او همه‌جا «قطع/غیرفعال» نشان داده می‌شد — همان خطای
+    «دوربین‌ها آنلاین نیستند» در پنل گیت.
+    """
+    global _status_redis, _status_redis_backoff
+    r = _get_status_redis()
+    if r is None:
+        return
+    try:
+        await r.set(_REDIS_STATUS_KEY, json.dumps(status_snapshot()), ex=10)
+    except Exception:  # noqa: BLE001 — Redis موقتاً در دسترس نیست؛ بی‌سرعت ادامه
+        try:
+            await r.aclose()
+        except Exception:  # noqa: BLE001
+            pass
+        _status_redis = None
+        _status_redis_backoff = time.monotonic() + 30
+
+
+async def status_for_api() -> dict:
+    """وضعیت برای API — اول وضعیت منتشرشدهٔ رهبر از Redis، بعد وضعیت محلی."""
+    r = _get_status_redis()
+    if r is not None:
+        try:
+            raw = await r.get(_REDIS_STATUS_KEY)
+            if raw:
+                data = json.loads(raw)
+                if isinstance(data, dict) and data.get("sides"):
+                    data["source"] = "leader-redis"
+                    return data
+        except Exception:  # noqa: BLE001 — Redis در دسترس نیست؛ وضعیت محلی
+            pass
+    return status_snapshot()
 
 
 async def _try_leader() -> bool:
@@ -463,6 +523,7 @@ async def poller_loop() -> None:
     STATUS["ocr_ready"] = HAS_CV2
     last_leader_check = 0.0
     last_hb = 0.0
+    last_pub = 0.0
     try:
         while True:
             try:
@@ -470,6 +531,11 @@ async def poller_loop() -> None:
                 if now - last_leader_check > 10:
                     STATUS["leader"] = await _try_leader()
                     last_leader_check = now
+                # انتشار وضعیت در Redis — هر ۲ ثانیه (TTL ۱۰ ثانیه)؛ تا
+                # poller-status روی هر workerی وضعیت واقعی رهبر را بدهد
+                if STATUS["leader"] and (now - last_pub) > 2.0:
+                    last_pub = now
+                    await _publish_status()
                 # ضربان هر ۵ دقیقه — در لاگ مشخص است که حلقه زنده است
                 if now - last_hb > 300:
                     last_hb = now
