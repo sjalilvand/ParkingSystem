@@ -516,6 +516,23 @@ def gate_for(side: str, s: dict) -> tuple[str, str]:
             s.get("direction") or side)
 
 
+async def _reload_cfg() -> None:
+    """بارگیری پیکربندی دوربین‌ها از DB در همین worker.
+
+    کش پیکربندی per-process است و PUT /config فقط کشِ workerِ پرس‌وشه‌شده
+    را به‌روز می‌کند. با --workers 2 اگر workerِ رهبر هیچ‌وقت /camera/config
+    یا /stream را پاسخ نداده باشد، کشش برای همیشه خالی می‌ماند ⇒
+    cached_cfg() همه‌چیز را «غیرفعال» می‌بیند و poller بی‌صدا هیچ کاری
+    نمی‌کند (عکس زنده از مسیر fallback می‌آید اما پلاک هیچ‌وقت خوانده
+    نمی‌شود — بدون حتی یک خط لاگ). برای همین حلقه، پیکربندی را خودش
+    هر ۱۵ ثانیه از DB تازه می‌کند.
+    """
+    from app.db.session import AsyncSessionLocal
+    from app.modules.camera import config_store
+    async with AsyncSessionLocal() as db:
+        await config_store.refresh_config_cache(db)
+
+
 async def poller_loop() -> None:
     logger.info("[camera-poller] حلقهٔ دوربین شروع شد")
     STATUS["running"] = True
@@ -524,10 +541,28 @@ async def poller_loop() -> None:
     last_leader_check = 0.0
     last_hb = 0.0
     last_pub = 0.0
+    last_cfg = 0.0
+    # بار اول: پیکربندی باید در همین worker از DB بارگیری شود —
+    # نبود آن یعنی poller بی‌صدا بی‌کار می‌ماند
+    try:
+        await _reload_cfg()
+    except Exception as exc:  # noqa: BLE001 — حلقه هر ۱۵ ثانیه دوباره تلاش می‌کند
+        logger.warning(f"[camera-poller] بارگیری اولیهٔ پیکربندی ناموفق: "
+                       f"{type(exc).__name__}: {exc}")
     try:
         while True:
             try:
                 now = time.monotonic()
+                # پیکربندی هر ۱۵ ثانیه از DB — تغییر تنظیمات در UI (که شاید
+                # در worker دیگر ذخیره شده باشد) حداکثر ۱۵ ثانیه بعد به
+                # poller این worker هم می‌رسد
+                if now - last_cfg > 15.0:
+                    last_cfg = now
+                    try:
+                        await _reload_cfg()
+                    except Exception as exc:  # noqa: BLE001 — خطا حلقه را نمی‌بندد
+                        logger.warning(f"[camera-poller] بارگیری پیکربندی ناموفق: "
+                                       f"{type(exc).__name__}: {exc}")
                 if now - last_leader_check > 10:
                     STATUS["leader"] = await _try_leader()
                     last_leader_check = now
