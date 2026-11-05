@@ -167,6 +167,8 @@ RTSP_PROBE_PATHS = [
     "/ucast/11",                              # OEM / V380
     "/h264/ch1/sub/av_stream",                # HiSilicon — جریان فرعی
     "/1/1",                                   # Tiandy (قالب جدید)
+    "/LiveMedia/ch1/stream1",                 # Huawei — جریان اصلی
+    "/LiveMedia/ch1/stream0",                 # Huawei — جریان دوم
 ]
 
 # استریم MJPEG روی HTTP (اگر RTSP اصلاً فعال نباشد) — cv2/ffmpeg هر دو را می‌خوانند
