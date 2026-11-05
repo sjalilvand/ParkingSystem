@@ -121,6 +121,12 @@ if ($Prod) {
 # ---------- [۴] فرانت‌اند ----------
 Write-Host ""
 Write-Host "=== [۴] آماده‌سازی فرانت‌اند ===" -ForegroundColor Yellow
+if ($Prod) {
+    # در حالت -Prod فرانت داخل Docker بیلد می‌شود (مرحلهٔ nginx در compose).
+    # بیلد محلی با Node نه لازم است نه می‌خواهد — قبلاً همین‌جا قفل node.exe
+    # گیت‌پول را می‌شکست و npm.cmd نبودن هم ارور می‌داد. پس در -Prod کلاً رد می‌کنیم.
+    Write-Host "  حالت -Prod: بیلد فرانت‌اند داخل Docker انجام می‌شود — این گام رد شد ✔" -ForegroundColor Gray
+} else {
 $nodeCmd = $null
 if (Test-Path (Join-Path $root "tools\node\node.exe")) { $nodeCmd = Join-Path $root "tools\node\node.exe" }
 elseif (Test-Path (Join-Path $root "tools\node\node-v24-x64\node.exe")) { $nodeCmd = Join-Path $root "tools\node\node-v24-x64\node.exe" }
@@ -140,9 +146,10 @@ if (-not (Test-Path (Join-Path $frontend "node_modules"))) {
 # ساخت نسخهٔ نهایی (پوشهٔ dist) — همان چیزی که بک‌اند/سرور سرو می‌کند
 Write-Host "  ساخت نسخهٔ نهایی (vite build) …"
 Push-Location $frontend
-& $npmCmd run build
+if ($npmCmd) { & $npmCmd run build }
 Pop-Location
 if ($LASTEXITCODE -ne 0) { Write-Host "  ⚠ build ناموفق — ادامه می‌دهیم (نسخهٔ قبلی dist باقی می‌ماند)" -ForegroundColor Yellow }
+}
 
 # ---------- [۵] توقف اجراهای قبلی ----------
 Write-Host ""
