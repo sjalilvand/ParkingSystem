@@ -169,6 +169,8 @@ RTSP_PROBE_PATHS = [
     "/1/1",                                   # Tiandy (قالب جدید)
     "/LiveMedia/ch1/stream1",                 # Huawei — جریان اصلی
     "/LiveMedia/ch1/stream0",                 # Huawei — جریان دوم
+    "/1/h264major",                           # مسیرهای ONVIF-native دوربین شهاب IM20A02Y06 — جریان اصلی
+    "/1/h264minor",                           # مسیرهای ONVIF-native دوربین شهاب — جریان فرعی
 ]
 
 # استریم MJPEG روی HTTP (اگر RTSP اصلاً فعال نباشد) — cv2/ffmpeg هر دو را می‌خوانند
@@ -179,7 +181,7 @@ HTTP_MJPEG_PATHS = [
 ]
 
 # پورت‌های رایج سرویس ONVIF برای کشف خودکار نشانی استریم
-ONVIF_PORTS = (80, 8899, 8080)
+ONVIF_PORTS = (80, 8899, 8080, 8999)  # 8999 = پورت ONVIF دوربین‌های شهاب (صفحهٔ PORT تنظیمات دوربین)
 
 
 def _rtsp_base(rtsp: str) -> tuple[str, str, str]:
