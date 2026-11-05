@@ -198,6 +198,9 @@ def _open_rtsp_once(url: str, timeout_ms: int = 4000) -> bool:
 
 def _probe_rtsp_sync(rtsp: str) -> tuple[str | None, list[str]]:
     """مسیرهای رایج برندها را با همان user/pass امتحان می‌کند.
+    اگر آدرس اصلاً user/pass نداشت، ترکیب‌های پیش‌فرض رایج (admin:admin و
+    admin با رمز خالی) روی ۴ مسیر اول هم امتحان می‌شوند — دوربین‌های ایرانی
+    اغلب یا بدون رمزند یا همان admin/admin دارند.
     خروجی: (اولین URL کار کرده یا None، فهرست «مسیر → نتیجه» بدون رمز برای عیب‌یابی)"""
     from urllib.parse import quote
     base, user, pw = _rtsp_base(rtsp)
@@ -207,6 +210,12 @@ def _probe_rtsp_sync(rtsp: str) -> tuple[str | None, list[str]]:
         # قالب XiongMai/xmeye — اعتبارنامه داخل query
         candidates.append(
             f"{base}/user={quote(user)}&password={quote(pw)}&channel=1&stream=0.sdp?real_stream")
+    else:
+        # آدرس بدون رمز — پیش‌فرض‌های رایج OEMها (فقط روی ۴ مسیر پرتکرار)
+        host_part = base[len("rtsp://"):]
+        for cred in ("admin:admin@", "admin:@"):
+            for p in RTSP_PROBE_PATHS[1:5]:
+                candidates.append(f"rtsp://{cred}{host_part}{p}")
     seen = {rtsp.strip()}
     for c in candidates:
         if c in seen:
