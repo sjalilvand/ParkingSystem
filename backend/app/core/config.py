@@ -115,16 +115,22 @@ class Settings(BaseSettings):
     # CAMERA_POLL_ENABLED: حلقهٔ OCR خودکار (فقط وقتی وابستگی‌های OCR نصب باشند)
     # CAMERA_POLL_INTERVAL: فاصلهٔ خواندن پلاک از هر دوربین (ثانیه)
     # CAMERA_MIN_CONF: حداقل اطمینان برای ثبت رویداد از دوربین
+    #   ۰٫۵۵ — زیر این مقدار، خوانش‌های «خیالی» OCR (پلاکِ از خودِ درآورده روی
+    #   فریم بدون پلاک واضح) ثبت نمی‌شوند. اگر دوربین پلاک واقعی را از دست
+    #   می‌دهد، به‌جای پایین‌آوردن این عدد، زاویه/نور/فاصلهٔ دوربین را بهتر کنید.
     # CAMERA_DEDUPE_TTL: پلاک تکراری در این بازه دوباره رویداد نمی‌سازد (ثانیه)
+    # CAMERA_READ_TIMEOUT: timeout خواندن هر فریم RTSP (ثانیه) — اتصال مرده
+    #   را سریع تشخیص می‌دهد تا poller معلق نماند.
     # BARRIER_RELAY_URL: اگر تنظیم شود، فرمان راهبند به این URL POST می‌شود
     #   (رلهٔ واقعی راهبند — خالی = فقط ثبت رویداد و اعلان)
     # ------------------------------------------------------------------
     CAMERA_SNAPSHOT_DIR: str = "logs/cameras"
     CAMERA_POLL_ENABLED: bool = True
     CAMERA_POLL_INTERVAL: float = 10.0
-    CAMERA_MIN_CONF: float = 0.30
-    CAMERA_DEDUPE_TTL: float = 20.0
+    CAMERA_MIN_CONF: float = 0.55
+    CAMERA_DEDUPE_TTL: float = 60.0
     CAMERA_CONNECT_TIMEOUT: float = 8.0
+    CAMERA_READ_TIMEOUT: float = 5.0
     BARRIER_RELAY_URL: str = ""
 
     # ------------------------------------------------------------------

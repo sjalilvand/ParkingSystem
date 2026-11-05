@@ -55,8 +55,11 @@ if (-not $SkipPull) {
         if ($dirty) { git stash push -u -m "auto-stash before update" | Out-Null }
         git pull --ff-only origin main
         if ($LASTEXITCODE -ne 0) {
-            Write-Host "  pull --ff-only ناموفق؛ تلاش با rebase…" -ForegroundColor Yellow
-            git pull --rebase origin main
+            # سرور استقرار است — نسخهٔ گیت ملاک است (تغییرات محلی zipها قبلاً
+            # در گیت کامیت شده‌اند). pull ناموفق بود → هم‌گام‌سازی قوی:
+            Write-Host "  pull ناموفق — هم‌گام‌سازی قوی با origin/main (نسخهٔ گیت ملاک است)…" -ForegroundColor Yellow
+            git fetch origin
+            git reset --hard origin/main
         }
         if ($dirty) { git stash pop 2>$null | Out-Null }
     } else {

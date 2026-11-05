@@ -38,9 +38,14 @@ export default function CameraBox({ side, gateKey }: { side: 'IN' | 'OUT'; gateK
   const [testPreview, setTestPreview] = useState(false)
   const [draft, setDraft] = useState<{ rtsp: string; enabled: boolean }>({ rtsp: '', enabled: false })
   const [draftGlobal, setDraftGlobal] = useState<{ interval: string; ocr: boolean }>({ interval: '10', ocr: true })
+  const [streamFailed, setStreamFailed] = useState(false)  // استریم MJPEG قطع شد → snapshot
+  const [mediaErr, setMediaErr] = useState(false)          // آخرین منبع تصویر خطا داد
+  const [streamOk, setStreamOk] = useState(false)          // فریم اول استریم رسید
   const alive = useRef(true)
 
   const camCfg = cfg?.sides?.[side]
+  // اگر هر دو دوربین روی یک آدرس باشند، هر دو پنل یک تصویر را نشان می‌دهند
+  const sameUrl = !!(cfg?.sides?.IN?.rtsp && cfg?.sides?.IN?.rtsp === cfg?.sides?.OUT?.rtsp)
 
   useEffect(() => {
     alive.current = true
@@ -67,12 +72,16 @@ export default function CameraBox({ side, gateKey }: { side: 'IN' | 'OUT'; gateK
     return () => clearInterval(t)
   }, [side])
 
-  // refresh تصویر زنده
-  const live = !!(camCfg?.enabled && camCfg?.rtsp)
+  // refresh تصویر زنده — پیکربندی یا وضعیت poller هرکدام «زنده» بود کافی است
+  // (اگر GET /camera/config موقتاً خطا بدهد، پنل سیاهِ «تنظیم نشده» نشان داده نمی‌شود)
+  const live = !!(camCfg?.enabled && camCfg?.rtsp) || !!(status?.has_frame || status?.connected)
   useEffect(() => {
     const t = setInterval(() => { if (live) setTick((x) => x + 1) }, 3000)
     return () => clearInterval(t)
   }, [live])
+
+  // استریم زندهٔ MJPEG — اگر قطع شد خودکار به snapshot برمی‌گردیم
+  useEffect(() => { setStreamFailed(false); setStreamOk(false); setMediaErr(false) }, [side, camCfg?.rtsp])
 
   const openDialog = () => {
     setDraft({ rtsp: camCfg?.rtsp ?? '', enabled: !!camCfg?.enabled })
@@ -152,33 +161,51 @@ export default function CameraBox({ side, gateKey }: { side: 'IN' | 'OUT'; gateK
 
   // مسیرهای آمادهٔ برندها — با پایهٔ آدرسِ واردشده ترکیب می‌شوند
   const applyPreset = (path: string) => {
-    const m = draft.rtsp.match(/^(rtsp:\/\/[^/\s]+)/i)
+    const m = draft.rtsp.match(/^((?:rtsp|https?):\/\/[^/\s]+)/i)
     if (m) {
       setDraft((d) => ({ ...d, rtsp: m[1] + path }))
       setMsg(null)
     } else {
-      setMsg({ kind: 'err', text: 'اول پایهٔ آدرس با رمز را وارد کنید؛ مثال: rtsp://admin:1234@192.168.100.230:554/stream0' })
+      setMsg({ kind: 'err', text: 'اول پایهٔ آدرس با رمز را وارد کنید؛ مثال: http://admin:admin@192.168.100.231 یا rtsp://admin:1234@192.168.100.230:554' })
     }
   }
   const presets = [
-    { label: 'شهاب / عمومی', path: '/stream0' },
+    { label: 'عکس HTTP — شهاب', path: '/jpgimage/1/image.jpg' },
+    { label: 'شهاب / عمومی RTSP', path: '/stream0' },
+    { label: 'های‌سیلیکون', path: '/h264/ch1/main/av_stream' },
     { label: 'هایک‌ویژن', path: '/Streaming/Channels/101' },
     { label: 'داهوا', path: '/cam/realmonitor?channel=1&subtype=0' },
     { label: 'یونی‌ویو', path: '/media/video1' },
-    { label: 'های‌سیلیکون', path: '/h264/ch1/main/av_stream' },
   ]
 
-  const imgSrc = live
+  const streamSrc = live && !streamFailed && gateKey
+    ? `/api/v1/camera/stream/${side}?api_key=${encodeURIComponent(gateKey)}`
+    : null
+  const snapSrc = live
     ? `/api/v1/camera/snapshot/${side}?t=${tick}&api_key=${encodeURIComponent(gateKey)}`
     : null
+  const imgSrc = streamSrc || snapSrc
 
   return (
     <Box>
       <Box sx={{ mb: 1.5, borderRadius: 2, overflow: 'hidden', border: '2px solid #E3EAF2', position: 'relative', backgroundColor: '#0d1117' }}>
         {imgSrc ? (
-          <img src={imgSrc} alt={`دوربین ${sideFa(side)}`}
-            style={{ width: '100%', display: 'block', aspectRatio: '16/6', objectFit: 'cover' }}
-            onError={(e) => { (e.target as HTMLImageElement).style.opacity = '0.25' }} />
+          <>
+            <img src={imgSrc} alt={`دوربین ${sideFa(side)}`}
+              style={{ width: '100%', display: 'block', aspectRatio: '16/6', objectFit: 'cover', opacity: mediaErr ? 0.2 : 1 }}
+              onLoad={() => { setMediaErr(false); if (streamSrc) setStreamOk(true) }}
+              onError={() => {
+                if (streamSrc) setStreamFailed(true)   // استریم قطع شد → snapshot
+                setMediaErr(true)
+              }} />
+            {mediaErr && (
+              <Box sx={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <Typography variant="caption" sx={{ color: '#f85149', bgcolor: 'rgba(0,0,0,.6)', px: 1.5, py: 0.5, borderRadius: 1 }}>
+                  تصویر دوربین در دسترس نیست — اتصال/تنظیمات دوربین را بررسی کنید
+                </Typography>
+              </Box>
+            )}
+          </>
         ) : (
           <Box sx={{ aspectRatio: '16/6', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#8b949e', flexDirection: 'column', gap: 1 }}>
             <CamIcon />
@@ -188,7 +215,7 @@ export default function CameraBox({ side, gateKey }: { side: 'IN' | 'OUT'; gateK
         <Stack direction="row" spacing={0.5} sx={{ position: 'absolute', top: 8, right: 8 }}>
           <Chip size="small" label={`📹 دوربین ${sideFa(side)}`}
             sx={{ bgcolor: 'rgba(0,0,0,.55)', color: '#fff' }} />
-          {live && status?.connected && (
+          {live && (status?.connected || streamOk) && (
             <Chip size="small" label="زنده" sx={{ bgcolor: 'rgba(46,125,50,.85)', color: '#fff', fontWeight: 700 }} />
           )}
           {live && status?.connected === false && (
@@ -202,6 +229,12 @@ export default function CameraBox({ side, gateKey }: { side: 'IN' | 'OUT'; gateK
         )}
       </Box>
 
+      {sameUrl && (
+        <Alert severity="warning" sx={{ mb: 1 }}>
+          دوربین ورود و خروج روی «یک آدرس» تنظیم شده‌اند — هر دو پنل یک تصویر را نشان می‌دهند!
+          آدرس دوربین خروج باید مربوط به دوربین دوم باشد (مثال: http://admin:admin@192.168.100.231/jpgimage/1/image.jpg)
+        </Alert>
+      )}
       {!!status?.last_error && live && (
         <Alert severity="warning" sx={{ mb: 1 }} icon={false}>
           دوربین: {status.last_error}
@@ -235,11 +268,13 @@ export default function CameraBox({ side, gateKey }: { side: 'IN' | 'OUT'; gateK
         </DialogTitle>
         <DialogContent dividers>
           <Stack spacing={2}>
-            <TextField size="small" label={`آدرس RTSP دوربین ${sideFa(side)}`}
-              placeholder="rtsp://admin:1234@192.168.100.230:554/stream0"
+            <TextField size="small" label={`آدرس دوربین ${sideFa(side)} — RTSP یا عکس HTTP`}
+              placeholder={side === 'IN'
+                ? 'http://admin:admin@192.168.100.230/jpgimage/1/image.jpg'
+                : 'http://admin:admin@192.168.100.231/jpgimage/1/image.jpg'}
               value={draft.rtsp} onChange={(e) => setDraft((d) => ({ ...d, rtsp: e.target.value }))}
               fullWidth multiline maxRows={2}
-              helperText="اگر مسیر دقیق را نمی‌دانید، فقط پایهٔ آدرس را بنویسید (rtsp://user:pass@IP:554) و «تست اتصال» بزنید — سرور خودش مسیر درست را پیدا می‌کند" />
+              helperText="پیشنهادی (شهاب): http://admin:admin@IP/jpgimage/1/image.jpg — ورود روی 192.168.100.230 و خروج روی 192.168.100.231. اگر مسیر دقیق را نمی‌دانید فقط پایهٔ آدرس را بنویسید و «تست اتصال» بزنید — سرور مسیر درست را خودش پیدا می‌کند" />
             <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap" alignItems="center">
               <Typography variant="caption" color="text.secondary">مسیر آمادهٔ برند:</Typography>
               {presets.map((p) => (
@@ -290,9 +325,9 @@ export default function CameraBox({ side, gateKey }: { side: 'IN' | 'OUT'; gateK
               </Stack>
             </Alert>
             <Alert severity="info" variant="outlined">
-              <Typography variant="body2" fontWeight={800} mb={0.5}>سناریو B — دوربین معمولی (RTSP):</Typography>
+              <Typography variant="body2" fontWeight={800} mb={0.5}>سناریو B — دوربین معمولی (عکس HTTP یا RTSP):</Typography>
               <Typography variant="caption" sx={{ display: 'block' }}>
-                فقط آدرس RTSP را وارد کنید — سرور هر {toFa(draftGlobal.interval || 10)} ثانیه عکس می‌گیرد، پلاک را با موتور OCR داخلی می‌خواند و رویداد گیت می‌سازد.
+                آدرس را وارد کنید — سرور هر {toFa(draftGlobal.interval || 10)} ثانیه عکس می‌گیرد، پلاک را با موتور OCR داخلی می‌خواند و رویداد گیت می‌سازد. تصویر زندهٔ پنل هم از همین آدرس استریم می‌شود.
               </Typography>
             </Alert>
           </Stack>

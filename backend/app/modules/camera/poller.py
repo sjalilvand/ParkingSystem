@@ -27,7 +27,7 @@ except ImportError:  # pragma: no cover
     cv2 = None
     HAS_CV2 = False
 
-from app.modules.camera.config_store import SIDES, cached_cfg
+from app.modules.camera.config_store import SIDES, cached_cfg, mask_rtsp
 
 STATUS: dict = {
     "running": False,
@@ -47,6 +47,64 @@ _last_emit: dict[str, float] = {}   # dedupe: کلید پلاک نرمال → �
 
 
 # ---------------------------------------------------------------------------
+# منبع HTTP — گرفتن JPEG از دوربین بدون RTSP
+#   دوربین شهاب/های‌سیلیکون این پروژه روی RTSP استریم H265 می‌دهد که در
+#   کانتینر ناپایدار است؛ ولی /jpgimage/1/image.jpg (HTTP) همیشه JPEG واقعی
+#   می‌دهد — این مسیر بدون codec/سشن RTSP کار می‌کند و برای گیت کافی است.
+# ---------------------------------------------------------------------------
+def _is_http(url: str) -> bool:
+    return bool((url or "").lower().startswith(("http://", "https://")))
+
+
+_auth_cache: dict = {}      # base-url → httpx.Auth که قبلاً جواب داده
+
+
+def _fetch_jpeg_sync(url: str, timeout: float = 6.0) -> bytes | None:
+    """یک فریم JPEG از آدرس HTTP دوربین — با زنجیرهٔ احراز (کش‌شده → Basic → Digest → بدون احراز).
+
+    فقط پاسخِ واقعاً JPEG (امضای FFD8 و >۳KB) پذیرفته می‌شود — صفحات خطای
+    HTML/متنی دوربین رد می‌شوند. خروجی None = همهٔ تلاش‌ها ناموفق.
+    """
+    import httpx
+    from urllib.parse import urlsplit, urlunsplit
+
+    try:
+        p = urlsplit((url or "").strip())
+        if p.scheme not in ("http", "https"):
+            return None
+        target = urlunsplit((p.scheme, p.netloc, p.path or "/", p.query, ""))
+    except Exception:  # noqa: BLE001
+        return None
+    key = f"{p.scheme}://{p.netloc}{p.path}"
+
+    auths: list = []
+    if p.username:
+        u, pw = p.username, p.password or ""
+        cached = _auth_cache.get(key)
+        if cached is not None:
+            auths.append(cached)                 # همان که قبلاً جواب داده — سریع
+        auths += [httpx.BasicAuth(u, pw), httpx.DigestAuth(u, pw), None]
+    else:
+        auths = [None]
+
+    try:
+        with httpx.Client(timeout=timeout, follow_redirects=True) as cl:
+            for a in auths:
+                try:
+                    r = cl.get(target, auth=a)
+                except Exception:  # noqa: BLE001
+                    continue
+                if (r.status_code == 200 and len(r.content) > 3000
+                        and r.content[:2] == b"\xff\xd8"):
+                    if a is not None:
+                        _auth_cache[key] = a
+                    return r.content
+    except Exception:  # noqa: BLE001
+        return None
+    return None
+
+
+# ---------------------------------------------------------------------------
 # گیرندهٔ فریم — اتصال پایدار RTSP در thread جدا
 # ---------------------------------------------------------------------------
 class FrameGrabber(threading.Thread):
@@ -54,19 +112,34 @@ class FrameGrabber(threading.Thread):
         super().__init__(daemon=True, name=f"cam-{side}")
         self.side = side
         self.rtsp = rtsp
+        self.http_mode = _is_http(rtsp)   # آدرس HTTP/JPEG — بدون RTSP
         self._frame = None
         self._ts = 0.0
         self.connected = False
         self.reconnects = 0
+        self._size_logged = False
         self._stop_evt = threading.Event()
 
     def run(self) -> None:  # noqa: C901 — حلقهٔ مقاوم
+        if self.http_mode:
+            self._run_http()
+            return
         cap = None
         fails = 0
         while not self._stop_evt.is_set():
             if cap is None:
                 try:
-                    cap = cv2.VideoCapture(self.rtsp, cv2.CAP_FFMPEG)
+                    # timeout در سطح FFmpeg — اتصال مرده معلق نمی‌ماند و سریع
+                    # تشخیص داده می‌شود (پیش‌فرض: بی‌نهایت → قطع‌وصلی نامرئی)
+                    cap = cv2.VideoCapture()
+                    try:
+                        cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC,
+                                int(settings.CAMERA_CONNECT_TIMEOUT * 1000))
+                        cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC,
+                                int(settings.CAMERA_READ_TIMEOUT * 1000))
+                    except Exception:
+                        pass
+                    cap.open(self.rtsp, cv2.CAP_FFMPEG)
                     try:
                         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
                     except Exception:
@@ -80,28 +153,73 @@ class FrameGrabber(threading.Thread):
                     self.connected = False
                     self.reconnects += 1
                     self._set_error(f"دوربین در دسترس نیست (تلاش {self.reconnects})")
+                    # لاگ پرسرخت — تا در docker logs «دلیلی» دیده شود نه سکوت
+                    if self.reconnects == 1 or self.reconnects % 10 == 0:
+                        logger.warning(f"[camera:{self.side}] RTSP باز نشد "
+                                       f"(تلاش {self.reconnects}) — {mask_rtsp(self.rtsp)}")
                     cap.release()
                     cap = None
                     self._stop_evt.wait(4.0)
                     continue
                 self.connected = True
                 fails = 0
-                logger.info(f"[camera:{self.side}] RTSP متصل شد")
+                self._set_error(None)
+                suffix = f" (اتصال دوباره #{self.reconnects})" if self.reconnects else ""
+                logger.info(f"[camera:{self.side}] RTSP متصل شد{suffix}")
             ok, frame = cap.read()
             if not ok:
                 self.connected = False
                 fails += 1
                 self._set_error("خواندن فریم قطع شد — اتصال دوباره…")
-                if fails >= 3:
+                if fails >= 2:
+                    # دو خوانش ناموفق پشت‌سرهم = استریم مرده — اتصال از نو
                     cap.release()
                     cap = None
                     self.reconnects += 1
-                self._stop_evt.wait(1.0)
+                    self._stop_evt.wait(2.0)
+                else:
+                    # خطای گذرا — با همان اتصال ادامه بده
+                    self._stop_evt.wait(1.0)
                 continue
             fails = 0
+            if not self._size_logged:
+                self._size_logged = True
+                h, w = frame.shape[:2]
+                logger.info(f"[camera:{self.side}] فریم اول: {w}×{h}")
             with _frame_lock:
                 self._frame = frame
                 self._ts = time.time()
+
+    def _run_http(self) -> None:
+        """حالت HTTP — ~۱ فریم بر ثانیه JPEG از دوربین (بدون RTSP، بدون codec)."""
+        import numpy as np
+        while not self._stop_evt.is_set():
+            jpg = _fetch_jpeg_sync(self.rtsp)
+            if jpg is None:
+                self.connected = False
+                self.reconnects += 1
+                self._set_error("گرفتن تصویر HTTP ناموفق — آدرس/رمز دوربین را بررسی کنید")
+                if self.reconnects == 1 or self.reconnects % 5 == 0:
+                    logger.warning(f"[camera:{self.side}] HTTP snapshot ناموفق "
+                                   f"(تلاش {self.reconnects}) — {mask_rtsp(self.rtsp)}")
+                self._stop_evt.wait(2.0)
+                continue
+            frame = cv2.imdecode(np.frombuffer(jpg, np.uint8), cv2.IMREAD_COLOR)
+            if frame is None:
+                self._set_error("تصویر HTTP قابل decode نیست")
+                self._stop_evt.wait(1.0)
+                continue
+            self.connected = True
+            self.reconnects = 0
+            self._set_error(None)
+            if not self._size_logged:
+                self._size_logged = True
+                h, w = frame.shape[:2]
+                logger.info(f"[camera:{self.side}] HTTP snapshot فعال — فریم {w}×{h}")
+            with _frame_lock:
+                self._frame = frame
+                self._ts = time.time()
+            self._stop_evt.wait(1.0)
 
     def latest(self) -> tuple:
         with _frame_lock:
@@ -125,6 +243,7 @@ def _side_status(side: str) -> dict:
         "last_frame_ts": None, "last_ocr_ts": None, "last_ocr_ms": None,
         "last_plate": None, "last_plate_fa": None, "last_conf": None,
         "events_sent": 0, "last_error": None,
+        "low_conf_skipped": 0, "last_skipped": None,
     })
 
 
@@ -219,13 +338,22 @@ async def _process_frame(side: str, gate_code: str, direction: str, bgr) -> None
     if not plates:
         st["last_error"] = None
         return
-    # کاندیداها به ترتیب رتبه — اولین معتبرِ بالای آستانه
+    # کاندیداها به ترتیب رتبه — اولین «معتبرِ قالبی» بالای آستانه.
+    #  valid=False یعنی متن OCR اصلاً قالب پلاک ایران نیست (خیال OCR) —
+    #  هرگز رویداد گیت نمی‌سازد؛ این همان منشأ پلاک‌های از خوددراوده بود.
     chosen = None
     for item in plates:
-        if item.get("system") and item.get("confidence", 0) >= settings.CAMERA_MIN_CONF:
+        if (item.get("valid") and item.get("system")
+                and item.get("confidence", 0) >= settings.CAMERA_MIN_CONF):
             chosen = item
             break
     if chosen is None:
+        # آمار خوانش‌های ردشده — در poller-status برای عیب‌یابی دیده می‌شود
+        skipped = next((p for p in plates if p.get("system") and p.get("valid")), None)
+        if skipped:
+            st["low_conf_skipped"] = int(st.get("low_conf_skipped") or 0) + 1
+            st["last_skipped"] = {"system": skipped.get("system"),
+                                  "confidence": skipped.get("confidence")}
         st["last_error"] = None
         return
     key = _norm_key(chosen["system"])
@@ -334,6 +462,7 @@ async def poller_loop() -> None:
     STATUS["started_at"] = time.time()
     STATUS["ocr_ready"] = HAS_CV2
     last_leader_check = 0.0
+    last_hb = 0.0
     try:
         while True:
             try:
@@ -341,6 +470,21 @@ async def poller_loop() -> None:
                 if now - last_leader_check > 10:
                     STATUS["leader"] = await _try_leader()
                     last_leader_check = now
+                # ضربان هر ۵ دقیقه — در لاگ مشخص است که حلقه زنده است
+                if now - last_hb > 300:
+                    last_hb = now
+                    for hb_side in SIDES:
+                        hb_st = STATUS["sides"].get(hb_side) or {}
+                        if not hb_st.get("enabled"):
+                            continue
+                        hb_g = _grabbers.get(hb_side)
+                        logger.info(f"[camera:{hb_side}] heartbeat "
+                                    f"connected={getattr(hb_g, 'connected', None)} "
+                                    f"reconnects={getattr(hb_g, 'reconnects', 0)} "
+                                    f"last_plate={hb_st.get('last_plate')} "
+                                    f"conf={hb_st.get('last_conf')} "
+                                    f"events={hb_st.get('events_sent')} "
+                                    f"low_conf_skipped={hb_st.get('low_conf_skipped', 0)}")
                 if not STATUS["leader"]:
                     await asyncio.sleep(5)
                     continue

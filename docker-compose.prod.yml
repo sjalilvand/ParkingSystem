@@ -51,8 +51,9 @@ services:
       # دوربین‌های گیت: فریم‌های snapshot/کپچر روی volume ماندگار /data ذخیره می‌شوند
       CAMERA_SNAPSHOT_DIR: /data/cameras
       CAMERA_POLL_ENABLED: "true"
-      # RTSP روی TCP — استریم H.265 دوربین‌های گیت روی UDP معمولاً فریم خاکستری/خراب می‌دهد
-      OPENCV_FFMPEG_CAPTURE_OPTIONS: "rtsp_transport;tcp"
+      # RTSP روی TCP + timeout در سطح FFmpeg — اتصال مرده/گیرکرده سریع تشخیص
+      # داده می‌شود (stimeout/timeout بر حسب میکروثانیه) و قطع‌وصلی کاهش می‌یابد
+      OPENCV_FFMPEG_CAPTURE_OPTIONS: "rtsp_transport;tcp|stimeout;5000000|timeout;5000000|max_delay;500000|buffer_size;1024000"
     # مهاجرت امن (p0001..p0007) داخل کانتینر و پیش از بوت‌استرپ
     command: sh -c "python -m scripts.migrate_prod_safe && python -m scripts.bootstrap_prod && uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2"
     volumes:

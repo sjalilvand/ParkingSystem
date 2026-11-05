@@ -29,12 +29,22 @@ _cfg_cache: dict = {}
 _cfg_ts: float = 0.0
 
 
+def fix_rtsp_typo(url: str) -> str:
+    """اصلاح خودکار غلط رایج: main_av_stream → main/av_stream (زیرخط به‌جای اسلش).
+
+    مسیر درست دوربین‌های HiSilicon/شهاب «/h264/ch1/main/av_stream» است؛
+    نسخهٔ زیرخط‌دار هرگز باز نمی‌شود و دوربین «کاملاً قطع» به نظر می‌رسد.
+    """
+    return (url or "").replace("_av_stream", "/av_stream").strip()
+
+
 def _normalize_side(raw) -> dict:
     """نسخهٔ قدیمی (رشته) و نسخهٔ جدید (دیکشنری) هر دو پذیرفته می‌شوند."""
     if isinstance(raw, str):
-        return {"rtsp": raw.strip(), "enabled": bool(raw.strip()), "name": ""}
+        rtsp = fix_rtsp_typo(raw.strip())
+        return {"rtsp": rtsp, "enabled": bool(rtsp), "name": ""}
     if isinstance(raw, dict):
-        rtsp = str(raw.get("rtsp") or "").strip()
+        rtsp = fix_rtsp_typo(str(raw.get("rtsp") or "").strip())
         return {
             "rtsp": rtsp,
             "enabled": bool(raw.get("enabled", bool(rtsp))),

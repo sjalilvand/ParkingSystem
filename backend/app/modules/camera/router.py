@@ -17,7 +17,7 @@ import time
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Header, Query
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -41,6 +41,8 @@ FFMPEG_CANDIDATES = [
 ]
 
 _cache: dict = {}  # side -> {"path": ..., "ts": ...}
+_last_open: dict = {}  # side -> آخرین زمان بازکردن اتصال RTSP جدید (fallback)
+OPEN_COOLDOWN = 6.0    # ثانیه — حداقل فاصلهٔ بازکردن اتصال جدید برای هر سمت
 
 
 # ---------------------------------------------------------------------------
@@ -107,7 +109,17 @@ def _ffmpeg_exe() -> str | None:
 
 
 def _capture_frame_sync(rtsp: str, out_path: Path) -> None:
-    """گرفتن یک فریم با OpenCV — بلاک‌کننده؛ در thread اجرا شود."""
+    """گرفتن یک فریم — HTTP snapshot (بدون codec) یا RTSP با OpenCV؛ بلاک‌کننده."""
+    if poller._is_http(rtsp):
+        jpg = poller._fetch_jpeg_sync(rtsp, timeout=settings.CAMERA_CONNECT_TIMEOUT)
+        if jpg is None:
+            raise _exc("گرفتن تصویر از دوربین HTTP ناموفق بود — آدرس/رمز را بررسی کنید",
+                       "CAMERA_UNREACHABLE", 502)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_bytes(jpg)
+        if out_path.stat().st_size < 3000:
+            raise _exc("فریم دریافتی نامعتبر است", "CAMERA_BAD_FRAME", 502)
+        return
     cap = cv2.VideoCapture(rtsp, cv2.CAP_FFMPEG)
     try:
         if not cap.isOpened():
@@ -166,6 +178,8 @@ RTSP_PROBE_PATHS = [
     "/cam1/h264",                             # OEM
     "/ucast/11",                              # OEM / V380
     "/h264/ch1/sub/av_stream",                # HiSilicon — جریان فرعی
+    "/h264/ch1/main_av_stream",               # غلط تایپی رایج (زیرخط به‌جای اسلش) — همان HiSilicon
+    "/h264/ch1/sub_av_stream",                # غلط تایپی رایج — جریان فرعی
     "/1/1",                                   # Tiandy (قالب جدید)
     "/LiveMedia/ch1/stream1",                 # Huawei — جریان اصلی
     "/LiveMedia/ch1/stream0",                 # Huawei — جریان دوم
@@ -461,11 +475,12 @@ async def put_config(body: dict,
     for side in config_store.SIDES:
         raw = sides.get(side)
         if isinstance(raw, str):
-            norm[side] = {"rtsp": raw.strip(), "enabled": bool(raw.strip()),
+            rtsp_str = config_store.fix_rtsp_typo(raw.strip())
+            norm[side] = {"rtsp": rtsp_str, "enabled": bool(rtsp_str),
                           "name": norm[side].get("name") or ""}
         elif isinstance(raw, dict):
             prev = norm[side]
-            rtsp = str(raw.get("rtsp") or "").strip()
+            rtsp = config_store.fix_rtsp_typo(str(raw.get("rtsp") or "").strip())
             # *** یعنی رمز قبلی mask شده — دست‌نخورده نگه داشته شود
             if rtsp and "***" in rtsp:
                 rtsp = prev.get("rtsp") or ""
@@ -547,11 +562,35 @@ async def test_camera(side: str,
     import anyio
     t0 = time.perf_counter()
     out = Path(settings.CAMERA_SNAPSHOT_DIR) / f"cam-test-{side}.jpg"
+    # اگر poller برای همین سمت گیرندهٔ زنده دارد، از فریمِ همان استفاده کن —
+    # بازکردن اتصال RTSP جدید هنگام کار poller باعث می‌شود برخی دوربین‌ها
+    # (از جمله شهاب/های‌سیلیکون) سشن فعال را بیندازند = قطع‌وصلی.
+    live = _grabber_frame(side)
+    if live is not None:
+        try:
+            import cv2 as _cv
+            out.parent.mkdir(parents=True, exist_ok=True)
+            if _cv.imwrite(str(out), live[0], [cv2.IMWRITE_JPEG_QUALITY, 88]):
+                ms = round((time.perf_counter() - t0) * 1000)
+                return {
+                    "success": True, "side": side, "latency_ms": ms,
+                    "message": (f"اتصال موفق — از جریان زندهٔ فعال خوانده شد "
+                                f"({ms} میلی‌ثانیه، بدون اتصال جدید)"),
+                    "frame_url": f"/api/v1/camera/test-frame/{side}?t={int(time.time())}",
+                }
+        except Exception:  # noqa: BLE001 — مسیر عادی را امتحان کن
+            pass
     try:
         await asyncio.wait_for(
             anyio.to_thread.run_sync(_capture_frame_sync, rtsp, out),
             timeout=settings.CAMERA_CONNECT_TIMEOUT + 10)
     except Exception as first_exc:  # noqa: BLE001
+        # آدرس HTTP — probe RTSP معنا ندارد؛ پیام شفاف مستقیم
+        if poller._is_http(rtsp):
+            first_msg = getattr(first_exc, "message", None) or str(first_exc)
+            raise _exc(
+                f"دوربین HTTP در دسترس نیست — آدرس و رمز را بررسی کنید. ({first_msg})",
+                "CAMERA_UNREACHABLE", 502)
         # تشخیص خودکار مسیر — دوربین‌های غیرهایک‌ویژن (مثل شهاب) مسیر دیگری دارند
         found: str | None = None
         tried: list[str] = []
@@ -655,34 +694,115 @@ async def capture_ocr(side: str,
         "frame_url": f"/api/v1/camera/snapshot/{side}?t={int(time.time())}",
     }
 
-    # انتخاب کاندیدا (همان منطق poller) + ثبت رویداد اختیاری
+    # انتخاب کاندیدا (همان منطق poller — فقط خوانشِ قالب‌معتبر) + ثبت رویداد اختیاری
     chosen = None
     for item in (result.get("plates") or []):
-        if item.get("system") and item.get("confidence", 0) >= (min_conf or settings.CAMERA_MIN_CONF):
+        if (item.get("valid") and item.get("system")
+                and item.get("confidence", 0) >= (min_conf or settings.CAMERA_MIN_CONF)):
             chosen = item
             break
     resp["chosen"] = chosen
     if auto_emit and chosen:
-        from app.modules.camera.events import emit_plate_event
-        gate_code = cam.get("gate_code") or f"GATE-{side}-01"
-        direction = cam.get("direction") or side
-        try:
-            ev = await emit_plate_event(
-                db, gate_code=gate_code, direction=direction,
-                plate_raw=chosen["system"],
-                confidence=round(float(chosen.get("confidence") or 0) * 100, 1),
-                source="camera-capture")
-            resp["event"] = ev
-        except Exception as exc:  # noqa: BLE001
-            resp["event_error"] = f"{type(exc).__name__}: {exc}"
+        # همان dedupe گیت با poller مشترک است — فریم ثابت ۶۰ ثانیه‌ای چند
+        # بار رویداد نمی‌سازد (قبلاً هر کلیک یک رویدادِ تکراری می‌ساخت)
+        key = poller._norm_key(chosen["system"])
+        if key and not poller._should_emit(key):
+            resp["event_dropped"] = "رویداد تکراری — در بازهٔ dedupe ثبت نشد"
+        else:
+            from app.modules.camera.events import emit_plate_event
+            gate_code = cam.get("gate_code") or f"GATE-{side}-01"
+            direction = cam.get("direction") or side
+            try:
+                ev = await emit_plate_event(
+                    db, gate_code=gate_code, direction=direction,
+                    plate_raw=chosen["system"],
+                    confidence=round(float(chosen.get("confidence") or 0) * 100, 1),
+                    source="camera-capture")
+                resp["event"] = ev
+            except Exception as exc:  # noqa: BLE001
+                resp["event_error"] = f"{type(exc).__name__}: {exc}"
     return resp
 
 
 # ---------------------------------------------------------------------------
-# snapshot زنده (پنل گیت) — با کش TTL
+# استریم زندهٔ MJPEG — نمایش «آنلاین» واقعی در پنل گیت
+#   * فریم‌ها از گیرندهٔ poller (worker رهبر) می‌آیند؛
+#   * اگر این worker گیرنده ندارد (uvicorn --workers 2 → فقط رهبر گیرنده دارد)
+#     و دوربین HTTP است، مستقیم از دوربین گرفته می‌شود — در نتیجه استریم از
+#     هر worker درست کار می‌کند و تصویر «فریز/تکراری» نمی‌شود.
+#   * سقف هر اتصال: STREAM_MAX_SECONDS — بعد از آن مرورگر با onError به
+#     حالت snapshot برمی‌گردد (fallback در CameraBox).
 # ---------------------------------------------------------------------------
+STREAM_MAX_SECONDS = 900.0   # سقف هر اتصال استریم (۱۵ دقیقه)
+STREAM_FPS = 2.0             # حداکثر نرخ ارسال فریم به مرورگر
+STREAM_IDLE_LIMIT = 40       # نبودِ فریم متوالی → بستن استریم (خطا به مرورگر)
+
+
 def _cfg_loaded() -> bool:
     return bool(config_store._cfg_cache)
+
+
+@router.get("/stream/{side}")
+async def stream_mjpeg(side: str,
+                       x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+                       authorization: str | None = Header(default=None),
+                       api_key: str | None = Query(default=None),
+                       db: AsyncSession = Depends(get_db)):
+    """استریم MJPEG زنده — <img src="/api/v1/camera/stream/IN?api_key=...">."""
+    await _authenticate(db, x_api_key, authorization, api_key)
+    side = side.upper()
+    if side not in config_store.SIDES:
+        raise NotFoundError("side باید IN یا OUT باشد")
+    cfg = config_store.cached_cfg() if _cfg_loaded() else await config_store.refresh_config_cache(db)
+    cam = cfg.get(side) or {}
+    url = cam.get("rtsp") or ""
+    if not url:
+        raise NotFoundError(f"دوربین {side} پیکربندی نشده است — از «تنظیمات دوربین» پنل گیت تنظیم کنید")
+
+    boundary = b"campframe"
+    interval = 1.0 / STREAM_FPS
+
+    async def gen():
+        import anyio as _anyio
+        t0 = time.monotonic()
+        last_ts = 0.0
+        idle = 0
+        yield b"--" + boundary + b"\r\n"
+        while True:
+            if time.monotonic() - t0 > STREAM_MAX_SECONDS:
+                break
+            jpg = None
+            g = poller._grabbers.get(side)
+            if g is not None and HAS_CV2:
+                frame, ts = g.latest()
+                if frame is not None and ts and ts != last_ts:
+                    ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+                    if ok:
+                        jpg = buf.tobytes()
+                        last_ts = ts
+            if jpg is None and poller._is_http(url):
+                # این worker گیرندهٔ زنده ندارد — عکس مستقیم از دوربین (HTTP)
+                try:
+                    jpg = await _anyio.to_thread.run_sync(
+                        poller._fetch_jpeg_sync, url, 6.0)
+                except Exception:  # noqa: BLE001
+                    jpg = None
+            if jpg is None:
+                idle += 1
+                if idle > STREAM_IDLE_LIMIT:
+                    break       # مرورگر onError می‌گیرد → fallback به snapshot
+                await asyncio.sleep(0.5)
+                continue
+            idle = 0
+            yield (b"--" + boundary + b"\r\nContent-Type: image/jpeg\r\nContent-Length: "
+                   + str(len(jpg)).encode() + b"\r\n\r\n" + jpg + b"\r\n")
+            await asyncio.sleep(interval)
+
+    return StreamingResponse(
+        gen(),
+        media_type=f"multipart/x-mixed-replace; boundary={boundary.decode()}",
+        headers={"Cache-Control": "no-store, private", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.get("/snapshot/{side}")
@@ -716,6 +836,31 @@ async def snapshot(side: str,
         if _cv.imwrite(str(out), frame, [cv2.IMWRITE_JPEG_QUALITY, 88]):
             _cache[side] = {"path": str(out), "ts": now}
             return FileResponse(str(out), media_type="image/jpeg")
+
+    # ۱٫۲) دوربین HTTP بدون گیرندهٔ زنده — این worker غیرِرهبر است
+    #     (uvicorn --workers 2 و گیرندهٔ poller فقط در worker رهبر است).
+    #     قبلاً همین‌جا «فایل کهنهٔ کش‌شده» برگردانده می‌شد ⇒ تصویرِ همیشه یکسان!
+    #     عکس HTTP یک GET ساده است؛ سشنی نمی‌بندد — مستقیم و تازه می‌گیریم.
+    if poller._is_http(cam["rtsp"]):
+        import anyio as _anyio
+        jpg = await _anyio.to_thread.run_sync(
+            poller._fetch_jpeg_sync, cam["rtsp"], 6.0)
+        if jpg:
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_bytes(jpg)
+            _cache[side] = {"path": str(out), "ts": now}
+            return FileResponse(str(out), media_type="image/jpeg")
+        raise _exc("دوربین HTTP در دسترس نیست — آدرس/رمز دوربین را بررسی کنید",
+                   "CAMERA_UNREACHABLE", 502)
+
+    # ۱٫۵) خنکیٔ بازکردن اتصال — بازکردن مکرر RTSP (هر ۲-۳ ثانیه) دوربین‌های
+    #     OEM/های‌سیلیکون را به افتادنِ سشن‌های فعال وا می‌دارد = حلقهٔ قطع‌وصلی.
+    #     در بازهٔ خنکی، آخرین فریم موجود (حتی کهنه) برگردانده می‌شود —
+    #     تصویر یخ‌زده بهتر از خطا است و به دوربین فشار نمی‌آید.
+    last_open = _last_open.get(side, 0.0)
+    if (now - last_open) < OPEN_COOLDOWN and out.exists():
+        return FileResponse(str(out), media_type="image/jpeg")
+    _last_open[side] = now
 
     # ۲) ffmpeg (روی سرور ویندوزی) — یک فریم سریع
     ff = _ffmpeg_exe()
