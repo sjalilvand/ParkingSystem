@@ -247,6 +247,7 @@ def _side_status(side: str) -> dict:
         "last_plate": None, "last_plate_fa": None, "last_conf": None,
         "events_sent": 0, "last_error": None,
         "low_conf_skipped": 0, "last_skipped": None,
+        "frames_scanned": 0,
     })
 
 
@@ -466,6 +467,14 @@ async def _process_frame(side: str, gate_code: str, direction: str, bgr) -> None
         return
     st["last_ocr_ts"] = time.time()
     st["last_ocr_ms"] = result.get("elapsed_ms")
+    st["frames_scanned"] = int(st.get("frames_scanned") or 0) + 1
+    try:  # آخرین فریم بررسی‌شده — برای پاسخ به «چرا عکس/پلاکی ثبت نمی‌شود؟»
+        out_dir = Path(settings.CAMERA_SNAPSHOT_DIR)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        cv2.imwrite(str(out_dir / f"cam-{side}-latest.jpg"), bgr,
+                    [cv2.IMWRITE_JPEG_QUALITY, 80])
+    except Exception:  # noqa: BLE001 — عیب‌یابی حیاتی نیست
+        pass
     best = result.get("best") or {}
     plates = result.get("plates") or []
     if not plates:

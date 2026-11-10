@@ -48,6 +48,13 @@ DEFAULT_SEED: dict = {
 
 _seeded_once = False   # در عمر هر فرآیند فقط یک‌بار تلاش کن (ارزان نگه‌داشتن reload)
 
+# تعمیر خودکار یک‌بارِ v2.4.0 — وضعیت خرابی‌ای که در سرور دیده شد:
+#   IN: بدون آدرس / OUT: آدرس داشت ولی «فعال» خاموش بود → poller بی‌کار، بدون عکس و رویداد
+# علامتش در AppSetting جداست (کلید REPAIR_KEY) تا PUT /camera/config آن را پاک نکند؛
+# بعد از این یک‌بار، هر چیزی که کاربر در UI ذخیره کند مقدس است و دیگر دست نمی‌خوریم.
+REPAIR_KEY = "cameras_auto_repair"
+REPAIR_VERSION = "v2.4.0"
+
 # کش در-پروسس — با refresh_config_cache پر می‌شود (استارتاپ + بعد از PUT)
 _cfg_cache: dict = {}
 _cfg_ts: float = 0.0
@@ -115,12 +122,24 @@ async def refresh_config_cache(db: AsyncSession) -> dict:
 
 
 async def ensure_default_seeded(db: AsyncSession) -> bool:
-    """اگر DB هیچ آدرس دوربینی نداشته باشد، پیش‌فرض‌های گیت seed می‌شود.
+    """تعمیر خودکارِ یک‌بارِ پیکربندی دوربین‌ها (v2.4.0) — در استارتاپ (lifespan).
 
-    در استارتاپ (lifespan) صدا زده می‌شود؛ idempotent است — چند worker همزمان
-    هم فقط همان مقدار یکسان را می‌نویسند. خروجی: آیا seed انجام شد؟
+    وضعیت خرابی‌ای که واقعاً در سرور رخ داد و «هیچ عکسی گرفته نمی‌شد»:
+      * IN بدون آدرس → poller آن طرف را کلاً بی‌کار می‌گذاشت
+      * OUT با آدرس ولی «فعال» خاموش → باز هم بی‌کار
+      * نسخهٔ قبلی seed فقط وقتی هر دو خالی باشند کار می‌کرد → این حالت مخلوط
+        از چشمش می‌افتاد
+
+    رفتار (فقط اگر علامت REPAIR_KEY در DB نباشد):
+      * هر طرفِ بدون آدرس → پیش‌فرض گیت (شهاب HTTP snapshot) + فعال
+      * هر طرفِ دارای آدرس ولی غیرفعال → فعال می‌شود (شک «فعال» خاموش،
+        پیش‌فرضِ اشتباه دیالوگ تنظیمات بود — در همین نسخه در UI هم اصلاح شد)
+      * علامت یک‌بار نوشته می‌شود؛ پس از آن تنظیمات دستی کاربر هرگز تغییر
+        نمی‌کند (غیرفعال‌سازی عمدی هم محترم است).
     """
     global _seeded_once
+    from datetime import datetime as _dt, timezone as _tz
+
     from loguru import logger
 
     from app.modules.config_admin.models import AppSetting
@@ -131,27 +150,45 @@ async def ensure_default_seeded(db: AsyncSession) -> bool:
         row = (await db.execute(
             select(AppSetting).where(AppSetting.key == CAMERAS_KEY)
         )).scalar_one_or_none()
-        raw = row.value if row and isinstance(row.value, dict) else {}
-        has_any_url = any(
-            str((raw.get(side) or {}).get("rtsp") or "").strip()
-            for side in SIDES
-        )
-        if has_any_url:
-            _seeded_once = True          # پیکربندی کاربر هست — دست نمی‌زنیم
+        rep_row = (await db.execute(
+            select(AppSetting).where(AppSetting.key == REPAIR_KEY)
+        )).scalar_one_or_none()
+        if rep_row is not None:
+            _seeded_once = True          # تعمیر قبلاً انجام شده — تنظیمات کاربر مقدس است
             return False
-        norm = normalize_cfg(DEFAULT_SEED)
+
+        raw = row.value if row and isinstance(row.value, dict) else {}
+        cur = normalize_cfg(raw)
+        changed: list[str] = []
+        for side in SIDES:
+            s = cur.get(side) or {}
+            if not str(s.get("rtsp") or "").strip():
+                d = normalize_cfg(DEFAULT_SEED)[side]
+                cur[side] = d
+                changed.append(f"{side}: بدون آدرس → پیش‌فرض گیت ({mask_rtsp(d['rtsp'])})")
+            elif not s.get("enabled"):
+                cur[side] = {**s, "enabled": True}
+                changed.append(f"{side}: خاموش بود → روشن شد")
+        if not changed:
+            changed.append("پیکربندی سالم بود — فقط علامت تعمیر ثبت شد")
+
+        norm = normalize_cfg(cur)
         if row is None:
             db.add(AppSetting(key=CAMERAS_KEY, value=norm))
         else:
             row.value = norm
+        db.add(AppSetting(key=REPAIR_KEY, value={
+            "done": REPAIR_VERSION, "changed": changed,
+            "at": _dt.now(_tz.utc).isoformat(),
+        }))
         await db.commit()
         _seeded_once = True
-        logger.info("[camera-config] DB خالی بود → پیش‌فرض‌های گیت seed شد "
-                    "(IN: 192.168.100.230 / OUT: 192.168.100.231 — شهاب HTTP snapshot)")
+        logger.info(f"[camera-config] تعمیر خودکار {REPAIR_VERSION} انجام شد: "
+                    + " | ".join(changed))
         return True
-    except Exception as exc:  # noqa: BLE001 — seed هرگز بوت را نبندد
+    except Exception as exc:  # noqa: BLE001 — تعمیر هرگز بوت را نبندد
         # تداخل دو worker روی unique key هم اینجا می‌افتد — بی‌خطر است
-        logger.warning(f"[camera-config] seed پیش‌فرض دوربین‌ها ناموفق: "
+        logger.warning(f"[camera-config] تعمیر خودکار دوربین‌ها ناموفق: "
                        f"{type(exc).__name__}: {exc}")
         try:
             await db.rollback()

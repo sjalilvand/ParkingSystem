@@ -19,6 +19,7 @@ interface SideStatus {
   last_frame_iso?: string; last_ocr_iso?: string; last_ocr_ms?: number
   last_plate?: string | null; last_plate_fa?: string | null; last_conf?: number
   events_sent?: number; last_error?: string | null; reconnects?: number
+  frames_scanned?: number
 }
 
 function toFa(n: number | string): string {
@@ -84,7 +85,9 @@ export default function CameraBox({ side, gateKey }: { side: 'IN' | 'OUT'; gateK
   useEffect(() => { setStreamFailed(false); setStreamOk(false); setMediaErr(false) }, [side, camCfg?.rtsp])
 
   const openDialog = () => {
-    setDraft({ rtsp: camCfg?.rtsp ?? '', enabled: !!camCfg?.enabled })
+    // «فعال» به‌صورت پیش‌فرض روشن است (فقط اگر کاربر صریحاً خاموش کرده باشد خاموش می‌ماند) —
+    // پیش‌فرضِ قبلیِ «خاموش» باعث می‌شد با ذخیرهٔ آدرس، دوربین غیرفعال بماند
+    setDraft({ rtsp: camCfg?.rtsp ?? '', enabled: camCfg?.enabled !== false })
     setDraftGlobal({ interval: String(cfg?.poll_interval ?? 10), ocr: cfg?.ocr !== false })
     setMsg(null)
     setTestPreview(false)
@@ -240,10 +243,14 @@ export default function CameraBox({ side, gateKey }: { side: 'IN' | 'OUT'; gateK
           دوربین: {status.last_error}
         </Alert>
       )}
-      {status?.last_ocr_iso && status?.last_plate && (
+      {status?.last_ocr_iso && (
         <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
-          آخرین خواندن خودکار: {status.last_ocr_iso} — اطمینان {toFa(Math.round((status.last_conf || 0) * 100))}٪
-          {status.events_sent ? ` — ${toFa(status.events_sent)} رویداد ثبت‌شده` : ''}
+          آخرین بررسی خودکار: {status.last_ocr_iso}
+          {!!status.frames_scanned && ` — ${toFa(status.frames_scanned)} فریم بررسی شد`}
+          {status?.last_plate
+            ? ` — آخرین پلاک: ${status.last_plate_fa || status.last_plate} (اطمینان ${toFa(Math.round((status.last_conf || 0) * 100))}٪)`
+            : ' — هنوز پلاکی در قاب نبوده'}
+          {status?.events_sent ? ` — ${toFa(status.events_sent)} رویداد ثبت‌شده` : ''}
         </Typography>
       )}
 
