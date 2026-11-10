@@ -9,6 +9,10 @@ class Settings(BaseSettings):
     APP_NAME: str = "Parking Management System"
     APP_ENV: str = "development"
     APP_DEBUG: bool = True
+    # نسخهٔ سامانه — با هر تغییر قابل‌مشاهده یک عدد جلو می‌رود.
+    # در ۴ جا دیده می‌شود: /health/live ، چیپ نوار بالای UI ، بنر استارت لاگ
+    # و خروجی UPDATE-AND-RUN.ps1 — تا مقایسهٔ «کد جدید اعمال شده یا نه» ساده باشد.
+    APP_VERSION: str = "2.3.0"
     APP_SECRET_KEY: str = "change-me-in-production"
     APP_TIMEZONE: str = "Asia/Tehran"
 

@@ -24,6 +24,30 @@ from app.core.config import settings
 CAMERAS_KEY = "cameras"
 SIDES = ("IN", "OUT")
 
+# ---------------------------------------------------------------------------
+# پیش‌فرض گیت (سناریو B) — اگر DB هیچ آدرسی نداشته باشد خودکار seed می‌شود.
+# این همان ریشهٔ «دوربین تنظیم نشده / هیچ اتفاقی نمی‌افتد» است: کش خالی یعنی
+# poller بی‌صدا بی‌کار می‌ماند و پنل گیت همیشه placeholder نشان می‌دهد.
+# فقط وقتی seed می‌شود که «هیچ» URL‌ای ذخیره نباشد؛ enabled=false عمدیِ کاربر
+# و URLهای دستیِ او هرگز بازنویسی نمی‌شوند.
+# ---------------------------------------------------------------------------
+DEFAULT_SEED: dict = {
+    "IN": {
+        "rtsp": "http://admin:admin@192.168.100.230/jpgimage/1/image.jpg",
+        "enabled": True, "name": "دوربین ورود",
+        "gate_code": "GATE-IN-01", "direction": "IN",
+    },
+    "OUT": {
+        "rtsp": "http://admin:admin@192.168.100.231/jpgimage/1/image.jpg",
+        "enabled": True, "name": "دوربین خروج",
+        "gate_code": "GATE-OUT-01", "direction": "OUT",
+    },
+    "poll_interval": 10.0,
+    "ocr": True,
+}
+
+_seeded_once = False   # در عمر هر فرآیند فقط یک‌بار تلاش کن (ارزان نگه‌داشتن reload)
+
 # کش در-پروسس — با refresh_config_cache پر می‌شود (استارتاپ + بعد از PUT)
 _cfg_cache: dict = {}
 _cfg_ts: float = 0.0
@@ -88,6 +112,52 @@ async def refresh_config_cache(db: AsyncSession) -> dict:
     _cfg_cache.update(await load_cameras(db))
     _cfg_ts = time.time()
     return dict(_cfg_cache)
+
+
+async def ensure_default_seeded(db: AsyncSession) -> bool:
+    """اگر DB هیچ آدرس دوربینی نداشته باشد، پیش‌فرض‌های گیت seed می‌شود.
+
+    در استارتاپ (lifespan) صدا زده می‌شود؛ idempotent است — چند worker همزمان
+    هم فقط همان مقدار یکسان را می‌نویسند. خروجی: آیا seed انجام شد؟
+    """
+    global _seeded_once
+    from loguru import logger
+
+    from app.modules.config_admin.models import AppSetting
+
+    if _seeded_once:
+        return False
+    try:
+        row = (await db.execute(
+            select(AppSetting).where(AppSetting.key == CAMERAS_KEY)
+        )).scalar_one_or_none()
+        raw = row.value if row and isinstance(row.value, dict) else {}
+        has_any_url = any(
+            str((raw.get(side) or {}).get("rtsp") or "").strip()
+            for side in SIDES
+        )
+        if has_any_url:
+            _seeded_once = True          # پیکربندی کاربر هست — دست نمی‌زنیم
+            return False
+        norm = normalize_cfg(DEFAULT_SEED)
+        if row is None:
+            db.add(AppSetting(key=CAMERAS_KEY, value=norm))
+        else:
+            row.value = norm
+        await db.commit()
+        _seeded_once = True
+        logger.info("[camera-config] DB خالی بود → پیش‌فرض‌های گیت seed شد "
+                    "(IN: 192.168.100.230 / OUT: 192.168.100.231 — شهاب HTTP snapshot)")
+        return True
+    except Exception as exc:  # noqa: BLE001 — seed هرگز بوت را نبندد
+        # تداخل دو worker روی unique key هم اینجا می‌افتد — بی‌خطر است
+        logger.warning(f"[camera-config] seed پیش‌فرض دوربین‌ها ناموفق: "
+                       f"{type(exc).__name__}: {exc}")
+        try:
+            await db.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+        return False
 
 
 def cached_cfg() -> dict:

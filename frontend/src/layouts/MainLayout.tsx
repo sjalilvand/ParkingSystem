@@ -19,6 +19,9 @@ import { useLiveEvents } from '../api/ws'
 
 const DRAWER_W = 272
 
+// نسخهٔ بک‌اند → رقم فارسی (چیپ نوار بالا)
+const faVer = (v: string) => v.replace(/\d/g, (d) => '۰۱۲۳۴۵۶۷۸۹'[Number(d)])
+
 interface NotifItem {
   id: string
   title: string
@@ -183,6 +186,25 @@ export default function MainLayout() {
 
   const [bellAnchor, setBellAnchor] = useState<HTMLElement | null>(null)
   const bellOpen = Boolean(bellAnchor)
+
+  // چیپ نسخه — مستقیم از /health/live (بدون احراز) هر ۶۰ ثانیه؛ تا کاربر با
+  // یک نگاه ببیند کد جدید روی سرور اعمال شده یا نه
+  const [appVersion, setAppVersion] = useState('')
+  useEffect(() => {
+    let alive = true
+    const load = async () => {
+      try {
+        const r = await fetch('/health/live', { cache: 'no-store' })
+        if (r.ok) {
+          const d = await r.json()
+          if (alive && d?.version) setAppVersion(String(d.version))
+        }
+      } catch { /* ignore */ }
+    }
+    load()
+    const t = setInterval(load, 60000)
+    return () => { alive = false; clearInterval(t) }
+  }, [])
 
   const { data: unreadData } = useQuery({
     queryKey: ['notif-unread'],
@@ -394,6 +416,11 @@ export default function MainLayout() {
             <Typography variant="h6" noWrap sx={{ flexGrow: 1, fontWeight: 900, letterSpacing: 0.5 }}>
               سامانه مدیریت پارکینگ
             </Typography>
+            {appVersion && (
+              <Chip size="small" title={`نسخهٔ فعال بک‌اند: ${appVersion}`}
+                label={`نسخهٔ ${faVer(appVersion)}`}
+                sx={{ bgcolor: 'rgba(255,255,255,.18)', color: '#fff', fontWeight: 800, fontSize: 12 }} />
+            )}
             <IconButton color="inherit" title="اعلان‌ها" onClick={(e) => setBellAnchor(e.currentTarget)}>
               <Badge badgeContent={unread} color="error" max={99}>
                 <Notifications />

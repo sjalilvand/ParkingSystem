@@ -19,6 +19,9 @@ from app.realtime.router import router as ws_router
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     import asyncio
+    from loguru import logger
+    logger.info(f"===== ParkingSystem v{settings.APP_VERSION} شروع شد — "
+                f"env={settings.APP_ENV} =====")
     manager.set_loop(asyncio.get_running_loop())
     # §۲ — اسکیمای شبیه‌ساز پیش از سرو دادن درخواست‌ها (idempotent).
     # بدون این، /simulator/* روی DB خالیِ تازه‌ساخته 500 می‌دهد (no such table).
@@ -68,6 +71,17 @@ async def lifespan(app: FastAPI):
             logger.warning(f"[lifespan] plate-ocr warmup skipped: {exc}")
 
     _threading.Thread(target=_ocr_warmup, daemon=True).start()
+
+    # §۷ — پیش‌فرض‌های دوربین گیت: اگر DB هیچ آدرسی نداشته باشد (ریشهٔ
+    # «دوربین تنظیم نشده / هیچ تغییری دیده نمی‌شود») خودکار seed می‌شود تا
+    # پلاک‌خوان از همان اولین استقرار فعال باشد.
+    try:
+        from app.db.session import AsyncSessionLocal
+        from app.modules.camera import config_store
+        async with AsyncSessionLocal() as db:
+            await config_store.ensure_default_seeded(db)
+    except Exception as exc:  # noqa: BLE001 — دوربین هرگز بوت را نبندد
+        logger.warning(f"[lifespan] camera default seed FAILED: {exc}")
 
     # الحاقیه §۶ — حلقهٔ دوربین‌های گیت (سناریو B): RTSP → OCR داخلی → رویداد گیت
     # فقط با وابستگی‌های OCR (INSTALL_OCR=true) و CAMERA_POLL_ENABLED=true اجرا می‌شود.
@@ -129,7 +143,7 @@ async def _vehicle_sync_scheduler_loop():
 
 app = FastAPI(
     title=settings.APP_NAME,
-    version="1.0.0",
+    version=settings.APP_VERSION,
     debug=settings.APP_DEBUG,
     lifespan=lifespan,
     docs_url="/api/docs",
@@ -184,12 +198,14 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 
 @app.get("/health/live", tags=["Health"])
 async def health_live():
-    return {"status": "ok"}
+    # version — برای مقایسهٔ «کد جدید اعمال شده یا نه» (UI و UPDATE-AND-RUN
+    # همین مقدار را نشان می‌دهند)
+    return {"status": "ok", "version": settings.APP_VERSION, "app": settings.APP_NAME}
 
 
 @app.get("/health/ready", tags=["Health"])
 async def health_ready():
-    return {"status": "ok"}
+    return {"status": "ok", "version": settings.APP_VERSION}
 
 
 @app.get("/health/database", tags=["Health"])

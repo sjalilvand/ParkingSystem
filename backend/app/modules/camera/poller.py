@@ -646,6 +646,11 @@ def _rebuild_grabbers() -> None:
             _grabbers.pop(side, None)
             st = _side_status(side)
             st.update({"connected": False, "has_frame": False})
+        if not want:
+            # لاگ «دلیل» — تا در docker logs معلوم باشد چرا این طرف بی‌کار است
+            reason = ("آدرس دوربین ذخیره نشده" if not s.get("rtsp")
+                      else "دوربین غیرفعال است (کلید «فعال» خاموش)")
+            logger.info(f"[camera:{side}] غیرفعال — {reason}")
         if want and side not in _grabbers:
             g = FrameGrabber(side, s["rtsp"])
             g.start()

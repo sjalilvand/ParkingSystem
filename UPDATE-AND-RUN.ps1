@@ -46,6 +46,9 @@ $frontend = Join-Path $root "frontend"
 if (-not $SkipPull) {
     Write-Host ""
     Write-Host "=== [۱] git pull (آخرین نسخه از GitHub) ===" -ForegroundColor Yellow
+    # auto-gc خاموش — قفل فایل‌های pack روی ویندوز پرامپت تعاملی
+    # «Unlink of file ... (y/n)» می‌ساخت و استقرار را معلق می‌کرد
+    git config gc.auto 0 2>$null
     git fetch origin 2>$null
     $local  = git rev-parse HEAD
     $remote = git rev-parse origin/main 2>$null
@@ -75,6 +78,19 @@ if (-not $SkipPull) {
     } else {
         Write-Host "  از قبل به‌روز است ($($local.Substring(0,7)))" -ForegroundColor Green
     }
+}
+
+# ---------- نسخهٔ این بیلد (از کد بک‌اند) ----------
+# این عدد باید بعد از استقرار در گام [۹] با پاسخ /health/live یکی باشد —
+# اگر یکی بود یعنی «تغییرات واقعاً اعمال شده» و کاربر نیازی به حدس ندارد.
+$expectedVersion = ""
+try {
+    $mv = Select-String -Path (Join-Path $backend "app\core\config.py") -Pattern 'APP_VERSION:\s*str\s*=\s*"([^"]+)"' | Select-Object -First 1
+    if ($mv) { $expectedVersion = $mv.Matches[0].Groups[1].Value }
+} catch {}
+if ($expectedVersion) {
+    Write-Host "" 
+    Write-Host "=== نسخهٔ این بیلد: v$expectedVersion ===" -ForegroundColor Cyan
 }
 
 # ---------- [۲] محیط مجازی پایتون ----------
@@ -220,15 +236,28 @@ if ($Prod) {
     Write-Host ""
     Write-Host "=== [۹] بررسی سلامت production (پورت $appPort) ===" -ForegroundColor Yellow
     $okP = $false
+    $liveVersion = ""
     for ($i = 0; $i -lt 30; $i++) {
         Start-Sleep -Seconds 2
         try {
             $r = Invoke-RestMethod -Uri "http://127.0.0.1:$appPort/health/live" -TimeoutSec 3
-            if ($r.status -eq "ok") { $okP = $true; break }
+            if ($r.status -eq "ok") { $okP = $true; $liveVersion = $r.version; break }
         } catch {}
     }
     if ($appPort -eq 80) { $outUrl = "http://192.168.100.2" } else { $outUrl = "http://192.168.100.2:$appPort" }
-    if ($okP) { Write-Host "✔ سامانه در حالت production سالم است." -ForegroundColor Green }
+    if ($okP) {
+        Write-Host "✔ سامانه در حالت production سالم است." -ForegroundColor Green
+        # مقایسهٔ نسخهٔ کد با نسخهٔ زندهٔ سرور — پاسخ صریح به «آیا تغییرات اعمال شد؟»
+        if ($expectedVersion -and $liveVersion) {
+            if ($liveVersion -eq $expectedVersion) {
+                Write-Host "✔ نسخهٔ فعال روی سرور: v$liveVersion — تغییرات v$expectedVersion اعمال شده ✔" -ForegroundColor Green
+            } else {
+                Write-Host "⚠ نسخهٔ روی سرور v$liveVersion است ولی کد v$expectedVersion است — container قدیمی؟ دوباره اجرا کنید" -ForegroundColor Yellow
+            }
+        } elseif ($liveVersion) {
+            Write-Host "  نسخهٔ فعال روی سرور: v$liveVersion" -ForegroundColor Green
+        }
+    }
     else {
         Write-Host "⚠ هنوز پاسخ نمی‌دهد — build/مهاجرت ممکن است طول بکشد؛ لاگ را ببین:" -ForegroundColor Yellow
         Write-Host "   docker compose -f docker-compose.prod.yml logs -f backend" -ForegroundColor Gray
