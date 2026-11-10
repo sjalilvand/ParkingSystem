@@ -131,6 +131,11 @@ class Settings(BaseSettings):
     CAMERA_DEDUPE_TTL: float = 60.0
     CAMERA_CONNECT_TIMEOUT: float = 8.0
     CAMERA_READ_TIMEOUT: float = 5.0
+    # پلاک قالب‌معتبر با اطمینان بین LOWCONF_MIN و CAMERA_MIN_CONF →
+    # به‌عنوان «نیازمند تأیید» با عکس در جدول پلاک‌خوانی ثبت می‌شود
+    # (بدون هیچ تصمیم/راهبندی — اپراتور در صفحهٔ بازبینی تعیین تکلیف می‌کند)
+    CAMERA_LOWCONF_REVIEW: bool = True
+    CAMERA_LOWCONF_MIN: float = 0.35
     BARRIER_RELAY_URL: str = ""
 
     # ------------------------------------------------------------------

@@ -715,11 +715,15 @@ async def capture_ocr(side: str,
             gate_code = cam.get("gate_code") or f"GATE-{side}-01"
             direction = cam.get("direction") or side
             try:
+                # عکس کامل + برش پلاک → MinIO → وصل به ردیف رویداد (همان مسیر poller)
+                full_id, plate_id = await poller._upload_event_images(db, side, bgr, chosen)
                 ev = await emit_plate_event(
                     db, gate_code=gate_code, direction=direction,
                     plate_raw=chosen["system"],
                     confidence=round(float(chosen.get("confidence") or 0) * 100, 1),
-                    source="camera-capture")
+                    source="camera-capture",
+                    full_image_file_id=full_id,
+                    plate_image_file_id=plate_id)
                 resp["event"] = ev
             except Exception as exc:  # noqa: BLE001
                 resp["event_error"] = f"{type(exc).__name__}: {exc}"

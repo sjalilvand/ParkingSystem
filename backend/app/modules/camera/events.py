@@ -25,6 +25,8 @@ async def emit_plate_event(
     source_event_id: str | None = None,
     raw_payload: dict | None = None,
     notify: bool = True,
+    full_image_file_id: str | None = None,
+    plate_image_file_id: str | None = None,
 ) -> dict:
     """رویداد پلاک را در زنجیرهٔ تصمیم گیت ثبت می‌کند و نتیجه را برمی‌گرداند."""
     from app.modules.access_control.router import _notify_gate_decision
@@ -43,6 +45,8 @@ async def emit_plate_event(
         confidence=confidence,
         captured_at=datetime.now(timezone.utc),
         raw_payload=payload_extra,
+        full_image_file_id=full_image_file_id,
+        plate_image_file_id=plate_image_file_id,
     )
     if notify:
         await _notify_gate_decision(db, gate_code, plate_raw, result)

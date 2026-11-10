@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Alert, Box, Button, Card, CardContent, Chip, CircularProgress, Dialog, DialogActions,
@@ -17,6 +17,8 @@ interface ReviewRow {
   plate_corrected: string | null
   confidence: number | null
   review_status: string
+  full_image_file_id: string | null
+  plate_image_file_id: string | null
   capture_quality: {
     angle_deg?: number
     lux?: number
@@ -28,6 +30,31 @@ interface ReviewRow {
   correction_note: string | null
   captured_at: string | null
   received_at: string | null
+}
+
+/** تصویر رویداد از MinIO (پیش‌امضاشده) — عکس کامل یا برش پلاک */
+function RecImage({ fileId, height, label }: { fileId?: string | null; height: number; label: string }) {
+  const [url, setUrl] = useState('')
+  const [failed, setFailed] = useState(false)
+  useEffect(() => {
+    setUrl(''); setFailed(false)
+    if (!fileId) return
+    let alive = true
+    api.get(`/files/${fileId}/url`)
+      .then((r) => { if (alive) setUrl(r.data?.url ?? '') })
+      .catch(() => { if (alive) setFailed(true) })
+    return () => { alive = false }
+  }, [fileId])
+  if (!fileId) return null
+  if (failed) return <Box sx={{ height, px: 1 }}><Typography variant="caption" color="text.secondary">{label}: —</Typography></Box>
+  if (!url) return <CircularProgress size={20} />
+  return (
+    <Box>
+      <Box component="img" src={url} alt={label}
+        sx={{ height, display: 'block', borderRadius: 1.5, border: '1px solid #E3EAF2', maxWidth: 320 }} />
+      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', textAlign: 'center' }}>{label}</Typography>
+    </Box>
+  )
 }
 
 interface Metrics {
@@ -136,6 +163,9 @@ export default function PlateReview() {
           <Card key={r.id} variant="outlined" sx={{ borderRadius: 3 }}>
             <CardContent>
               <Stack direction="row" spacing={2} alignItems="center" flexWrap="wrap">
+                {/* عکس دوربین + برش پلاک — هر عبور مستند می‌شود */}
+                <RecImage fileId={r.full_image_file_id} height={84} label="عکس دوربین" />
+                <RecImage fileId={r.plate_image_file_id} height={56} label="برش پلاک" />
                 <PlateBox plate={r.plate_corrected ?? r.plate_normalized ?? r.plate_raw} size="md" />
                 <Box sx={{ minWidth: 220 }}>
                   <Typography variant="caption" component="div">

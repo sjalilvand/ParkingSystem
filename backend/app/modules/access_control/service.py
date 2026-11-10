@@ -88,6 +88,8 @@ class GateDecisionService:
         driver_request: str | None = None,
         capture_quality: dict | None = None,
         processing_ms: int | None = None,
+        full_image_file_id: str | None = None,
+        plate_image_file_id: str | None = None,
     ) -> dict:
         now = datetime.now(timezone.utc)
         gate = (await db.execute(select(Gate).where(Gate.code == gate_code))).scalar_one_or_none()
@@ -129,6 +131,8 @@ class GateDecisionService:
             source_event_id=source_event_id, raw_payload=raw_payload,
             review_status=review_status, capture_quality=quality,
             processing_ms=processing_ms,
+            full_image_file_id=full_image_file_id,
+            plate_image_file_id=plate_image_file_id,
         )
         if not dry_run:
             db.add(pre)
@@ -405,6 +409,8 @@ class GateDecisionService:
         response["plate_review"] = {
             "status": review_status,
             "recognition_id": None if dry_run else pre.id,
+            "full_image_file_id": None if dry_run else pre.full_image_file_id,
+            "plate_image_file_id": None if dry_run else pre.plate_image_file_id,
             "envelope_ok": env.ok,
             "envelope_violations": env.violations,
         }

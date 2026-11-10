@@ -490,6 +490,9 @@ async def list_plate_reviews(
             "plate_corrected": r.plate_corrected,
             "confidence": r.confidence, "review_status": r.review_status,
             "capture_quality": r.capture_quality,
+            "full_image_file_id": r.full_image_file_id,
+            "plate_image_file_id": r.plate_image_file_id,
+            "source_event_id": r.source_event_id,
             "corrected_by": r.corrected_by, "corrected_at": (
                 r.corrected_at.isoformat() if r.corrected_at else None),
             "correction_note": r.correction_note,

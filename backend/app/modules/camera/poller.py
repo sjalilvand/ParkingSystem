@@ -15,6 +15,7 @@ import json
 import threading
 import time
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 from loguru import logger
@@ -44,7 +45,8 @@ _task: asyncio.Task | None = None
 _frame_lock = threading.Lock()
 _warmup_done = threading.Event()
 
-_last_emit: dict[str, float] = {}   # dedupe: کلید پلاک نرمال → زمان آخرین ارسال
+_last_emit: dict[str, float] = {}        # dedupe رویداد گیت: کلید پلاک → زمان آخرین ثبت
+_last_emit_review: dict[str, float] = {} # dedupe جدا برای ردیف‌های کم‌اطمینان بازبینی
 
 
 # ---------------------------------------------------------------------------
@@ -304,6 +306,22 @@ def _should_emit(key: str) -> bool:
     return True
 
 
+def _should_emit_review(key: str) -> bool:
+    """dedupe مستقل برای ردیف‌های کم‌اطمینان — نباید با رویداد اصلی تداخل کند:
+    اگر یک نگاه اولیهٔ کم‌اطمینان، dedupe رویداد اصلی را پر می‌کرد، خوانش
+    خوبِ چند ثانیه بعد مسدود می‌شد و رویداد گیت از دست می‌رفت."""
+    now = time.monotonic()
+    prev = _last_emit_review.get(key)
+    if prev and (now - prev) < settings.CAMERA_DEDUPE_TTL:
+        return False
+    _last_emit_review[key] = now
+    if len(_last_emit_review) > 500:
+        cutoff = now - max(60.0, settings.CAMERA_DEDUPE_TTL * 4)
+        for k in [k for k, v in _last_emit_review.items() if v < cutoff]:
+            _last_emit_review.pop(k, None)
+    return True
+
+
 def _save_capture(side: str, bgr, plate_text: str | None) -> str | None:
     try:
         out_dir = Path(settings.CAMERA_SNAPSHOT_DIR)
@@ -322,6 +340,120 @@ def _save_capture(side: str, bgr, plate_text: str | None) -> str | None:
     except Exception as exc:  # noqa: BLE001
         logger.warning(f"[camera:{side}] save capture FAILED: {exc}")
         return None
+
+
+async def _upload_event_images(db, side: str, bgr, chosen: dict) -> tuple:
+    """آپلود عکس کامل + برش پلاک در MinIO و ساخت FileRecord — best-effort.
+
+    خروجی (full_image_file_id, plate_image_file_id) و به ردیف
+    PlateRecognitionEvent وصل می‌شود تا عکس هر عبور در جدول رویدادها دیده
+    شود. هر خطا فقط لاگ می‌شود — ثبت رویداد گیت هرگز به خاطر عکس متوقف
+    نمی‌شود. FileRecord در همان sessionِ رویداد flush می‌شود تا همه‌چیز
+    یک‌جا commit شود.
+    """
+    try:
+        import anyio
+        from app.core.system_models import FileRecord
+        from app.integrations import storage
+
+        ok, buf = cv2.imencode(".jpg", bgr, [cv2.IMWRITE_JPEG_QUALITY, 85])
+        if not ok:
+            return None, None
+        full_bytes = buf.tobytes()
+
+        crop_bytes = None
+        box = chosen.get("box")
+        if box and len(box) == 4:
+            h, w = bgr.shape[:2]
+            x1, y1, x2, y2 = [int(v) for v in box]
+            px = max(8, int((x2 - x1) * 0.15))
+            py = max(8, int((y2 - y1) * 0.30))
+            x1, y1 = max(0, x1 - px), max(0, y1 - py)
+            x2, y2 = min(w, x2 + px), min(h, y2 + py)
+            if x2 > x1 and y2 > y1:
+                okc, cbuf = cv2.imencode(".jpg", bgr[y1:y2, x1:x2],
+                                         [cv2.IMWRITE_JPEG_QUALITY, 90])
+                if okc:
+                    crop_bytes = cbuf.tobytes()
+
+        tag = chosen.get("system") or "unknown"
+
+        def _put() -> tuple:
+            info = storage.upload_bytes(
+                full_bytes, prefix="gate-captures",
+                original_name=f"cam-{side}-{tag}.jpg", content_type="image/jpeg")
+            info2 = None
+            if crop_bytes:
+                info2 = storage.upload_bytes(
+                    crop_bytes, prefix="gate-captures-plates",
+                    original_name=f"cam-{side}-{tag}-plate.jpg", content_type="image/jpeg")
+            return info, info2
+
+        info, info2 = await anyio.to_thread.run_sync(_put)
+
+        rec1 = FileRecord(bucket=info["bucket"], object_key=info["object_key"],
+                          original_name=f"cam-{side}-{tag}.jpg",
+                          content_type="image/jpeg", size=info["size"],
+                          checksum=info["checksum"])
+        db.add(rec1)
+        rec2 = None
+        if info2 is not None:
+            rec2 = FileRecord(bucket=info2["bucket"], object_key=info2["object_key"],
+                              original_name=f"cam-{side}-{tag}-plate.jpg",
+                              content_type="image/jpeg", size=info2["size"],
+                              checksum=info2["checksum"])
+            db.add(rec2)
+        await db.flush()
+        return rec1.id, (rec2.id if rec2 is not None else None)
+    except Exception as exc:  # noqa: BLE001 — عکس حیاتی نیست؛ رویداد هست
+        logger.warning(f"[camera:{side}] آپلود عکس رویداد ناموفق "
+                       f"(رویداد بدون عکس ثبت می‌شود): {type(exc).__name__}: {exc}")
+        return None, None
+
+
+async def _record_review_event(side: str, gate_code: str, bgr, cand: dict) -> None:
+    """پلاک قالب‌معتبرِ کم‌اطمینان → ردیف NEEDS_REVIEW با عکس (بدون تصمیم/راهبند).
+
+    «هر ماشین که رد می‌شود» حتی اگر خوانش زیر آستانه باشد از جدول پلاک‌خوانی
+    حذف نمی‌شود — اپراتور در صفحهٔ «بازبینی پلاک» عکس را می‌بیند و تأیید/اصلاح
+    می‌کند. هیچ رویداد AccessEvent و هیچ فرمان راهبندی ساخته نمی‌شود.
+    """
+    st = _side_status(side)
+    try:
+        from sqlalchemy import select as _select
+        from app.db.session import AsyncSessionLocal
+        from app.modules.access_control.models import Gate, PlateRecognitionEvent
+        from app.shared.plate import normalize_plate
+        async with AsyncSessionLocal() as db:
+            gate = (await db.execute(
+                _select(Gate).where(Gate.code == gate_code))).scalar_one_or_none()
+            if gate is None:
+                logger.warning(f"[camera:{side}] دروازهٔ {gate_code} نیست — "
+                               f"خوانش کم‌اطمینان فقط در آمار ماند")
+                return
+            full_id, plate_id = await _upload_event_images(db, side, bgr, cand)
+            now = datetime.now(timezone.utc)
+            db.add(PlateRecognitionEvent(
+                gate_id=gate.id, direction=side,
+                plate_raw=cand["system"],
+                plate_normalized=normalize_plate(cand["system"]) or None,
+                confidence=round(float(cand.get("confidence") or 0), 3),
+                captured_at=now, received_at=now,
+                source_event_id=f"cam-{uuid.uuid4()}",
+                review_status="NEEDS_REVIEW",
+                raw_payload={"side": side, "raw_read": cand.get("raw"),
+                             "method": cand.get("method"),
+                             "low_conf_review": True},
+                full_image_file_id=full_id, plate_image_file_id=plate_id,
+            ))
+            await db.commit()
+        st["review_events"] = int(st.get("review_events") or 0) + 1
+        logger.info(f"[camera:{side}] plate={cand['system']} "
+                    f"conf={cand.get('confidence')} کم‌اطمینان → "
+                    f"NEEDS_REVIEW ذخیره شد (عکس: {bool(full_id)})")
+    except Exception as exc:  # noqa: BLE001
+        st["last_error"] = f"ثبت بازبینی ناموفق: {type(exc).__name__}: {exc}"
+        logger.warning(f"[camera:{side}] review-event FAILED: {exc}")
 
 
 async def _process_frame(side: str, gate_code: str, direction: str, bgr) -> None:
@@ -355,6 +487,15 @@ async def _process_frame(side: str, gate_code: str, direction: str, bgr) -> None
             st["low_conf_skipped"] = int(st.get("low_conf_skipped") or 0) + 1
             st["last_skipped"] = {"system": skipped.get("system"),
                                   "confidence": skipped.get("confidence")}
+        # پلاک قالب‌معتبرِ بین LOWCONF_MIN و آستانه → ردیف بازبینی با عکس —
+        # هیچ تصمیمی/راهبندی ندارد؛ «هر ماشین ردشده» در جدول می‌ماند
+        if settings.CAMERA_LOWCONF_REVIEW:
+            cand = next((p for p in plates if p.get("valid") and p.get("system")
+                         and p.get("confidence", 0) >= settings.CAMERA_LOWCONF_MIN), None)
+            if cand:
+                rkey = _norm_key(cand["system"])
+                if rkey and _should_emit_review(rkey):
+                    await _record_review_event(side, gate_code, bgr, cand)
         st["last_error"] = None
         return
     key = _norm_key(chosen["system"])
@@ -365,6 +506,8 @@ async def _process_frame(side: str, gate_code: str, direction: str, bgr) -> None
     from app.modules.camera.events import emit_plate_event
     try:
         async with AsyncSessionLocal() as db:
+            # عکس کامل + برش پلاک → MinIO → وصل به ردیف رویداد
+            full_id, plate_id = await _upload_event_images(db, side, bgr, chosen)
             res = await emit_plate_event(
                 db,
                 gate_code=gate_code,
@@ -375,6 +518,8 @@ async def _process_frame(side: str, gate_code: str, direction: str, bgr) -> None
                 raw_payload={"side": side, "raw_read": chosen.get("raw"),
                              "persian": chosen.get("persian"),
                              "method": chosen.get("method")},
+                full_image_file_id=full_id,
+                plate_image_file_id=plate_id,
             )
             await db.commit()
         st["last_plate"] = chosen.get("system")
