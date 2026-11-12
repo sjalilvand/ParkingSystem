@@ -20,6 +20,9 @@ interface SideStatus {
   last_plate?: string | null; last_plate_fa?: string | null; last_conf?: number
   events_sent?: number; last_error?: string | null; reconnects?: number
   frames_scanned?: number
+  no_plate_scans?: number
+  motion_skips?: number
+  scanning?: boolean
 }
 
 function toFa(n: number | string): string {
@@ -38,7 +41,7 @@ export default function CameraBox({ side, gateKey }: { side: 'IN' | 'OUT'; gateK
   const [snack, setSnack] = useState('')
   const [testPreview, setTestPreview] = useState(false)
   const [draft, setDraft] = useState<{ rtsp: string; enabled: boolean }>({ rtsp: '', enabled: false })
-  const [draftGlobal, setDraftGlobal] = useState<{ interval: string; ocr: boolean }>({ interval: '10', ocr: true })
+  const [draftGlobal, setDraftGlobal] = useState<{ interval: string; ocr: boolean }>({ interval: '1', ocr: true })
   const [streamFailed, setStreamFailed] = useState(false)  // استریم MJPEG قطع شد → snapshot
   const [mediaErr, setMediaErr] = useState(false)          // آخرین منبع تصویر خطا داد
   const [streamOk, setStreamOk] = useState(false)          // فریم اول استریم رسید
@@ -88,7 +91,7 @@ export default function CameraBox({ side, gateKey }: { side: 'IN' | 'OUT'; gateK
     // «فعال» به‌صورت پیش‌فرض روشن است (فقط اگر کاربر صریحاً خاموش کرده باشد خاموش می‌ماند) —
     // پیش‌فرضِ قبلیِ «خاموش» باعث می‌شد با ذخیرهٔ آدرس، دوربین غیرفعال بماند
     setDraft({ rtsp: camCfg?.rtsp ?? '', enabled: camCfg?.enabled !== false })
-    setDraftGlobal({ interval: String(cfg?.poll_interval ?? 10), ocr: cfg?.ocr !== false })
+    setDraftGlobal({ interval: String(cfg?.poll_interval ?? 1), ocr: cfg?.ocr !== false })
     setMsg(null)
     setTestPreview(false)
     setDialog(true)
@@ -101,7 +104,7 @@ export default function CameraBox({ side, gateKey }: { side: 'IN' | 'OUT'; gateK
       const enabled = override?.enabled ?? draft.enabled
       await api.put('/camera/config', {
         sides: { ...(cfg?.sides ?? {}), [side]: { ...(camCfg ?? {}), rtsp, enabled } },
-        poll_interval: Number(draftGlobal.interval) || 10, ocr: draftGlobal.ocr,
+        poll_interval: Number(draftGlobal.interval) || 1, ocr: draftGlobal.ocr,
       })
       await loadCfg()
       return true
@@ -224,6 +227,10 @@ export default function CameraBox({ side, gateKey }: { side: 'IN' | 'OUT'; gateK
           {live && status?.connected === false && (
             <Chip size="small" label="قطع" color="error" sx={{ fontWeight: 700 }} />
           )}
+          {status?.scanning && (
+            <Chip size="small" label="در حال خواندن پلاک…"
+              sx={{ bgcolor: 'rgba(230,81,0,.85)', color: '#fff', fontWeight: 700 }} />
+          )}
         </Stack>
         {status?.last_plate && (
           <Chip size="small"
@@ -294,8 +301,10 @@ export default function CameraBox({ side, gateKey }: { side: 'IN' | 'OUT'; gateK
               label="دوربین فعال باشد (نمایش زنده + خواندن خودکار پلاک)" />
             <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
               <TextField size="small" type="number" label="فاصلهٔ خواندن خودکار (ثانیه)" sx={{ width: 190 }}
+                inputProps={{ min: 0.5, max: 120, step: 0.5 }}
                 value={draftGlobal.interval}
-                onChange={(e) => setDraftGlobal((g) => ({ ...g, interval: e.target.value }))} />
+                onChange={(e) => setDraftGlobal((g) => ({ ...g, interval: e.target.value }))}
+                helperText="۱ ثانیه = پرسرعت (پیشنهادی برای ماشین‌های تند) — حداقل ۰٫۵" />
               <FormControlLabel
                 control={<Switch checked={draftGlobal.ocr} onChange={(e) => setDraftGlobal((g) => ({ ...g, ocr: e.target.checked }))} />}
                 label="خواندن خودکار پلاک از تصویر (سناریو B)" />
@@ -334,7 +343,7 @@ export default function CameraBox({ side, gateKey }: { side: 'IN' | 'OUT'; gateK
             <Alert severity="info" variant="outlined">
               <Typography variant="body2" fontWeight={800} mb={0.5}>سناریو B — دوربین معمولی (عکس HTTP یا RTSP):</Typography>
               <Typography variant="caption" sx={{ display: 'block' }}>
-                آدرس را وارد کنید — سرور هر {toFa(draftGlobal.interval || 10)} ثانیه عکس می‌گیرد، پلاک را با موتور OCR داخلی می‌خواند و رویداد گیت می‌سازد. تصویر زندهٔ پنل هم از همین آدرس استریم می‌شود.
+                آدرس را وارد کنید — سرور پیوسته عکس می‌گیرد و وقتی صحنه تغییر کرد (ماشین وارد قاب شد) هر {toFa(draftGlobal.interval || 1)} ثانیه پلاک را با موتور OCR داخلی می‌خواند و رویداد گیت می‌سازد. خوانش‌های کم‌اطمینان هم با عکس در «بازبینی پلاک» ذخیره می‌شوند. تصویر زندهٔ پنل هم از همین آدرس استریم می‌شود.
               </Typography>
             </Alert>
           </Stack>

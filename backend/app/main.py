@@ -83,6 +83,16 @@ async def lifespan(app: FastAPI):
     except Exception as exc:  # noqa: BLE001 — دوربین هرگز بوت را نبندد
         logger.warning(f"[lifespan] camera default seed FAILED: {exc}")
 
+    # v2.5.0 — دروازه‌های پیش‌فرض: بدون ردیف Gate در DB، هر خوانشِ درستِ
+    # poller با «GATE_NOT_FOUND» دور ریخته می‌شد و هیچ رویدادی ثبت نمی‌شد
+    try:
+        from app.db.session import AsyncSessionLocal
+        from app.modules.camera import config_store
+        async with AsyncSessionLocal() as db:
+            await config_store.ensure_default_gates(db)
+    except Exception as exc:  # noqa: BLE001 — دوربین هرگز بوت را نبندد
+        logger.warning(f"[lifespan] gate default seed FAILED: {exc}")
+
     # الحاقیه §۶ — حلقهٔ دوربین‌های گیت (سناریو B): RTSP → OCR داخلی → رویداد گیت
     # فقط با وابستگی‌های OCR (INSTALL_OCR=true) و CAMERA_POLL_ENABLED=true اجرا می‌شود.
     poller_task = None

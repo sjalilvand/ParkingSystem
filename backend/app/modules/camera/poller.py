@@ -1,10 +1,17 @@
 """حلقهٔ دوربین‌های گیت — سناریو B: دوربین RTSP معمولی + موتور OCR داخلی بک‌اند.
 
-معماری:
-  * برای هر دوربین فعال یک thread گیرندهٔ فریم (FrameGrabber) RTSP را باز نگه
-    می‌دارد و همیشه «آخرین فریم» را در بافر دارد (drain کردن بافر RTSP).
-  * حلقهٔ async هر poll_interval ثانیه آخرین فریم را به موتور پلاک‌خوان
-    (EasyOCR داخلی کانتینر) می‌دهد؛ پلاک معتبر → رویداد گیت (تصمیم/اعلان/راهبند).
+معماری (v2.5.0 — «کلی ماشین رفت‌وآمد داشت اما هیچی ثبت نشد»):
+  * برای هر دوربین فعال یک thread گیرندهٔ فریم (FrameGrabber) باز نگه
+    می‌دارد و همیشه «آخرین فریم» را در بافر دارد. حالت HTTP هر ~۰٫۴ ثانیه
+    یک snapshot می‌گیرد (~۲٫۵ فریم بر ثانیه — ماشین تند ردشده گم نمی‌شود).
+  * اسکنِ هر طرف مستقل است (task جدا + semafor OCR) — اسکنِ کندِ یک طرف
+    طرف دیگر را بلوکه نمی‌کند.
+  * گیت حرکت: OCR سنگین فقط وقتی اجرا می‌شود که صحنه نسبت به آخرین اسکن
+    تغییر کرده باشد (ماشین وارد قاب شد) یا بیش از CAMERA_FORCE_SCAN_SEC
+    از آخرین اسکن گذشته باشد؛ خیابانِ خالیِ ساکت هرگز OCR نمی‌شود → CPU
+    آزاد می‌ماند و اسکنِ واقعی هر ~۱ ثانیه انجام می‌شود.
+  * پلاک معتبر → رویداد گیت (تصمیم/اعلان/راهبند)؛ کم‌اطمینانِ قالب‌معتبر
+    → ردیف بازبینی با عکس.
   * با --workers 2 فقط یک worker رهبر می‌شود (قفل Redis؛ نبود Redis → تک‌worker).
   * هیچ خطایی حلقه را نمی‌بندد — همهٔ خطاها در STATUS برای پنل گیت دیده می‌شوند.
 """
@@ -47,6 +54,16 @@ _warmup_done = threading.Event()
 
 _last_emit: dict[str, float] = {}        # dedupe رویداد گیت: کلید پلاک → زمان آخرین ثبت
 _last_emit_review: dict[str, float] = {} # dedupe جدا برای ردیف‌های کم‌اطمینان بازبینی
+
+# v2.5.0 — اسکن هم‌زمان IN/OUT: هر طرف task خودش را دارد؛ semafor تعداد
+# OCR موازی را محدود می‌کند تا CPU جوش نخورد ولی یک طرف منتظر طرف دیگر نماند
+_ocr_sem: asyncio.Semaphore | None = None
+_scan_tasks: dict[str, asyncio.Task] = {}   # side → task جاری (تا هم‌پوشانی اسکن نباشد)
+
+# v2.5.0 — گیت حرکت: مرجعِ مقایسهٔ صحنه برای هر طرف (گری‌اسکیل کوچک‌شده)
+_motion_ref: dict[str, object] = {}
+_motion_lock = threading.Lock()
+_last_scan_started: dict[str, float] = {}   # side → زمان شروع آخرین اسکن کامل
 
 
 # ---------------------------------------------------------------------------
@@ -194,8 +211,13 @@ class FrameGrabber(threading.Thread):
                 self._ts = time.time()
 
     def _run_http(self) -> None:
-        """حالت HTTP — ~۱ فریم بر ثانیه JPEG از دوربین (بدون RTSP، بدون codec)."""
+        """حالت HTTP — ~۲٫۵ فریم بر ثانیه JPEG از دوربین (بدون RTSP، بدون codec).
+
+        v2.5.0: فاصله از ۱ ثانیه به CAMERA_HTTP_SNAPSHOT_SEC (۰٫۴) رسید —
+        ماشین تندِ ردشده بین دو snapshot گم نمی‌شود.
+        """
         import numpy as np
+        wait = max(0.2, float(settings.CAMERA_HTTP_SNAPSHOT_SEC))
         while not self._stop_evt.is_set():
             jpg = _fetch_jpeg_sync(self.rtsp)
             if jpg is None:
@@ -222,7 +244,7 @@ class FrameGrabber(threading.Thread):
             with _frame_lock:
                 self._frame = frame
                 self._ts = time.time()
-            self._stop_evt.wait(1.0)
+            self._stop_evt.wait(wait)
 
     def latest(self) -> tuple:
         with _frame_lock:
@@ -248,6 +270,11 @@ def _side_status(side: str) -> dict:
         "events_sent": 0, "last_error": None,
         "low_conf_skipped": 0, "last_skipped": None,
         "frames_scanned": 0,
+        # v2.5.0 — آمار سرعت برای عیب‌یابی «چیزی ثبت نمی‌شود»
+        "no_plate_scans": 0,      # اسکن کامل که هیچ پلاک قالب‌معتبری نداشت
+        "motion_skips": 0,        # فریم‌هایی که به‌خاطر صحنهٔ ساکن اسکن نشد
+        "scanning": False,        # این طرف همین الان در حال OCR است
+        "last_scan_started_ts": None,
     })
 
 
@@ -277,6 +304,47 @@ def _ocr_sync(bgr) -> dict:
     from app.modules.plate_ocr.engine import get_reader
     reader = get_reader(settings.PLATE_OCR_MODELS_DIR)
     return reader.read_image(bgr, min_conf=settings.CAMERA_MIN_CONF, fast_mode=True)
+
+
+# ---------------------------------------------------------------------------
+# v2.5.0 — گیت حرکت: «آیا صحنه تغییر کرده؟»
+# OCRِ کامل روی CPU ۱ تا ۱۲ ثانیه می‌برد؛ اگر برای هر فریمِ خیابانِ خالی هم
+# اجرا می‌شد، هیچ CPUای برای ماشینِ واقعی نمی‌ماند. امضای سبک (گری‌اسکیل
+# ۹۶×۵۴) و مقایسه با مرجعِ «آخرین فریمی که واقعاً اسکن شد» → فقط وقتی
+# چیزی وارد قاب شد (یا ماشین در قاب حرکت کرد) OCR سنگین می‌چرخد.
+# ---------------------------------------------------------------------------
+def _motion_signature(bgr):
+    """امضای سبک صحنه — گری‌اسکیل ۹۶×۵۴ برای مقایسهٔ سریع (None = خطا)."""
+    import numpy as np
+    try:
+        small = cv2.resize(bgr, (96, 54), interpolation=cv2.INTER_AREA)
+        return cv2.cvtColor(small, cv2.COLOR_BGR2GRAY).astype("float32")
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _scene_diff(side: str, bgr) -> float | None:
+    """میانگین اختلاف مطلق با مرجعِ آخرین اسکن (۰-۲۵۵) — مرجع را تغییر نمی‌دهد."""
+    import numpy as np
+    sig = _motion_signature(bgr)
+    if sig is None:
+        return None
+    with _motion_lock:
+        ref = _motion_ref.get(side)
+        if ref is None:
+            return None
+        try:
+            return float(np.abs(sig - ref).mean())
+        except Exception:  # noqa: BLE001
+            return None
+
+
+def _remember_scene(side: str, bgr) -> None:
+    """مرجعِ صحنه را به فریمِ فعلی به‌روز می‌کند (همراه با شروع اسکن)."""
+    sig = _motion_signature(bgr)
+    if sig is not None:
+        with _motion_lock:
+            _motion_ref[side] = sig
 
 
 def _norm_key(plate: str) -> str:
@@ -457,6 +525,26 @@ async def _record_review_event(side: str, gate_code: str, bgr, cand: dict) -> No
         logger.warning(f"[camera:{side}] review-event FAILED: {exc}")
 
 
+async def _scan_worker(side: str, gate_code: str, direction: str, bgr) -> None:
+    """v2.5.0 — اسکنِ یک فریم در task مستقل: با semaforِ OCR تا اسکنِ کندِ
+    یک طرف (تا ۱۲ ثانیه روی فریم‌های بی‌پلاک) طرف دیگر و حلقهٔ اصلی را
+    بلوکه نکند. هر خطا در آمارِ طرف ثبت می‌شود — هیچ‌وقت حلقه را نمی‌بندد."""
+    st = _side_status(side)
+    try:
+        if _ocr_sem is not None:
+            async with _ocr_sem:
+                await _process_frame(side, gate_code, direction, bgr)
+        else:
+            await _process_frame(side, gate_code, direction, bgr)
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:  # noqa: BLE001 — خطا حلقه را نمی‌بندد
+        st["last_error"] = f"خطای اسکن: {type(exc).__name__}: {exc}"
+        logger.warning(f"[camera:{side}] scan task FAILED: {exc}")
+    finally:
+        st["scanning"] = False
+
+
 async def _process_frame(side: str, gate_code: str, direction: str, bgr) -> None:
     st = _side_status(side)
     import anyio
@@ -478,6 +566,7 @@ async def _process_frame(side: str, gate_code: str, direction: str, bgr) -> None
     best = result.get("best") or {}
     plates = result.get("plates") or []
     if not plates:
+        st["no_plate_scans"] = int(st.get("no_plate_scans") or 0) + 1
         st["last_error"] = None
         return
     # کاندیداها به ترتیب رتبه — اولین «معتبرِ قالبی» بالای آستانه.
@@ -539,6 +628,9 @@ async def _process_frame(side: str, gate_code: str, direction: str, bgr) -> None
         logger.info(f"[camera:{side}] plate={chosen['system']} → "
                     f"{res.get('decision')} / {res.get('barrier_action')}")
     except Exception as exc:  # noqa: BLE001
+        # v2.5.0 — کلید dedupe آزاد شود؛ اگر قفلِ ۶۰ ثانیه‌ای می‌ماند،
+        # خوانشِ درستِ بعدیِ همین ماشین هم برای همیشه از دست می‌رفت
+        _last_emit.pop(key, None)
         st["last_error"] = f"ثبت رویداد ناموفق: {type(exc).__name__}: {exc}"
         logger.warning(f"[camera:{side}] emit FAILED: {exc}")
 
@@ -693,10 +785,13 @@ async def _reload_cfg() -> None:
 
 
 async def poller_loop() -> None:
-    logger.info("[camera-poller] حلقهٔ دوربین شروع شد")
+    logger.info("[camera-poller] حلقهٔ دوربین شروع شد (v2.5.0 — اسکن هم‌زمان + گیت حرکت)")
     STATUS["running"] = True
     STATUS["started_at"] = time.time()
     STATUS["ocr_ready"] = HAS_CV2
+    global _ocr_sem
+    if _ocr_sem is None:
+        _ocr_sem = asyncio.Semaphore(max(1, int(settings.CAMERA_OCR_WORKERS)))
     last_leader_check = 0.0
     last_hb = 0.0
     last_pub = 0.0
@@ -730,8 +825,9 @@ async def poller_loop() -> None:
                 if STATUS["leader"] and (now - last_pub) > 2.0:
                     last_pub = now
                     await _publish_status()
-                # ضربان هر ۵ دقیقه — در لاگ مشخص است که حلقه زنده است
-                if now - last_hb > 300:
+                # ضربان هر ۶۰ ثانیه (v2.5.0 — از ۳۰۰ ثانیه) — در لاگ مشخص
+                # است حلقه زنده است و آمار اسکن چه وضعی دارد
+                if now - last_hb > 60:
                     last_hb = now
                     for hb_side in SIDES:
                         hb_st = STATUS["sides"].get(hb_side) or {}
@@ -741,10 +837,13 @@ async def poller_loop() -> None:
                         logger.info(f"[camera:{hb_side}] heartbeat "
                                     f"connected={getattr(hb_g, 'connected', None)} "
                                     f"reconnects={getattr(hb_g, 'reconnects', 0)} "
+                                    f"scanned={hb_st.get('frames_scanned', 0)} "
+                                    f"no_plate={hb_st.get('no_plate_scans', 0)} "
+                                    f"motion_skip={hb_st.get('motion_skips', 0)} "
                                     f"last_plate={hb_st.get('last_plate')} "
                                     f"conf={hb_st.get('last_conf')} "
                                     f"events={hb_st.get('events_sent')} "
-                                    f"low_conf_skipped={hb_st.get('low_conf_skipped', 0)}")
+                                    f"review={hb_st.get('review_events', 0)}")
                 if not STATUS["leader"]:
                     await asyncio.sleep(5)
                     continue
@@ -755,11 +854,14 @@ async def poller_loop() -> None:
 
                 cfg = cached_cfg()
                 interval = float(cfg.get("poll_interval") or settings.CAMERA_POLL_INTERVAL)
+                motion_thr = float(settings.CAMERA_MOTION_DIFF)
+                force_scan = float(settings.CAMERA_FORCE_SCAN_SEC)
+                ocr_on = bool(cfg.get("ocr", True)) and HAS_CV2
                 for side in SIDES:
                     s = cfg.get(side) or {}
                     st = _side_status(side)
                     st["enabled"] = bool(s.get("enabled") and s.get("rtsp"))
-                    if not st["enabled"]:
+                    if not st["enabled"] or not ocr_on:
                         continue
                     g = _grabbers.get(side)
                     if g is None:
@@ -767,15 +869,32 @@ async def poller_loop() -> None:
                     frame, ts = g.latest()
                     if frame is None:
                         continue
-                    # فقط فریم تازه (۱.۵×فاصلهٔ poll)
-                    if ts and (time.time() - ts) > max(15.0, interval * 1.5):
+                    # فقط فریم تازه — با interval=۱ ثانیه یعنی فریمِ ≤۳ ثانیه
+                    if ts and (time.time() - ts) > max(3.0, interval * 3.0):
                         continue
-                    last_ocr = st.get("last_ocr_ts") or 0
-                    if (time.time() - last_ocr) < interval:
+                    # v2.5.0 — اسکن قبلیِ این طرف هنوز در جریان است؟
+                    prev_t = _scan_tasks.get(side)
+                    if prev_t is not None and not prev_t.done():
                         continue
-                    if cfg.get("ocr", True) and HAS_CV2:
-                        gate_code, direction = gate_for(side, s)
-                        await _process_frame(side, gate_code, direction, frame)
+                    # v2.5.0 — حداقل فاصلهٔ «شروع» اسکن (OCRِ چندثانیه‌ای به
+                    # فاصله اضافه نمی‌شود — برخلاف قبل که آخرین «پایان» مبنا بود)
+                    if (time.time() - _last_scan_started.get(side, 0.0)) < interval:
+                        continue
+                    # v2.5.0 — گیت حرکت: خیابانِ خالیِ ساکت OCR سنگین نمی‌شود
+                    diff = _scene_diff(side, frame)
+                    changed = (diff is None or motion_thr <= 0 or diff >= motion_thr)
+                    if not changed and (force_scan <= 0 or
+                                        (time.time() - _last_scan_started.get(side, 0.0))
+                                        < force_scan):
+                        st["motion_skips"] = int(st.get("motion_skips") or 0) + 1
+                        continue
+                    gate_code, direction = gate_for(side, s)
+                    _last_scan_started[side] = time.time()
+                    st["last_scan_started_ts"] = _last_scan_started[side]
+                    st["scanning"] = True
+                    _remember_scene(side, frame)
+                    _scan_tasks[side] = asyncio.get_running_loop().create_task(
+                        _scan_worker(side, gate_code, direction, frame))
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001 — هیچ خطایی حلقه را نمی‌بندد
@@ -783,7 +902,7 @@ async def poller_loop() -> None:
                                f"{type(exc).__name__}: {exc}")
                 await asyncio.sleep(5)
                 continue
-            await asyncio.sleep(1.0)
+            await asyncio.sleep(0.3)
     except asyncio.CancelledError:
         logger.info("[camera-poller] متوقف شد")
         raise
