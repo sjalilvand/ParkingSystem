@@ -1,17 +1,21 @@
 """حلقهٔ دوربین‌های گیت — سناریو B: دوربین RTSP معمولی + موتور OCR داخلی بک‌اند.
 
-معماری (v2.5.0 — «کلی ماشین رفت‌وآمد داشت اما هیچی ثبت نشد»):
+معماری (v2.7.0 — «کارکرد بی‌وقفه»: وقتی کار نمی‌کنی میره تو حالت استپ):
   * برای هر دوربین فعال یک thread گیرندهٔ فریم (FrameGrabber) باز نگه
     می‌دارد و همیشه «آخرین فریم» را در بافر دارد. حالت HTTP هر ~۰٫۴ ثانیه
     یک snapshot می‌گیرد (~۲٫۵ فریم بر ثانیه — ماشین تند ردشده گم نمی‌شود).
   * اسکنِ هر طرف مستقل است (task جدا + semafor OCR) — اسکنِ کندِ یک طرف
-    طرف دیگر را بلوکه نمی‌کند.
+    طرف دیگر را بلوکه نمی‌کند؛ اسکنِ معلقِ بیش از CAMERA_SCAN_TIMEOUT_SEC
+    لغو می‌شود تا طرفِ مربوطه برای همیشه بی‌صدا نمیرد (ریشهٔ «استپ میشه»).
+  * watchdog thread مستقل از event loop ضربانِ حلقه را می‌پاید؛ حلقهٔ
+    بلامراجعه خودکار از نو راه می‌افتد و اگر سامایی نکرد، پروسه عمداً بسته
+    می‌شود تا Docker کانتینر را تازه کند (restart: unless-stopped).
   * گیت حرکت: OCR سنگین فقط وقتی اجرا می‌شود که صحنه نسبت به آخرین اسکن
     تغییر کرده باشد (ماشین وارد قاب شد) یا بیش از CAMERA_FORCE_SCAN_SEC
     از آخرین اسکن گذشته باشد؛ خیابانِ خالیِ ساکت هرگز OCR نمی‌شود → CPU
     آزاد می‌ماند و اسکنِ واقعی هر ~۱ ثانیه انجام می‌شود.
   * پلاک معتبر → رویداد گیت (تصمیم/اعلان/راهبند)؛ کم‌اطمینانِ قالب‌معتبر
-    → ردیف بازبینی با عکس.
+    → ردیف بازبینی با عکس؛ عبورِ بی‌پلاکِ باحرکت → عکس برای بازنویسیِ دستی.
   * با --workers 2 فقط یک worker رهبر می‌شود (قفل Redis؛ نبود Redis → تک‌worker).
   * هیچ خطایی حلقه را نمی‌بندد — همهٔ خطاها در STATUS برای پنل گیت دیده می‌شوند.
 """
@@ -44,6 +48,10 @@ STATUS: dict = {
     "ocr_ready": False,
     "started_at": None,
     "sides": {},
+    # v2.7.0 — کارکرد بی‌وقفه: ضربانِ حلقه + آمار نگهبان برای پنل گیت
+    "last_loop_ts": None,
+    "watchdog_restarts": 0,
+    "scan_timeouts_total": 0,
 }
 
 _grabbers: dict[str, "FrameGrabber"] = {}
@@ -51,6 +59,12 @@ _cfg_sig: str = ""          # امضای پیکربندی — تغییر آن گ
 _task: asyncio.Task | None = None
 _frame_lock = threading.Lock()
 _warmup_done = threading.Event()
+
+# v2.7.0 — نگهبان ۲۴/۷: thread مستقل که ضربانِ حلقه را می‌پاید
+_main_loop: asyncio.AbstractEventLoop | None = None
+_watchdog_thread: threading.Thread | None = None
+_watchdog_stop = threading.Event()
+_restart_times: list[float] = []   # زمان راه‌اندازی‌های دوبارهٔ اخیر (پنجرهٔ ۱۰ دقیقه)
 
 _last_emit: dict[str, float] = {}        # dedupe رویداد گیت: کلید پلاک → زمان آخرین ثبت
 _last_emit_review: dict[str, float] = {} # dedupe جدا برای ردیف‌های کم‌اطمینان بازبینی
@@ -281,6 +295,8 @@ def _side_status(side: str) -> dict:
         "last_scan_started_ts": None,
         # v2.6.0 — عبورهایی که خوانده نشدند ولی عکسشان برای بازنویسی دستی ذخیره شد
         "unread_captured": 0,
+        # v2.7.0 — اسکن‌های معلقی که نگهبان لغو کرده تا طرف بی‌کار نماید
+        "scan_timeouts": 0,
     })
 
 
@@ -295,8 +311,14 @@ def status_snapshot() -> dict:
             _, ts = g.latest()
             st["has_frame"] = ts > 0
             st["last_frame_ts"] = ts if ts else None
+    last_loop = STATUS.get("last_loop_ts")
     return {
         **STATUS,
+        "version": settings.APP_VERSION,
+        "loop_age_sec": round(time.time() - float(last_loop), 1) if last_loop else None,
+        "last_loop_iso": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(float(last_loop))) if last_loop else None,
+        "watchdog_active": bool(_watchdog_thread is not None and _watchdog_thread.is_alive()
+                                and not _watchdog_stop.is_set()),
         "ocr_installed": HAS_CV2,
         "poll_interval": cached_cfg().get("poll_interval"),
         "sides": {k: dict(v) for k, v in STATUS["sides"].items()},
@@ -606,14 +628,24 @@ async def _scan_worker(side: str, gate_code: str, direction: str, bgr,
     یک طرف (تا ۱۲ ثانیه روی فریم‌های بی‌پلاک) طرف دیگر و حلقهٔ اصلی را
     بلوکه نکند. هر خطا در آمارِ طرف ثبت می‌شود — هیچ‌وقت حلقه را نمی‌بندد.
     v2.6.0: motion = آیا این اسکن به‌خاطر تغییر صحنه (عبور ماشین) بود؟
-    فقط اسکن‌های باحرکت ردیفِ بازبینیِ بی‌پلاک می‌سازند."""
+    فقط اسکن‌های باحرکت ردیفِ بازبینیِ بی‌پلاک می‌سازند.
+    v2.7.0 — ریشهٔ «وقتی کار نمی‌کنی میره تو حالت استپ»: اگر اسکن به‌هر
+    دلیل معلق بماند (OCR/MinIO/DB جواب ندهد) بیش از CAMERA_SCAN_TIMEOUT_SEC
+    صبر نمی‌کنیم — لغو می‌شود، semafor آزاد می‌شود و طرفِ مربوطه بلافاصله
+    دوباره اسکن می‌شود؛ قبلاً چنین اسکنی طرف را تا ابد بی‌صدا می‌کُشت."""
     st = _side_status(side)
     try:
+        body = _process_frame(side, gate_code, direction, bgr, motion=motion)
         if _ocr_sem is not None:
             async with _ocr_sem:
-                await _process_frame(side, gate_code, direction, bgr, motion=motion)
+                await asyncio.wait_for(body, timeout=settings.CAMERA_SCAN_TIMEOUT_SEC)
         else:
-            await _process_frame(side, gate_code, direction, bgr, motion=motion)
+            await asyncio.wait_for(body, timeout=settings.CAMERA_SCAN_TIMEOUT_SEC)
+    except asyncio.TimeoutError:
+        st["scan_timeouts"] = int(st.get("scan_timeouts") or 0) + 1
+        STATUS["scan_timeouts_total"] = int(STATUS.get("scan_timeouts_total") or 0) + 1
+        logger.warning(f"[camera:{side}] اسکن {settings.CAMERA_SCAN_TIMEOUT_SEC:.0f} ثانیه معلق ماند "
+                       f"— لغو شد؛ ادامهٔ کار بدون وقفه (نگهبان v2.7.0)")
     except asyncio.CancelledError:
         raise
     except Exception as exc:  # noqa: BLE001 — خطا حلقه را نمی‌بندد
@@ -889,7 +921,7 @@ async def _reload_cfg() -> None:
 
 
 async def poller_loop() -> None:
-    logger.info("[camera-poller] حلقهٔ دوربین شروع شد (v2.5.0 — اسکن هم‌زمان + گیت حرکت)")
+    logger.info("[camera-poller] حلقهٔ دوربین شروع شد (v2.7.0 — کارکرد بی‌وقفه + نگهبان)")
     STATUS["running"] = True
     STATUS["started_at"] = time.time()
     STATUS["ocr_ready"] = HAS_CV2
@@ -910,6 +942,9 @@ async def poller_loop() -> None:
     try:
         while True:
             try:
+                # v2.7.0 — ضربانِ حلقه: watchdog به این مُهر نگاه می‌کند؛
+                # اگر از CAMERA_LOOP_STALL_SEC عقب بیفتد، حلقه از نو راه می‌افتد
+                STATUS["last_loop_ts"] = time.time()
                 now = time.monotonic()
                 # پیکربندی هر ۱۵ ثانیه از DB — تغییر تنظیمات در UI (که شاید
                 # در worker دیگر ذخیره شده باشد) حداکثر ۱۵ ثانیه بعد به
@@ -971,16 +1006,43 @@ async def poller_loop() -> None:
                     g = _grabbers.get(side)
                     if g is None:
                         continue
+                    # v2.7.0 — گیرندهٔ فریم اگر مرد (خطای سطح thread) بی‌صدا
+                    # تکرار نمی‌شود — خودکار دوباره راه می‌افتد
+                    if not g.is_alive():
+                        logger.warning(f"[camera:{side}] گیرندهٔ فریم مرده بود — "
+                                       f"راه‌اندازی دوباره (نگهبان v2.7.0)")
+                        try:
+                            g.stop()
+                        except Exception:  # noqa: BLE001
+                            pass
+                        _grabbers.pop(side, None)
+                        ng = FrameGrabber(side, s.get("rtsp") or "")
+                        ng.start()
+                        _grabbers[side] = ng
+                        continue
                     frame, ts = g.latest()
                     if frame is None:
                         continue
-                    # فقط فریم تازه — با interval=۱ ثانیه یعنی فریمِ ≤۳ ثانیه
-                    if ts and (time.time() - ts) > max(3.0, interval * 3.0):
+                    # فقط فریمِ نسبتاً تازه — با interval=۱ ثانیه یعنی فریمِ ≤۶ ثانیه
+                    # (v2.7.0 — ۳ ثانیهٔ قبلی دوربینِ کندِ جواب‌دهنده را عملاً از
+                    # اسکن حذف می‌کرد: «میره تو حالت استپ ولی هیچی ثبت نمی‌شه»)
+                    if ts and (time.time() - ts) > max(float(settings.CAMERA_FRAME_MAX_AGE_SEC),
+                                                       interval * 3.0):
                         continue
                     # v2.5.0 — اسکن قبلیِ این طرف هنوز در جریان است؟
+                    # v2.7.0 — اسکنِ معلقِ بیش از timeout + ۵ ثانیه لغو می‌شود؛
+                    # قبلاً «done نشدنِ تا ابد» یعنی این طرف برای همیشه بی‌کار می‌ماند
                     prev_t = _scan_tasks.get(side)
                     if prev_t is not None and not prev_t.done():
-                        continue
+                        held = time.time() - _last_scan_started.get(side, 0.0)
+                        if held <= settings.CAMERA_SCAN_TIMEOUT_SEC + 5.0:
+                            continue
+                        logger.warning(f"[camera:{side}] اسکن {held:.0f} ثانیه است 'done' نشده — "
+                                       f"لغو و شروعِ دوباره (نگهبان v2.7.0)")
+                        prev_t.cancel()
+                        _scan_tasks.pop(side, None)
+                        st["scan_timeouts"] = int(st.get("scan_timeouts") or 0) + 1
+                        STATUS["scan_timeouts_total"] = int(STATUS.get("scan_timeouts_total") or 0) + 1
                     # v2.5.0 — حداقل فاصلهٔ «شروع» اسکن (OCRِ چندثانیه‌ای به
                     # فاصله اضافه نمی‌شود — برخلاف قبل که آخرین «پایان» مبنا بود)
                     if (time.time() - _last_scan_started.get(side, 0.0)) < interval:
@@ -1018,8 +1080,13 @@ async def poller_loop() -> None:
 
 
 def start() -> asyncio.Task | None:
-    """شروع حلقه در lifespan — بدون cv2 یا با CAMERA_POLL_ENABLED=False بی‌اثر."""
-    global _task
+    """شروع حلقه در lifespan — بدون cv2 یا با CAMERA_POLL_ENABLED=False بی‌اثر.
+
+    v2.7.0 — به‌همراه حلقه، watchdog thread (نگهبان بی‌وقفه) هم بالا
+    می‌آید: ضربانِ حلقه را می‌پاید و اگر حلقه بلامراجعه بمانَد خودش از نو
+    راهش می‌اندازد؛ این یعنی «وقتی کار نمی‌کنی میره تو حالت استپ» دیگر
+    ممکن نیست حتی اگر یک task یا event loop گیر کند."""
+    global _task, _main_loop, _watchdog_thread
     if _task is not None and not _task.done():
         return _task
     if not settings.CAMERA_POLL_ENABLED:
@@ -1028,19 +1095,111 @@ def start() -> asyncio.Task | None:
     if not HAS_CV2:
         logger.info("[camera-poller] غیرفعال — opencv نصب نیست (INSTALL_OCR=true لازم است)")
         return None
-    _task = asyncio.get_running_loop().create_task(poller_loop())
+    _main_loop = asyncio.get_running_loop()
+    _watchdog_stop.clear()
+    _task = _main_loop.create_task(poller_loop())
+    if _watchdog_thread is None or not _watchdog_thread.is_alive():
+        _watchdog_thread = threading.Thread(target=_watchdog_loop,
+                                            daemon=True, name="cam-watchdog")
+        _watchdog_thread.start()
+        logger.info("[camera-poller][watchdog] نگهبان بی‌وقفه فعال شد "
+                    f"(stall={settings.CAMERA_LOOP_STALL_SEC:.0f}s، "
+                    f"scan-timeout={settings.CAMERA_SCAN_TIMEOUT_SEC:.0f}s)")
     return _task
 
 
 async def stop() -> None:
     global _task
+    _watchdog_stop.set()   # v2.7.0 — در خاموشیِ عمدی، نگهبان مداخله نکند
     if _task is not None:
         _task.cancel()
         try:
             await _task
-        except asyncio.CancelledError:
+        except (asyncio.CancelledError, Exception):
             pass
         _task = None
     for g in list(_grabbers.values()):
         g.stop()
     _grabbers.clear()
+
+
+# ---------------------------------------------------------------------------
+# v2.7.0 — نگهبان بی‌وقفه (watchdog)
+#
+# ریشهٔ گزارشِ «وقتی مدتی با سیستم کار نکنی میره تو حالت استپ و استپ میشه»:
+#   ۱) اسکنِ معلق — یک OCR/آپلود/commit گیرکرده، طرفِ مربوطه را برای همیشه
+#      بی‌صدا از کار می‌انداخت (حلقه منتظرِ done شدنِ آن می‌ماند).
+#      → timeout اسکن داخل حلقه (CAMERA_SCAN_TIMEOUT_SEC) این را می‌بندد.
+#   ۲) خودِ حلقه — اگر event loop گیر کند یا حلقه با خطای پیش‌بینی‌نشده‌ای
+#      تمام شود، تا ری‌استارتِ دستیِ کانتینر هیچ اسکنی انجام نمی‌شد.
+#      → این watchdog (thread مستقل، بی‌نیاز از event loop زنده) ضربانِ
+#      STATUS["last_loop_ts"] را می‌پاید؛ عقب افتادن → راه‌اندازیِ دوباره؛
+#      راه‌اندازیِ مکرر بی‌نتیجه → خروجِ عمدیِ پروسه تا Docker خودش کانتینر
+#      را تازه کند (restart: unless-stopped در docker-compose.prod.yml).
+# ---------------------------------------------------------------------------
+async def _restart_loop() -> None:
+    """حلقهٔ poller را از نو راه می‌اندازد — از watchdog thread صدا زده می‌شود."""
+    global _task
+    logger.warning("[camera-poller][watchdog] حلقهٔ قبلی لغو و حلقهٔ تازه شروع می‌شود")
+    old = _task
+    _task = None
+    if old is not None:
+        old.cancel()
+        try:
+            await old
+        except BaseException:  # noqa: BLE001 — هر پایانِ حلقهٔ قبلی قابل‌قبول است
+            pass
+    for g in list(_grabbers.values()):
+        try:
+            g.stop()
+        except Exception:  # noqa: BLE001
+            pass
+    _grabbers.clear()
+    _task = asyncio.get_running_loop().create_task(poller_loop())
+
+
+def _watchdog_loop() -> None:
+    """حلقهٔ نگهبان در thread جدا — حتی اگر event loop کامل گیر کند زنده می‌ماند."""
+    import os as _os
+    while not _watchdog_stop.is_set():
+        # خوابِ قطعه‌قطعه تا فرمانِ توقف سریع دیده شود
+        for _ in range(15):
+            if _watchdog_stop.is_set():
+                return
+            time.sleep(1.0)
+        try:
+            if _task is None and not STATUS.get("running"):
+                continue          # poller عمداً غیرفعال است — مداخله نکن
+            last = STATUS.get("last_loop_ts")
+            task_dead = _task is not None and _task.done()
+            stall = (time.time() - float(last)) if last else float("inf")
+            if stall < float(settings.CAMERA_LOOP_STALL_SEC) and not task_dead:
+                continue
+            STATUS["watchdog_restarts"] = int(STATUS.get("watchdog_restarts") or 0) + 1
+            logger.warning(f"[camera-poller][watchdog] ضربانِ حلقه {stall:.0f} ثانیه عقب است "
+                           f"(task_done={task_dead}) — راه‌اندازیِ دوبارهٔ خودکار "
+                           f"#{STATUS['watchdog_restarts']}")
+            loop = _main_loop
+            if loop is None or loop.is_closed():
+                logger.critical("[camera-poller][watchdog] event loop در دسترس نیست — "
+                                "پروسه بسته می‌شود تا Docker کانتینر را تازه کند")
+                _os._exit(1)
+            fut = asyncio.run_coroutine_threadsafe(_restart_loop(), loop)
+            try:
+                fut.result(timeout=15)
+            except Exception as exc:  # noqa: BLE001
+                logger.critical(f"[camera-poller][watchdog] راه‌اندازیِ دوباره جواب نداد: "
+                                f"{type(exc).__name__}: {exc} — پروسه بسته می‌شود تا "
+                                f"Docker کانتینر را تازه کند")
+                _os._exit(1)
+            # پنجرهٔ ۱۰ دقیقهٔ راه‌اندازی‌های مکرر — اگر سیستم روی‌هم‌رفته، خروج
+            now_t = time.time()
+            _restart_times[:] = [t for t in _restart_times if now_t - t < 600.0]
+            _restart_times.append(now_t)
+            if len(_restart_times) > max(1, int(settings.CAMERA_WATCHDOG_MAX_EXIT)):
+                logger.critical("[camera-poller][watchdog] بیش از "
+                                f"{settings.CAMERA_WATCHDOG_MAX_EXIT} راه‌اندازی در ۱۰ دقیقه — "
+                                "پروسه بسته می‌شود تا Docker کانتینر را کاملاً تازه کند")
+                _os._exit(1)
+        except Exception:  # noqa: BLE001 — خودِ نگهبان هرگز نباید بمیرد
+            continue

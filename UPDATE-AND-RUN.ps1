@@ -93,6 +93,20 @@ if ($expectedVersion) {
     Write-Host "=== نسخهٔ این بیلد: v$expectedVersion ===" -ForegroundColor Cyan
 }
 
+# ---------- [۰] Always-On ویندوز — سرور هرگز به خواب/استندبای نمی‌رود ----------
+# ریشهٔ «وقتی مدتی کار نمی‌کنی سیستم میره تو حالت استپ»: ویندوز می‌خوابد و
+# Docker با آن منجمد می‌شود. هر استقرار، تنظیمات برق را دوباره تضمین می‌کند.
+Write-Host ""
+Write-Host "=== [۰] Always-On ویندوز (خاموش‌کردن استندبای/هایبرنیت/خواب tab) ===" -ForegroundColor Yellow
+$alwaysOnScript = Join-Path $root "SET-ALWAYS-ON.ps1"
+if (Test-Path $alwaysOnScript) {
+    try { & powershell -NoProfile -ExecutionPolicy Bypass -File $alwaysOnScript } catch {
+        Write-Host "  ⚠ تنظیمات Always-On اعمال نشد — دستی اجرا کن: .\SET-ALWAYS-ON.ps1" -ForegroundColor Yellow
+    }
+} else {
+    Write-Host "  SET-ALWAYS-ON.ps1 در مخزن نیست — رد شد" -ForegroundColor Gray
+}
+
 # ---------- [۲] محیط مجازی پایتون ----------
 Write-Host ""
 Write-Host "=== [۲] آماده‌سازی محیط بک‌اند ===" -ForegroundColor Yellow

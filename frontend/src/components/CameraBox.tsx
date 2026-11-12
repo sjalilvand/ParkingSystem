@@ -9,6 +9,7 @@ import {
   ContentCopy as CopyIcon, PhotoCamera as CaptureIcon, Videocam as CamIcon,
 } from '@mui/icons-material'
 import { api, apiErrorFa } from '../api/client'
+import { useTickWorker, useRefreshOnVisible } from '../utils/alwaysOn'
 
 const sideFa = (side: string) => (side === 'IN' ? 'ورود' : 'خروج')
 
@@ -24,6 +25,7 @@ interface SideStatus {
   motion_skips?: number
   scanning?: boolean
   unread_captured?: number
+  scan_timeouts?: number
 }
 
 function toFa(n: number | string): string {
@@ -66,24 +68,27 @@ export default function CameraBox({ side, gateKey }: { side: 'IN' | 'OUT'; gateK
   }, [])
   useEffect(() => { loadCfg() }, [loadCfg])
 
-  // وضعیت poller (هر ۵ ثانیه)
-  useEffect(() => {
-    const t = setInterval(async () => {
-      try {
-        const r = await api.get('/camera/poller-status')
-        if (alive.current) setStatus((r.data?.sides?.[side] ?? {}) as SideStatus)
-      } catch { /* بی‌اهمیت */ }
-    }, 5000)
-    return () => clearInterval(t)
+  // وضعیت poller — v2.7.0: تایمر داخل Web Worker؛ مرورگر تایمرهای tabِ
+  // پس‌زمینه را بخواباند، این‌جا همچنان وضعیت تازه می‌شود
+  const loadStatus = useCallback(async () => {
+    try {
+      const r = await api.get('/camera/poller-status')
+      if (alive.current) setStatus((r.data?.sides?.[side] ?? {}) as SideStatus)
+    } catch { /* بی‌اهمیت */ }
   }, [side])
+  useEffect(() => { loadStatus() }, [loadStatus])
+  const statusBeat = useTickWorker(5000)
+  useEffect(() => { if (statusBeat > 0) loadStatus() }, [statusBeat, loadStatus])
+  useRefreshOnVisible(loadStatus)
 
   // refresh تصویر زنده — پیکربندی یا وضعیت poller هرکدام «زنده» بود کافی است
   // (اگر GET /camera/config موقتاً خطا بدهد، پنل سیاهِ «تنظیم نشده» نشان داده نمی‌شود)
   const live = !!(camCfg?.enabled && camCfg?.rtsp) || !!(status?.has_frame || status?.connected)
-  useEffect(() => {
-    const t = setInterval(() => { if (live) setTick((x) => x + 1) }, 3000)
-    return () => clearInterval(t)
-  }, [live])
+  // refresh تصویر زنده — v2.7.0: تایمر داخل Worker تا در tab پس‌زمینه هم
+  // تصویر/وضعیت نایستد؛ بازگشت به tab هم بلافاصله یک فریم تازه می‌گیرد
+  const frameBeat = useTickWorker(3000)
+  useEffect(() => { if (live && frameBeat > 0) setTick((x) => x + 1) }, [frameBeat, live])
+  useRefreshOnVisible(useCallback(() => { if (live) setTick((x) => x + 1) }, [live]))
 
   // استریم زندهٔ MJPEG — اگر قطع شد خودکار به snapshot برمی‌گردیم
   useEffect(() => { setStreamFailed(false); setStreamOk(false); setMediaErr(false) }, [side, camCfg?.rtsp])
@@ -231,6 +236,11 @@ export default function CameraBox({ side, gateKey }: { side: 'IN' | 'OUT'; gateK
           {status?.scanning && (
             <Chip size="small" label="در حال خواندن پلاک…"
               sx={{ bgcolor: 'rgba(230,81,0,.85)', color: '#fff', fontWeight: 700 }} />
+          )}
+          {!!status?.scan_timeouts && (
+            <Chip size="small" variant="outlined"
+              label={`اسکن معلق لغو شد ×${toFa(status.scan_timeouts)}`}
+              sx={{ bgcolor: 'rgba(0,0,0,.55)', color: '#ffb74d', fontSize: 10 }} />
           )}
         </Stack>
         {status?.last_plate && (

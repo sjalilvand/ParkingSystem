@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent, useCallback } from 'react'
 import {
   Alert, Box, Button, Card, CardContent, Chip, Dialog, DialogActions,
-  DialogContent, DialogTitle, List, ListItem, ListItemText, Stack, TextField,
+  DialogContent, DialogTitle, FormControlLabel, List, ListItem, ListItemText,
+  Stack, Switch, TextField,
   Typography,
 } from '@mui/material'
 import {
@@ -16,6 +17,7 @@ import CameraBox from '../components/CameraBox'
 import { parsePlateRaw } from '../components/PlateInput'
 import { durationFa, faDate, money } from '../utils/format'
 import { formatJalali } from '../components/JalaliDateTime'
+import { useTickWorker, useAlwaysAwake, useRefreshOnVisible } from '../utils/alwaysOn'
 
 const eventFa: Record<string, string> = {
   'plate.detected': 'پلاک شناسایی شد',
@@ -48,6 +50,16 @@ interface DecisionResult {
 interface LiveEvt { id: string; gate: string; direction: 'IN' | 'OUT'; plate: string
   kind?: string; decision?: string; reason?: string; barrier?: string
   province?: string | null; city?: string | null }
+
+interface GuardStatus {
+  running?: boolean; leader?: boolean; version?: string
+  loop_age_sec?: number | null; last_loop_iso?: string | null
+  watchdog_restarts?: number; scan_timeouts_total?: number
+  watchdog_active?: boolean; poll_interval?: number
+}
+
+const toFa = (n: number | string): string =>
+  String(n).replace(/\d/g, (d) => '۰۱۲۳۴۵۶۷۸۹'[Number(d)])
 
 function IdentityStrip({ info }: { info: LookupInfo | null }) {
   if (!info) return null
@@ -407,6 +419,30 @@ export default function GatePanel() {
   const [, force] = useState(0)
   const [plates, setPlates] = useState<string[]>([])
 
+  // -------------------------------------------------------------
+  // v2.7.0 — نوار «کارکرد بی‌وقفه»: ضربانِ حلقهٔ پلاک‌خوان بک‌اند را
+  // با تایمرِ داخل Web Worker می‌پاید (در tab پس‌زمینه هم نمی‌ایستد) و
+  // «بیدارماندن صفحه» مانع خواب‌شدن tab (Sleeping Tabs) و خاموش‌شدن
+  // نمایشگر می‌شود.
+  // -------------------------------------------------------------
+  const guardBeat = useTickWorker(5000)
+  const [guard, setGuard] = useState<GuardStatus | null>(null)
+  const loadGuard = useCallback(async () => {
+    try {
+      const r = await api.get('/camera/poller-status')
+      setGuard(r.data)
+    } catch { /* بی‌اهمیت */ }
+  }, [])
+  useEffect(() => { loadGuard() }, [loadGuard])
+  useEffect(() => { if (guardBeat > 0) loadGuard() }, [guardBeat, loadGuard])
+  useRefreshOnVisible(loadGuard)
+
+  const awake = useAlwaysAwake()
+  useEffect(() => { awake.requestAwake() }, [])  // تلاش خودکار؛ با اولین کلیک کاربر کامل می‌شود
+
+  const loopAge = guard?.loop_age_sec
+  const loopAlive = !!guard?.running && loopAge != null && loopAge < 30
+
   useEffect(() => {
     api.get('/vehicles', { params: { page_size: 10 } }).then((r) => {
       const arr = (r.data?.items ?? []) as { plate_raw: string }[]
@@ -434,6 +470,44 @@ export default function GatePanel() {
 
   return (
     <Stack spacing={2}>
+      <Card sx={{ border: '1px solid #A5D6A7', bgcolor: '#F1F8E9' }}>
+        <CardContent sx={{ py: 1.5, px: 2 }}>
+          <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
+            <Typography variant="body2" fontWeight={900}>کارکرد بی‌وقفه (v2.7.0)</Typography>
+            {!guard ? (
+              <Chip size="small" label="در حال دریافت وضعیت…" />
+            ) : loopAlive ? (
+              <Chip size="small" color="success"
+                label={`حلقهٔ پلاک‌خوان زنده — آخرین ضربان ${toFa(Math.round(loopAge ?? 0))} ثانیه پیش`} />
+            ) : (
+              <Chip size="small" color="error"
+                label="حلقهٔ پلاک‌خوان بی‌ضربان — نگهبان خودکار از نو راه می‌اندازد" />
+            )}
+            {guard?.leader && <Chip size="small" variant="outlined" label="رهبر فعال" />}
+            {!!guard?.watchdog_restarts && (
+              <Chip size="small" color="warning"
+                label={`راه‌اندازیِ خودکار نگهبان ×${toFa(guard.watchdog_restarts)}`} />
+            )}
+            {!!guard?.scan_timeouts_total && (
+              <Chip size="small" color="warning"
+                label={`اسکن معلق لغو‌شده ×${toFa(guard.scan_timeouts_total)}`} />
+            )}
+            <Box sx={{ flexGrow: 1 }} />
+            <FormControlLabel
+              control={<Switch size="small" checked={awake.awake}
+                onChange={(e) => (e.target.checked ? awake.requestAwake() : awake.disable())} />}
+              label={<Typography variant="caption" fontWeight={700}>بیدارماندن صفحه</Typography>} />
+          </Stack>
+          {!awake.awake && (
+            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+              برای «بیدارماندن صفحه» یک بار هر جای صفحه کلیک کنید (محدودیت مرورگر برای صوت) — مانع خواب‌شدن tab و خاموش‌شدن نمایشگر می‌شود.
+            </Typography>
+          )}
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+            خواندن پلاک روی سرور ۲۴/۷ انجام می‌شود — حتی وقتی این صفحه باز نیست یا مرورگر بسته است؛ نگهبان بک‌اند اسکنِ معلق را لغو و حلقه را خودکار راه می‌اندازد.
+          </Typography>
+        </CardContent>
+      </Card>
       <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', lg: '1fr 1fr' }, gap: 2 }}>
         <GateSide direction="IN" live={lastByGate.current['GATE-IN-01'] ?? null} defaultPlate={plates[0]} />
         <GateSide direction="OUT" live={lastByGate.current['GATE-OUT-01'] ?? null} defaultPlate={plates[1] ?? plates[0]} />
