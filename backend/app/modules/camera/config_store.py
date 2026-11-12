@@ -240,7 +240,9 @@ async def ensure_default_gates(db: AsyncSession) -> list[str]:
     from loguru import logger
 
     from app.modules.complexes.models import Complex
-    from app.modules.access_control.models import Gate
+    # ⚠️ مدل Gate در devices.models است — ایمپورتِ از access_control.models
+    # ImportError می‌داد و ساخت خودکار دروازه‌ها هرگز انجام نمی‌شد
+    from app.modules.devices.models import Gate
 
     created: list[str] = []
     try:

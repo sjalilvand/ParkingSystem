@@ -65,6 +65,10 @@ _motion_ref: dict[str, object] = {}
 _motion_lock = threading.Lock()
 _last_scan_started: dict[str, float] = {}   # side → زمان شروع آخرین اسکن کامل
 
+# v2.6.0 — عبورِ بی‌پلاک: cooldown هر طرف + لاگِ جمع‌بندیِ اسکن‌های بی‌نتیجه
+_last_unread: dict[str, float] = {}
+_scan_log: dict[str, dict] = {}
+
 
 # ---------------------------------------------------------------------------
 # منبع HTTP — گرفتن JPEG از دوربین بدون RTSP
@@ -275,6 +279,8 @@ def _side_status(side: str) -> dict:
         "motion_skips": 0,        # فریم‌هایی که به‌خاطر صحنهٔ ساکن اسکن نشد
         "scanning": False,        # این طرف همین الان در حال OCR است
         "last_scan_started_ts": None,
+        # v2.6.0 — عبورهایی که خوانده نشدند ولی عکسشان برای بازنویسی دستی ذخیره شد
+        "unread_captured": 0,
     })
 
 
@@ -345,6 +351,21 @@ def _remember_scene(side: str, bgr) -> None:
     if sig is not None:
         with _motion_lock:
             _motion_ref[side] = sig
+
+
+def _scan_log_info(side: str, msg: str) -> None:
+    """v2.6.0 — لاگِ نتیجهٔ هر اسکن با جمع‌بندی: در حرکتِ پیوسته ~۱ اسکن/ثانیه
+    داریم؛ هر خط را جدا لاگ کنیم لاگ غرق می‌شود — خطِ مشابه حداکثر هر ۵ ثانیه
+    یک‌بار با تعداد مشابه‌ها (+N) چاپ می‌شود تا «لاگ خالی» دیگر معنا نداشته باشد."""
+    rec = _scan_log.setdefault(side, {"ts": 0.0, "skipped": 0})
+    now_t = time.time()
+    if now_t - rec["ts"] >= 5.0:
+        extra = f"  (+{rec['skipped']} اسکن مشابه در ۵ ثانیهٔ اخیر)" if rec["skipped"] else ""
+        rec["ts"] = now_t
+        rec["skipped"] = 0
+        logger.info(f"[camera:{side}] {msg}{extra}")
+    else:
+        rec["skipped"] += 1
 
 
 def _norm_key(plate: str) -> str:
@@ -491,7 +512,11 @@ async def _record_review_event(side: str, gate_code: str, bgr, cand: dict) -> No
     try:
         from sqlalchemy import select as _select
         from app.db.session import AsyncSessionLocal
-        from app.modules.access_control.models import Gate, PlateRecognitionEvent
+        # ⚠️ مدل Gate در devices.models است (نه access_control.models) —
+        #   ایمپورتِ اشتباهِ قبلی ImportError بی‌صدا می‌ساخت و «هیچ» ردیفِ
+        #   بازبینی کم‌اطمینان هرگز ثبت نمی‌شد (ریشهٔ دومِ «هیچی ثبت نشد»)
+        from app.modules.devices.models import Gate
+        from app.modules.access_control.models import PlateRecognitionEvent
         from app.shared.plate import normalize_plate
         async with AsyncSessionLocal() as db:
             gate = (await db.execute(
@@ -525,17 +550,70 @@ async def _record_review_event(side: str, gate_code: str, bgr, cand: dict) -> No
         logger.warning(f"[camera:{side}] review-event FAILED: {exc}")
 
 
-async def _scan_worker(side: str, gate_code: str, direction: str, bgr) -> None:
+async def _record_unread_event(side: str, gate_code: str, bgr,
+                               raw_reads: list, elapsed_ms) -> None:
+    """v2.6.0 — «اگر نمی‌تواند بخواند حداقل عکس بگیرد»:
+
+    اسکنِ باحرکت که هیچ پلاکِ قالب‌معتبری نداشت (موتور اصلاً متنی نخواند یا
+    خوانش‌هایش خارج قالب پلاک ایران بود) → ردیف «نیازمند تأیید» بدون پلاک
+    با عکس کامل دوربین در MinIO. اپراتور در صفحهٔ «بازبینی پلاک» عکس را
+    می‌بیند و پلاک را دستی تایپ می‌کند (اصلاح → ثبت). هیچ رویداد گیت و هیچ
+    تصمیم/راهبندی ساخته نمی‌شود. caller، cooldown را مدیریت می‌کند.
+    """
+    st = _side_status(side)
+    try:
+        from sqlalchemy import select as _select
+        from app.db.session import AsyncSessionLocal
+        # ⚠️ Gate در devices.models است — ایمپورتِ اشتباه یعنی ردیف بی‌پلاک هرگز ثبت نمی‌شد
+        from app.modules.devices.models import Gate
+        from app.modules.access_control.models import PlateRecognitionEvent
+        async with AsyncSessionLocal() as db:
+            gate = (await db.execute(
+                _select(Gate).where(Gate.code == gate_code))).scalar_one_or_none()
+            if gate is None:
+                logger.warning(f"[camera:{side}] دروازهٔ {gate_code} نیست — "
+                               f"عکسِ عبورِ بی‌پلاک فقط در آمار ماند")
+                return
+            full_id, _plate_id = await _upload_event_images(db, side, bgr, {})
+            now = datetime.now(timezone.utc)
+            db.add(PlateRecognitionEvent(
+                gate_id=gate.id, direction=side,
+                plate_raw="خوانده نشد",       # نه nullable است — نشانگرِ ردیفِ دستی
+                plate_normalized=None,
+                confidence=None,
+                captured_at=now, received_at=now,
+                source_event_id=f"cam-{uuid.uuid4()}",
+                review_status="NEEDS_REVIEW",
+                capture_quality={"unread": True},
+                processing_ms=int(elapsed_ms) if elapsed_ms else None,
+                raw_payload={"side": side, "unread": True,
+                             "trigger": "motion", "raw_reads": raw_reads},
+                full_image_file_id=full_id,
+                plate_image_file_id=None,
+            ))
+            await db.commit()
+        st["unread_captured"] = int(st.get("unread_captured") or 0) + 1
+        logger.info(f"[camera:{side}] عبورِ بدون پلاکِ معتبر → عکس در «بازبینی پلاک» "
+                    f"ذخیره شد برای بازنویسیِ دستی (عکس: {bool(full_id)})")
+    except Exception as exc:  # noqa: BLE001
+        st["last_error"] = f"ثبت عبورِ بی‌پلاک ناموفق: {type(exc).__name__}: {exc}"
+        logger.warning(f"[camera:{side}] unread-event FAILED: {exc}")
+
+
+async def _scan_worker(side: str, gate_code: str, direction: str, bgr,
+                       motion: bool = False) -> None:
     """v2.5.0 — اسکنِ یک فریم در task مستقل: با semaforِ OCR تا اسکنِ کندِ
     یک طرف (تا ۱۲ ثانیه روی فریم‌های بی‌پلاک) طرف دیگر و حلقهٔ اصلی را
-    بلوکه نکند. هر خطا در آمارِ طرف ثبت می‌شود — هیچ‌وقت حلقه را نمی‌بندد."""
+    بلوکه نکند. هر خطا در آمارِ طرف ثبت می‌شود — هیچ‌وقت حلقه را نمی‌بندد.
+    v2.6.0: motion = آیا این اسکن به‌خاطر تغییر صحنه (عبور ماشین) بود؟
+    فقط اسکن‌های باحرکت ردیفِ بازبینیِ بی‌پلاک می‌سازند."""
     st = _side_status(side)
     try:
         if _ocr_sem is not None:
             async with _ocr_sem:
-                await _process_frame(side, gate_code, direction, bgr)
+                await _process_frame(side, gate_code, direction, bgr, motion=motion)
         else:
-            await _process_frame(side, gate_code, direction, bgr)
+            await _process_frame(side, gate_code, direction, bgr, motion=motion)
     except asyncio.CancelledError:
         raise
     except Exception as exc:  # noqa: BLE001 — خطا حلقه را نمی‌بندد
@@ -545,13 +623,15 @@ async def _scan_worker(side: str, gate_code: str, direction: str, bgr) -> None:
         st["scanning"] = False
 
 
-async def _process_frame(side: str, gate_code: str, direction: str, bgr) -> None:
+async def _process_frame(side: str, gate_code: str, direction: str, bgr,
+                         motion: bool = False) -> None:
     st = _side_status(side)
     import anyio
     try:
         result = await anyio.to_thread.run_sync(_ocr_sync, bgr)
     except Exception as exc:  # noqa: BLE001
         st["last_error"] = f"خطای OCR: {type(exc).__name__}: {exc}"
+        _scan_log_info(side, f"اسکن ناموفق — خطای OCR: {exc}")
         return
     st["last_ocr_ts"] = time.time()
     st["last_ocr_ms"] = result.get("elapsed_ms")
@@ -565,9 +645,19 @@ async def _process_frame(side: str, gate_code: str, direction: str, bgr) -> None
         pass
     best = result.get("best") or {}
     plates = result.get("plates") or []
+    elapsed_ms = result.get("elapsed_ms")
+    # v2.6.0 — خوانش‌های خام (حتی نامعتبر) برای لاگ و payloadِ بازبینی —
+    # «لاگ خالی» یعنی نمی‌دانیم موتور چه می‌دیده؛ این‌جا دیگر هیچ اسکنی بی‌لاگ نمی‌ماند
+    raw_reads = [{"text": (p.get("raw") or p.get("system") or "")[:40],
+                  "conf": round(float(p.get("confidence") or 0), 2),
+                  "valid": bool(p.get("valid"))}
+                 for p in plates[:4]]
+    raw_summary = " | ".join(f"«{r['text']}»@{r['conf']}" for r in raw_reads) or "هیچ متنی"
     if not plates:
         st["no_plate_scans"] = int(st.get("no_plate_scans") or 0) + 1
         st["last_error"] = None
+        _scan_log_info(side, f"اسکن {elapsed_ms}ms: هیچ متنی خوانده نشد "
+                             f"(حرکت={motion}) — هیچ پلاکی در قاب واضح نبود")
         return
     # کاندیداها به ترتیب رتبه — اولین «معتبرِ قالبی» بالای آستانه.
     #  valid=False یعنی متن OCR اصلاً قالب پلاک ایران نیست (خیال OCR) —
@@ -585,15 +675,29 @@ async def _process_frame(side: str, gate_code: str, direction: str, bgr) -> None
             st["low_conf_skipped"] = int(st.get("low_conf_skipped") or 0) + 1
             st["last_skipped"] = {"system": skipped.get("system"),
                                   "confidence": skipped.get("confidence")}
+        reviewed = False
         # پلاک قالب‌معتبرِ بین LOWCONF_MIN و آستانه → ردیف بازبینی با عکس —
         # هیچ تصمیمی/راهبندی ندارد؛ «هر ماشین ردشده» در جدول می‌ماند
         if settings.CAMERA_LOWCONF_REVIEW:
             cand = next((p for p in plates if p.get("valid") and p.get("system")
                          and p.get("confidence", 0) >= settings.CAMERA_LOWCONF_MIN), None)
             if cand:
+                reviewed = True
                 rkey = _norm_key(cand["system"])
                 if rkey and _should_emit_review(rkey):
                     await _record_review_event(side, gate_code, bgr, cand)
+        # v2.6.0 — هیچ پلاکِ قالب‌معتبری خوانده نشد (حتی کم‌اطمینان) → عکسِ
+        # عبور + ردیف «نیازمند تأیید» بدون پلاک: اپراتور در صفحهٔ بازبینی
+        # عکس را می‌بیند و پلاک را دستی تایپ می‌کند. فقط با حرکتِ واقعی
+        # (نه اسکن اجباریِ صحنهٔ ساکت) و با cooldown — ماشینِ پارک‌شده
+        # در قاب ردیف نسازد.
+        if (not reviewed and motion and settings.CAMERA_UNREAD_REVIEW
+                and (time.time() - _last_unread.get(side, 0.0))
+                >= settings.CAMERA_UNREAD_REVIEW_SEC):
+            _last_unread[side] = time.time()
+            await _record_unread_event(side, gate_code, bgr, raw_reads, elapsed_ms)
+        _scan_log_info(side, f"اسکن {elapsed_ms}ms: پلاکِ قالب‌معتبر خوانده نشد "
+                             f"— خوانش خام: {raw_summary}")
         st["last_error"] = None
         return
     key = _norm_key(chosen["system"])
@@ -840,10 +944,11 @@ async def poller_loop() -> None:
                                     f"scanned={hb_st.get('frames_scanned', 0)} "
                                     f"no_plate={hb_st.get('no_plate_scans', 0)} "
                                     f"motion_skip={hb_st.get('motion_skips', 0)} "
+                                    f"unread_saved={hb_st.get('unread_captured', 0)} "
+                                    f"review={hb_st.get('review_events', 0)} "
                                     f"last_plate={hb_st.get('last_plate')} "
                                     f"conf={hb_st.get('last_conf')} "
-                                    f"events={hb_st.get('events_sent')} "
-                                    f"review={hb_st.get('review_events', 0)}")
+                                    f"events={hb_st.get('events_sent')}")
                 if not STATUS["leader"]:
                     await asyncio.sleep(5)
                     continue
@@ -894,7 +999,8 @@ async def poller_loop() -> None:
                     st["scanning"] = True
                     _remember_scene(side, frame)
                     _scan_tasks[side] = asyncio.get_running_loop().create_task(
-                        _scan_worker(side, gate_code, direction, frame))
+                        _scan_worker(side, gate_code, direction, frame,
+                                     motion=bool(changed)))
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001 — هیچ خطایی حلقه را نمی‌بندد

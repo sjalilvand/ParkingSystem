@@ -23,6 +23,7 @@ interface SideStatus {
   no_plate_scans?: number
   motion_skips?: number
   scanning?: boolean
+  unread_captured?: number
 }
 
 function toFa(n: number | string): string {
@@ -258,6 +259,7 @@ export default function CameraBox({ side, gateKey }: { side: 'IN' | 'OUT'; gateK
             ? ` — آخرین پلاک: ${status.last_plate_fa || status.last_plate} (اطمینان ${toFa(Math.round((status.last_conf || 0) * 100))}٪)`
             : ' — هنوز پلاکی در قاب نبوده'}
           {status?.events_sent ? ` — ${toFa(status.events_sent)} رویداد ثبت‌شده` : ''}
+          {status?.unread_captured ? ` — ${toFa(status.unread_captured)} عکسِ بی‌پلاک در «بازبینی پلاک»` : ''}
         </Typography>
       )}
 

@@ -26,6 +26,7 @@ interface ReviewRow {
     envelope_ok?: boolean
     envelope_violations?: string[]
     thresholds?: Record<string, number>
+    unread?: boolean
   } | null
   correction_note: string | null
   captured_at: string | null
@@ -108,9 +109,11 @@ export default function PlateReview() {
   })
 
   const openDialog = (row: ReviewRow, act: string) => {
+    // ردیفِ «خوانده نشد» معنایی برای تأیید ندارد — مستقیم بازنویسی دستی
+    const act2 = row.capture_quality?.unread && act === 'CONFIRM' ? 'CORRECT' : act
     setTarget(row)
-    setAction(act)
-    setPlate(act === 'CORRECT' ? (row.plate_corrected ?? row.plate_raw ?? '') : '')
+    setAction(act2)
+    setPlate(act2 === 'CORRECT' ? (row.plate_corrected ?? (row.capture_quality?.unread ? '' : (row.plate_raw ?? ''))) : '')
     setNote('')
   }
 
@@ -168,6 +171,10 @@ export default function PlateReview() {
                 <RecImage fileId={r.plate_image_file_id} height={56} label="برش پلاک" />
                 <PlateBox plate={r.plate_corrected ?? r.plate_normalized ?? r.plate_raw} size="md" />
                 <Box sx={{ minWidth: 220 }}>
+                  {r.capture_quality?.unread && (
+                    <Chip size="small" color="warning" sx={{ mb: 0.5 }}
+                      label="عکس بدون خوانش معتبر — پلاک را دستی ثبت کنید" />
+                  )}
                   <Typography variant="caption" component="div">
                     اطمینان: <b>{r.confidence !== null ? `${Math.round(r.confidence * 100)}٪` : '—'}</b>
                   </Typography>
@@ -198,12 +205,16 @@ export default function PlateReview() {
                 </Box>
                 {r.review_status === 'NEEDS_REVIEW' && (
                   <Stack direction="row" spacing={1}>
-                    <Button size="small" variant="contained" color="success" startIcon={<Verified />}
-                      onClick={() => openDialog(r, 'CONFIRM')}>
-                      تأیید همان مقدار
-                    </Button>
-                    <Button size="small" variant="outlined" onClick={() => openDialog(r, 'CORRECT')}>
-                      اصلاح
+                    {!r.capture_quality?.unread && (
+                      <Button size="small" variant="contained" color="success" startIcon={<Verified />}
+                        onClick={() => openDialog(r, 'CONFIRM')}>
+                        تأیید همان مقدار
+                      </Button>
+                    )}
+                    <Button size="small" variant={r.capture_quality?.unread ? 'contained' : 'outlined'}
+                      color={r.capture_quality?.unread ? 'primary' : 'inherit'}
+                      onClick={() => openDialog(r, 'CORRECT')}>
+                      {r.capture_quality?.unread ? 'ثبت پلاک دستی (بازنویسی)' : 'اصلاح'}
                     </Button>
                     <Button size="small" color="error" onClick={() => openDialog(r, 'REJECT')}>
                       رد
@@ -229,6 +240,9 @@ export default function PlateReview() {
               autoFocus fullWidth margin="dense" label="پلاک اصلاح‌شده"
               value={plate} onChange={(e) => setPlate(e.target.value)}
               placeholder="مثال: 12 ب 345 ایران 11"
+              helperText={target?.capture_quality?.unread
+                ? 'این ردیف فقط عکس است — پلاک را از روی عکس تایپ کنید'
+                : undefined}
             />
           )}
           {action === 'REJECT' && (
