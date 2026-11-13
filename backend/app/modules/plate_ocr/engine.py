@@ -484,6 +484,7 @@ class PlateReader:
         self._easy = None
         self._easy_err: str | None = None
         self._crnn = None
+        self._crnn_err: str | None = None
         self._yolo = None
         self._yolo_err: str | None = None
         self._lock = threading.RLock()
@@ -562,7 +563,9 @@ class PlateReader:
                 model.load_state_dict(ckpt["model"], strict=False)
                 model.eval()
                 self._crnn = model
-            except Exception:
+            except Exception as exc:
+                # خطای بارگذاری مدل را نگه می‌داریم تا خروجی تشخیصی صادقانه باشد.
+                self._crnn_err = str(exc)
                 self._crnn = False
         return self._crnn or None
 
@@ -1443,10 +1446,26 @@ class PlateReader:
             "best": best_item,
             "plates": plate_items,
             "engine": {
-                "detector": "yolo" if caps["yolo_weights"] and caps["ultralytics"] else "classical",
-                "ocr": "crnn+easyocr" if (caps["crnn_weights"] and caps["torch"]) else "easyocr",
-                "easyocr_error": self._easy_err,
-                "yolo_error": self._yolo_err if self._yolo_err != "weights-missing" else None,
+                # وضعیت runtime بر اساس backend واقعاً بارگذاری‌شده است، نه صرفاً
+                # وجود پکیج/فایل وزن؛ این دو ممکن است نصب باشند اما بارگذاری شکست بخورد.
+                "detector": "yolo" if self._yolo is not None else "classical",
+                "ocr": (
+                    "crnn+easyocr" if self._crnn not in (None, False) and self._easy is not None
+                    else "crnn" if self._crnn not in (None, False)
+                    else "easyocr" if self._easy is not None
+                    else "unavailable"
+                ),
+                "ocr_backends": {
+                    "crnn_loaded": self._crnn not in (None, False),
+                    "easyocr_loaded": self._easy is not None,
+                },
+                "ocr_errors": {
+                    "crnn": self._crnn_err,
+                    "easyocr": self._easy_err,
+                },
+                "detector_error": (
+                    self._yolo_err if self._yolo_err != "weights-missing" else None
+                ),
                 "fast_mode": fast_mode,
                 "fullimage_skipped": fullimage_skipped,
                 "timings": timings,
