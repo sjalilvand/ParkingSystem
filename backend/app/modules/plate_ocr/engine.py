@@ -1463,6 +1463,11 @@ class PlateReader:
                     "crnn": self._crnn_err,
                     "easyocr": self._easy_err,
                 },
+                # نگه‌داشتن نام‌های قبلی برای سازگاری با مصرف‌کننده‌های موجود API.
+                "easyocr_error": self._easy_err,
+                "yolo_error": (
+                    self._yolo_err if self._yolo_err != "weights-missing" else None
+                ),
                 "detector_error": (
                     self._yolo_err if self._yolo_err != "weights-missing" else None
                 ),
