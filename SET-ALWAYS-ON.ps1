@@ -38,13 +38,13 @@ try { powercfg /hibernate off 2>$null | Out-Null } catch {}
 $edgeDone = $false
 foreach ($edge in @("HKCU:\SOFTWARE\Policies\Microsoft\Edge", "HKLM:\SOFTWARE\Policies\Microsoft\Edge")) {
     try {
-        if (-not (Test-Path $edge)) { New-Item -Path $edge -Force | Out-Null }
+        if (-not (Test-Path $edge)) { New-Item -Path $edge -Force -ErrorAction Stop | Out-Null }
         Set-ItemProperty -Path $edge -Name SleepingTabsEnabled -Value 0 -Type DWord -ErrorAction Stop
         Write-Host "  ✔ خواب‌شدن tabهای Edge (Sleeping Tabs) خاموش شد ($edge)" -ForegroundColor Green
         $edgeDone = $true
         break
     } catch {
-        # تلاش با hive بعدی
+        # تلاش با hive بعدی — بدون نمایش ارور سرخ (پاک‌تر)
     }
 }
 if (-not $edgeDone) {

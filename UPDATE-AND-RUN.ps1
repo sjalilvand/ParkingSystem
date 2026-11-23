@@ -311,22 +311,28 @@ if ($Prod) {
     }
     Write-Host "  Docker آماده است ✔" -ForegroundColor Green
     # پیش‌خوان پورت — ریشهٔ ارور «Bind for 0.0.0.0:80 failed: port is already allocated»:
-    # روی ویندوز معمولاً سرویس سیستمی (http.sys/IIS) پورت ۸۰ را از قبل گرفته و
-    # کانتینر nginx نمی‌تواند bind کند. اگر پروسهٔ غیر Docker روی پورت انتشار
-    # نشسته باشد، همین‌جا با پیام روشن متوقف می‌شویم — نه وسط استقرار.
-    $listener = Get-NetTCPConnection -LocalPort $appPort -State Listen -ErrorAction SilentlyContinue |
-        Select-Object -ExpandProperty OwningProcess -Unique | Select-Object -First 1
-    if ($listener) {
-        $pname = try { (Get-Process -Id $listener -ErrorAction Stop).ProcessName } catch { "PID $listener" }
-        if ($pname -notlike "*docker*") {
-            Write-Host "  ✗ پورت $appPort روی این ماشین توسط پروسهٔ «$pname» (PID $listener) اشغال است — کانتینر nginx bind نمی‌شود." -ForegroundColor Red
-            Write-Host "    یعنی APP_PORT در .env.prod با یک سرویس ویندوز (مثلاً IIS/http.sys روی پورت ۸۰) تداخل دارد." -ForegroundColor Yellow
-            Write-Host "    یک‌خطی‌ترین راه — انتقال پورت سامانه به 8085 و بالا آوردن دوباره:" -ForegroundColor Yellow
-            Write-Host "      .\scripts\prod-repair.ps1 -Port 8085 -SkipBuild" -ForegroundColor Yellow
-            Write-Host "    یا دستی: خط APP_PORT در .env.prod را به 8085 (یا 8880) تغییر بده و دوباره اجرا کن:" -ForegroundColor Yellow
-            Write-Host "      .\UPDATE-AND-RUN.ps1 -Prod" -ForegroundColor Yellow
-            exit 1
-        }
+    # اگر پروسهٔ غیر Docker روی پورت انتشار نشسته باشد (مثلاً http.sys/IIS روی ۸۰)،
+    # همین‌جا با پیام روشن متوقف می‌شویم — نه وسط استقرار.
+    # ⚠ wslrelay/com.docker.backend/vpnkit خودِ Docker Desktop هستند — روی
+    #   Docker Desktop با WSL2، پورتِ منتشرشدهٔ کانتینر خودمان با نام wslrelay
+    #   دیده می‌شود؛ این‌ها طبیعی‌اند و نباید مانع شوند (مثبت کاذب v2.7.3).
+    $listeners = @(Get-NetTCPConnection -LocalPort $appPort -State Listen -ErrorAction SilentlyContinue |
+        Select-Object -ExpandProperty OwningProcess -Unique)
+    $blocked = @()
+    foreach ($p in $listeners) {
+        $pname = try { (Get-Process -Id $p -ErrorAction Stop).ProcessName } catch { "PID $p" }
+        if ($pname -notmatch '^(docker|com\.docker\.|wslrelay|vpnkit|wslhost)') { $blocked += "$pname (PID $p)" }
+    }
+    if ($blocked.Count -gt 0) {
+        Write-Host "  ✗ پورت $appPort روی این ماشین توسط پروسهٔ «$($blocked -join '، ')» اشغال است — کانتینر nginx bind نمی‌شود." -ForegroundColor Red
+        Write-Host "    یعنی APP_PORT در .env.prod با یک سرویس ویندوز (مثلاً IIS/http.sys روی پورت ۸۰) تداخل دارد." -ForegroundColor Yellow
+        Write-Host "    یک‌خطی‌ترین راه — انتقال پورت سامانه به یک پورت آزاد (مثلاً 8880) و بالا آوردن دوباره:" -ForegroundColor Yellow
+        Write-Host "      .\scripts\prod-repair.ps1 -Port 8880 -SkipBuild" -ForegroundColor Yellow
+        Write-Host "    یا دستی: خط APP_PORT در .env.prod را به یک پورت آزاد تغییر بده و دوباره اجرا کن:" -ForegroundColor Yellow
+        Write-Host "      .\UPDATE-AND-RUN.ps1 -Prod" -ForegroundColor Yellow
+        exit 1
+    } elseif ($listeners.Count -gt 0) {
+        Write-Host "  پورت $appPort در اختیار خود Docker (کانتینرهای سامانه) است — compose خودش بازسازی می‌کند ✔" -ForegroundColor Gray
     }
     Write-Host "  تارگت بیلد فرانت: $env:FRONTEND_BUILD_TARGET" -ForegroundColor Gray
     docker compose --env-file $envFile -f (Join-Path $root "docker-compose.prod.yml") up -d --build
