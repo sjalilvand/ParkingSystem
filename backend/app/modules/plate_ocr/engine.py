@@ -10,7 +10,8 @@
     3) OCR روی کل تصویر (برای عکس‌های نزدیک از پلاک)
   OCR:
     1) CRNN آموزش‌دیده (اگر models/crnn_best.pt موجود و torch نصب بود)
-    2) EasyOCR (پیش‌فرض — مدل‌های آماده؛ بار اول دانلود می‌کند)
+    2) Hezar CRNN آموزش‌دیده روی پلاک ایران
+    3) EasyOCR برای خوانش‌های نامطمئن یا نبود Hezar
 
 هیچ‌کدام از وابستگی‌های سنگین (easyocr/torch/ultralytics) اجباری نیستند؛
 وضعیت واقعی از capabilities() و GET /api/v1/plate-ocr/status قابل مشاهده است.
@@ -18,6 +19,7 @@
 from __future__ import annotations
 
 import base64
+import logging
 import threading
 import time
 from dataclasses import dataclass, field
@@ -48,6 +50,8 @@ BOX_EXPAND = 0.08
 # ۰٫۱۲ — اندازه‌گیری واقعی (اکتبر ۲۰۲۶): خوانش‌های درست عکس‌های خیابانی اغلب
 # ۰٫۱۵-۰٫۴۵‌اند؛ دروازهٔ ۰٫۲۰ آن‌ها را پیش از اسمبلر حذف می‌کرد → «صفر کاندیدا»
 MIN_CANDIDATE_CONF = 0.12
+PERSIAN_PLATE_MIN_CONF = 0.70
+logger = logging.getLogger(__name__)
 MAX_CANDIDATES = 12   # ۱۲ — خانوادهٔ ترمیمیِ پلاک واقعی (مثل 87ع578 سایپای شب) جا نمی‌شد
 
 PLATE_COLORS_FA = {
@@ -85,6 +89,7 @@ def capabilities(models_dir: str = "models") -> dict:
         "numpy": HAS_NUMPY,
         "opencv": HAS_CV2,
         "easyocr": has("easyocr"),
+        "hezar": has("hezar"),
         "torch": has("torch"),
         "ultralytics": has("ultralytics"),
         "yolo_weights": os.path.exists(yolo_w),
@@ -484,6 +489,8 @@ class PlateReader:
         self._easy = None
         self._easy_err: str | None = None
         self._crnn = None
+        self._persian = None
+        self._persian_checked = False
         self._yolo = None
         self._yolo_err: str | None = None
         self._lock = threading.RLock()
@@ -501,10 +508,58 @@ class PlateReader:
                 self._easy_err = str(exc)
         return self._easy
 
+    def _get_persian(self):
+        with self._lock:
+            if not self._persian_checked:
+                self._persian_checked = True
+                try:
+                    from app.modules.plate_ocr.persian_reader import PersianPlateRecognizer
+
+                    self._persian = PersianPlateRecognizer()
+                except ModuleNotFoundError as exc:
+                    if exc.name != "hezar":
+                        logger.warning("Persian plate OCR unavailable: %s", exc)
+                except Exception as exc:
+                    logger.warning("Persian plate OCR unavailable: %s", exc)
+            return self._persian
+
+    def _read_persian(self, reader, bgr, boxes, min_conf: float) -> _Candidate | None:
+        threshold = max(PERSIAN_PLATE_MIN_CONF, min_conf)
+        h, w = bgr.shape[:2]
+        # A wide image may already be cropped. Preserve all the characters in
+        # that case, including province digits a text detector can cut off.
+        if 3.5 <= w / h <= 7.5:
+            boxes = [(0, 0, w, h), *boxes]
+
+        for box in boxes:
+            x1, y1, x2, y2 = map(int, box)
+            x1, x2 = max(0, x1), min(w, x2)
+            y1, y2 = max(0, y1), min(h, y2)
+            bw, bh = x2 - x1, y2 - y1
+            if bh < 12 or bw < 44 or not 2.2 <= bw / bh <= 7.5:
+                continue
+            tight = (x1, y1, x2, y2)
+            dx, dy = round(bw * 0.06), round(bh * 0.06)
+            padded = (max(0, x1 - dx), max(0, y1 - dy), min(w, x2 + dx), min(h, y2 + dy))
+            # Detection can cut into the first digit or the province field.
+            for left, top, right, bottom in dict.fromkeys((tight, padded)):
+                crop = bgr[top:bottom, left:right]
+                try:
+                    with self._lock:
+                        text, confidence = reader.read(crop)
+                except Exception:
+                    logger.exception("Persian plate OCR failed on a crop")
+                    return None
+
+                text, valid = pt.validate(text)
+                if valid and len(text) == 8 and text[6:] in pt.PROVINCE_CODES and confidence >= threshold:
+                    return _Candidate(text, confidence, "hezar", True, (left, top, right, bottom))
+        return None
+
     def _get_crnn(self):
         with self._lock:
             if self._crnn is not None or self._crnn is False:
-                return self._crnn
+                return self._crnn or None
             import os
             w = os.path.join(self.models_dir, "crnn_best.pt")
             if not os.path.exists(w):
@@ -1081,8 +1136,9 @@ class PlateReader:
         fast_mode=True: اگر از برش‌های پلاک کاندیدا ساخته شد (حتی نامعتبر
         ولی قابل‌ترمیم)، OCR گرانِ کل-تصویر اجرا نمی‌شود — سرعت ~۱۰ برابر.
         """
-        t0 = time.perf_counter()
         caps = capabilities(self.models_dir)
+        recognizer = self._get_persian() if caps["hezar"] and self._get_crnn() is None else None
+        t0 = time.perf_counter()
 
         # محدود کردن اندازه برای کنترل زمان CPU
         H, W = bgr.shape[:2]
@@ -1108,7 +1164,14 @@ class PlateReader:
         detect_ms = round((time.perf_counter() - t1) * 1000)
 
         method_prefix = "yolo" if self._get_yolo() is not None else "classical"
-        ocr_crops_ms = 0.0
+        t2 = time.perf_counter()
+        persian = (self._read_persian(recognizer, bgr, [box for box, _ in dets[:3]], min_conf)
+                   if recognizer is not None else None)
+        ocr_crops_ms = time.perf_counter() - t2
+        if persian is not None:
+            persian.method = f"{method_prefix}+{persian.method}"
+            cands.append(persian)
+            dets = []
         valid_count = 0
         for i, (box, _warp) in enumerate(dets[:3]):
             # سقف زمانی: هر باکس ~۱ تا ۳ ثانیه OCR می‌برد — بعد از ۲ کاندیدای
@@ -1444,7 +1507,8 @@ class PlateReader:
             "plates": plate_items,
             "engine": {
                 "detector": "yolo" if caps["yolo_weights"] and caps["ultralytics"] else "classical",
-                "ocr": "crnn+easyocr" if (caps["crnn_weights"] and caps["torch"]) else "easyocr",
+                "ocr": ("hezar" if persian is not None else
+                        "crnn+easyocr" if caps["crnn_weights"] and caps["torch"] else "easyocr"),
                 "easyocr_error": self._easy_err,
                 "yolo_error": self._yolo_err if self._yolo_err != "weights-missing" else None,
                 "fast_mode": fast_mode,

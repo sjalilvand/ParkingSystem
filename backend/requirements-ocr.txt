@@ -11,8 +11,14 @@ Pillow>=10
 arabic-reshaper>=3.0
 python-bidi>=0.4
 
-# بک‌اند OCR آماده (پیش‌فرض) — بدون نیاز به آموزش
+# بک‌اند OCR عمومی برای خوانش‌های پشتیبان
 easyocr>=1.7.1
+
+# CRNN مخصوص پلاک ایران؛ در صورت نبود مدل، EasyOCR مسیر پشتیبان است.
+hezar==1.0.0
+requests>=2.32,<3
+transformers>=4.30,<5
+huggingface-hub>=0.34,<1
 # ⚠ در Docker (لینوکس)، Dockerfile خودش torch CPU (~۲۲۰MB) را از
 #    download.pytorch.org/whl/cpu نصب می‌کند تا چند گیگابایت بیلد CUDA دانلود نشود.
 #    این فایل را دستی تغییر ندهید — torch را حذف/اضافه نکنید.

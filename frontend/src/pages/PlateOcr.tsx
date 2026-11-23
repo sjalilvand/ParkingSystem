@@ -126,7 +126,7 @@ export default function PlateOcr() {
   const engineFa = (e?: { detector?: string; ocr?: string }) => {
     if (!e) return ''
     const det = e.detector === 'yolo' ? 'YOLO' : 'تشخیص کلاسیک (CV)'
-    const ocr = e.ocr === 'crnn+easyocr' ? 'CRNN + EasyOCR' : 'EasyOCR'
+    const ocr = e.ocr === 'hezar' ? 'Hezar CRNN' : e.ocr === 'crnn+easyocr' ? 'CRNN + EasyOCR' : 'EasyOCR'
     return `${det} + ${ocr}`
   }
   const timingsFa = (t?: OcrTimings) => {
@@ -149,11 +149,11 @@ export default function PlateOcr() {
           {st.ready ? 'موتور پلاک‌خوان آماده است ✓' : 'موتور OCR نصب نشده — می‌توانی ادامه بدهی اما خطای وابستگی می‌بینی.'}
           {st.ready ? ' ' : ' '}
           <Box component="code" sx={{ fontSize: 11 }}>
-            {`تشخیص: ${st.capabilities?.yolo_weights && st.capabilities?.ultralytics ? 'YOLO ✓' : 'کلاسیک'} | OCR: ${st.capabilities?.easyocr ? 'EasyOCR ✓' : ''}${st.capabilities?.crnn_weights && st.capabilities?.torch ? ' CRNN ✓' : ''}`}
+            {`تشخیص: ${st.capabilities?.yolo_weights && st.capabilities?.ultralytics ? 'YOLO ✓' : 'کلاسیک'} | OCR: ${st.capabilities?.hezar ? 'Hezar ✓ ' : ''}${st.capabilities?.easyocr ? 'EasyOCR ✓' : ''}${st.capabilities?.crnn_weights && st.capabilities?.torch ? ' CRNN ✓' : ''}`}
           </Box>
           {!st.ready && st.install_hint && (
             <Typography variant="caption" component="div" sx={{ mt: 0.5 }}>
-              نصب: <Box component="code">{st.install_hint}</Box> (بار اول مدل‌های EasyOCR دانلود می‌شود)
+              نصب: <Box component="code">{st.install_hint}</Box> (بار اول مدل‌های OCR دانلود می‌شوند)
             </Typography>
           )}
         </Alert>
@@ -333,7 +333,7 @@ export default function PlateOcr() {
 
       <Typography variant="caption" color="text.secondary">
         نکته: همین سرویس پشت‌صحنهٔ گیت هم است — دکمهٔ «تشخیص پلاک» همان endpoint صفحهٔ تست قدیمی
-        (/plate-ocr/read) را صدا می‌زند؛ بار اول که EasyOCR اجرا شود، دانلود مدل ممکن است کمی طول بکشد.
+        (/plate-ocr/read) را صدا می‌زند؛ دانلود مدل‌های OCR در اولین اجرا ممکن است کمی طول بکشد.
       </Typography>
     </Stack>
   )

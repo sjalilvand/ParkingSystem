@@ -163,7 +163,7 @@
 
   <div class="card">
     <div class="hint">
-      <b>نصب موتور روی سرور</b> (اگر وضعیت بالا «easyocr» را خاموش نشان می‌دهد):<br>
+      <b>نصب موتور روی سرور</b> (اگر وضعیت بالا موتور OCR را آماده نشان نمی‌دهد):<br>
       <code dir="ltr">cd D:\Projects\ParkingSystem\backend</code><br>
       <code dir="ltr">pip install -r requirements-ocr.txt</code><br>
       بار اول که عکس می‌فرستید مدل‌ها دانلود می‌شوند (چند دقیقه) و بعد از آن هر تحلیل معمولاً ۱ تا ۴ ثانیه طول می‌کشد
@@ -205,7 +205,7 @@ async function loadStatus(){
     const c = j.capabilities || {};
     const mk = (k,label) => `<span class="cap ${c[k]?'on':'off'}">${label}${c[k]?' ✓':' ✕'}</span>`;
     $('caps').innerHTML =
-      mk('opencv','OpenCV') + mk('easyocr','EasyOCR') + mk('torch','Torch') +
+      mk('opencv','OpenCV') + mk('hezar','Hezar') + mk('easyocr','EasyOCR') + mk('torch','Torch') +
       mk('ultralytics','YOLO') + mk('yolo_weights','مدل تشخیص') + mk('crnn_weights','مدل CRNN');
     if(!j.ready) showErr('⚠ موتور OCR نصب نیست.\n' + (j.install_hint||''));
   }catch(e){ showErr('سرور در دسترس نیست: ' + e.message); }

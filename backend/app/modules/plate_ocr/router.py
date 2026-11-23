@@ -89,9 +89,9 @@ async def status():
     caps = capabilities(settings.PLATE_OCR_MODELS_DIR)
     # بدون numpy/opencv حتی decode تصویر ممکن نیست — ready باید واقع‌بینانه باشد
     base_ok = caps.get("numpy", False) and caps.get("opencv", False)
-    ocr_ready = base_ok and (caps["easyocr"] or (caps["crnn_weights"] and caps["torch"]))
+    ocr_ready = base_ok and (caps["hezar"] or caps["easyocr"] or (caps["crnn_weights"] and caps["torch"]))
     hint = None if ocr_ready else (
-        "cd backend && pip install -r requirements-ocr.txt  (بار اول مدل‌های EasyOCR دانلود می‌شود)"
+        "cd backend && pip install -r requirements-ocr.txt  (بار اول مدل‌های OCR دانلود می‌شوند)"
         if base_ok else
         "وابستگی‌های پایهٔ OCR نصب نیستند — نصب: cd backend && pip install -r requirements-ocr.txt"
         "  |  در Docker: INSTALL_OCR=true در .env.prod سپس build مجدد backend"

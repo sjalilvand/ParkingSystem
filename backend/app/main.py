@@ -53,20 +53,23 @@ async def lifespan(app: FastAPI):
     if settings.VEHICLE_SYNC_SCHEDULER and settings.GOOGLE_SHEETS_ENABLED:
         sync_task = asyncio.create_task(_vehicle_sync_scheduler_loop())
 
-    # الحاقیه §۵ — warmup پلاک‌خوان: لود مدل EasyOCR در استارت (نه اولین درخواست).
-    # اندازه‌گیری واقعی: اولین درخواست بدون warmup ~۳۵ ثانیه (لود مدل + اولین
-    # استنتاج CPU) — کارفرما «۳۵ ثانیه معطلی» را خطا می‌پنداشت. مدل در volume
-    # /root/.EasyOCR ماندگار است؛ پس لود در استارت سریع و بدون دانلود است.
+    # مدل‌های OCR را در پس‌زمینه از کش ماندگار بارگذاری می‌کنیم.
     import threading as _threading
 
     def _ocr_warmup() -> None:
         try:
             from app.modules.plate_ocr.engine import capabilities, get_reader
-            caps = capabilities()
-            if caps.get("easyocr"):
-                t_w = time.perf_counter()
-                get_reader()._get_easy()
-                logger.info(f"[lifespan] plate-ocr warmup done in {time.perf_counter() - t_w:.1f}s")
+            models_dir = settings.PLATE_OCR_MODELS_DIR
+            caps = capabilities(models_dir)
+            if not (caps["hezar"] or caps["easyocr"]):
+                return
+            t_w = time.perf_counter()
+            reader = get_reader(models_dir)
+            if caps["hezar"] and reader._get_crnn() is None:
+                reader._get_persian()
+            if caps["easyocr"]:
+                reader._get_easy()
+            logger.info(f"[lifespan] plate-ocr warmup done in {time.perf_counter() - t_w:.1f}s")
         except Exception as exc:  # noqa: BLE001
             logger.warning(f"[lifespan] plate-ocr warmup skipped: {exc}")
 
