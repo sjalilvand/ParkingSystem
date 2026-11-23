@@ -10,7 +10,7 @@ from app.modules.plate_ocr import engine
 def reader(monkeypatch):
     instance = engine.PlateReader()
     caps = engine.capabilities()
-    monkeypatch.setattr(engine, "capabilities", lambda *_: {**caps, "hezar": True})
+    monkeypatch.setattr(engine, "capabilities", lambda *_: {**caps, "hezar": True, "onnx_plate_detector": False})
     monkeypatch.setattr(instance, "_get_crnn", lambda: None)
     monkeypatch.setattr(instance, "_detect", lambda _: [((65, 35, 215, 70), None)])
     return instance
@@ -46,3 +46,34 @@ def test_uncertain_persian_read_falls_back(reader, monkeypatch, text, confidence
     result = reader.read_image(image, want_annotated=False)
     assert result["best"]["raw"] == "22س34511"
     assert result["engine"]["ocr"] == "easyocr"
+
+
+def test_learned_detector_recovers_tilted_plate(reader, monkeypatch):
+    caps = engine.capabilities()
+    monkeypatch.setattr(engine, "capabilities", lambda *_: {
+        **caps, "hezar": True, "onnx_plate_detector": True,
+    })
+    monkeypatch.setattr(reader, "_detect", lambda _: [])
+    monkeypatch.setattr(reader, "_detect_plate_boxes", lambda _: [(10, 10, 110, 70)])
+    monkeypatch.setattr(engine, "warp_plate", lambda _: np.zeros((20, 80, 3), dtype=np.uint8))
+
+    def read(crop):
+        return ("۱۳ب۱۱۱۱۰", 0.93) if not crop.any() else ("۱۳ب۱۱۱", 0.98)
+
+    monkeypatch.setattr(reader, "_get_persian", lambda: SimpleNamespace(read=read))
+    image = np.full((120, 300, 3), 210, dtype=np.uint8)
+    result = reader.read_image(image, want_annotated=False)
+    assert result["best"]["system"] == "13B111IR10"
+    assert result["best"]["method"] == "onnx-yolov9+hezar"
+    assert result["engine"]["detector"] == "onnx-yolov9"
+
+
+def test_wide_crop_retries_with_border(reader, monkeypatch):
+    def read(crop):
+        return ("۱۳ب۱۱۱۱۰", 0.94) if crop.shape[1] > 300 else ("۱۳ب۱۱۱", 0.98)
+
+    monkeypatch.setattr(reader, "_get_persian", lambda: SimpleNamespace(read=read))
+    image = np.full((60, 300, 3), 210, dtype=np.uint8)
+    result = reader.read_image(image, want_annotated=False)
+    assert result["best"]["system"] == "13B111IR10"
+    assert result["best"]["box"] == [0, 0, 300, 60]

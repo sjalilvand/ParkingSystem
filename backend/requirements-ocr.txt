@@ -16,6 +16,9 @@ easyocr>=1.7.1
 
 # CRNN مخصوص پلاک ایران؛ در صورت نبود مدل، EasyOCR مسیر پشتیبان است.
 hezar==1.0.0
+# مدل ONNX برای پیدا کردن موقعیت پلاک در تصاویر دشوار
+open-image-models[onnx]==0.6.0
+# وابستگی‌های خوانشگر Hezar
 requests>=2.32,<3
 transformers>=4.30,<5
 huggingface-hub>=0.34,<1

@@ -90,6 +90,7 @@ def capabilities(models_dir: str = "models") -> dict:
         "opencv": HAS_CV2,
         "easyocr": has("easyocr"),
         "hezar": has("hezar"),
+        "onnx_plate_detector": has("open_image_models") and has("onnxruntime"),
         "torch": has("torch"),
         "ultralytics": has("ultralytics"),
         "yolo_weights": os.path.exists(yolo_w),
@@ -491,6 +492,8 @@ class PlateReader:
         self._crnn = None
         self._persian = None
         self._persian_checked = False
+        self._plate_detector = None
+        self._plate_detector_checked = False
         self._yolo = None
         self._yolo_err: str | None = None
         self._lock = threading.RLock()
@@ -523,37 +526,77 @@ class PlateReader:
                     logger.warning("Persian plate OCR unavailable: %s", exc)
             return self._persian
 
-    def _read_persian(self, reader, bgr, boxes, min_conf: float) -> _Candidate | None:
+    def _get_plate_detector(self):
+        with self._lock:
+            if not self._plate_detector_checked:
+                self._plate_detector_checked = True
+                try:
+                    from app.modules.plate_ocr.plate_detector import load_plate_detector
+
+                    self._plate_detector = load_plate_detector()
+                except Exception as exc:
+                    logger.warning("ONNX plate detection unavailable: %s", exc)
+            return self._plate_detector
+
+    def _detect_plate_boxes(self, bgr) -> list[tuple]:
+        detector = self._get_plate_detector()
+        if detector is None:
+            return []
+        try:
+            detections = detector.predict(bgr)
+            return [item.bounding_box.xyxy for item in
+                    sorted(detections, key=lambda item: -item.confidence)[:3]]
+        except Exception:
+            logger.exception("ONNX plate detection failed")
+            return []
+
+    def _read_persian(self, reader, bgr, boxes, min_conf: float, *, detected=False) -> _Candidate | None:
         threshold = max(PERSIAN_PLATE_MIN_CONF, min_conf)
         h, w = bgr.shape[:2]
-        # A wide image may already be cropped. Preserve all the characters in
-        # that case, including province digits a text detector can cut off.
-        if 3.5 <= w / h <= 7.5:
-            boxes = [(0, 0, w, h), *boxes]
+        def read_complete(crop, box):
+            with self._lock:
+                text, confidence = reader.read(crop)
+            text, valid = pt.validate(text)
+            if valid and len(text) == 8 and text[6:] in pt.PROVINCE_CODES and confidence >= threshold:
+                return _Candidate(text, confidence, "hezar", True, box)
+            return None
 
-        for box in boxes:
-            x1, y1, x2, y2 = map(int, box)
-            x1, x2 = max(0, x1), min(w, x2)
-            y1, y2 = max(0, y1), min(h, y2)
-            bw, bh = x2 - x1, y2 - y1
-            if bh < 12 or bw < 44 or not 2.2 <= bw / bh <= 7.5:
-                continue
-            tight = (x1, y1, x2, y2)
-            dx, dy = round(bw * 0.06), round(bh * 0.06)
-            padded = (max(0, x1 - dx), max(0, y1 - dy), min(w, x2 + dx), min(h, y2 + dy))
-            # Detection can cut into the first digit or the province field.
-            for left, top, right, bottom in dict.fromkeys((tight, padded)):
-                crop = bgr[top:bottom, left:right]
-                try:
-                    with self._lock:
-                        text, confidence = reader.read(crop)
-                except Exception:
-                    logger.exception("Persian plate OCR failed on a crop")
-                    return None
+        try:
+            # Keep the outer digits on inputs already cropped to the edge.
+            if not detected and 3.5 <= w / h <= 7.5:
+                full_box = (0, 0, w, h)
+                hit = read_complete(bgr, full_box)
+                if hit is not None:
+                    return hit
+                dy = max(2, round(h * 0.04))
+                for fraction in (0.02, 0.04, 0.06):
+                    dx = max(2, round(w * fraction))
+                    padded = cv2.copyMakeBorder(bgr, dy, dy, dx, dx, cv2.BORDER_REPLICATE)
+                    hit = read_complete(padded, full_box)
+                    if hit is not None:
+                        return hit
 
-                text, valid = pt.validate(text)
-                if valid and len(text) == 8 and text[6:] in pt.PROVINCE_CODES and confidence >= threshold:
-                    return _Candidate(text, confidence, "hezar", True, (left, top, right, bottom))
+            min_aspect = 1.3 if detected else 2.2
+            for box in boxes:
+                x1, y1, x2, y2 = map(int, box)
+                x1, x2 = max(0, x1), min(w, x2)
+                y1, y2 = max(0, y1), min(h, y2)
+                bw, bh = x2 - x1, y2 - y1
+                if bh < 12 or bw < 44 or not min_aspect <= bw / bh <= 7.5:
+                    continue
+                tight = (x1, y1, x2, y2)
+                dx, dy = round(bw * 0.06), round(bh * 0.06)
+                padded = (max(0, x1 - dx), max(0, y1 - dy), min(w, x2 + dx), min(h, y2 + dy))
+                for bounds in dict.fromkeys((tight, padded)):
+                    left, top, right, bottom = bounds
+                    crop = bgr[top:bottom, left:right]
+                    hit = read_complete(crop, bounds)
+                    if hit is None and detected:
+                        hit = read_complete(warp_plate(crop), bounds)
+                    if hit is not None:
+                        return hit
+        except Exception:
+            logger.exception("Persian plate OCR failed on a crop")
         return None
 
     def _get_crnn(self):
@@ -1167,6 +1210,11 @@ class PlateReader:
         t2 = time.perf_counter()
         persian = (self._read_persian(recognizer, bgr, [box for box, _ in dets[:3]], min_conf)
                    if recognizer is not None else None)
+        if persian is None and recognizer is not None and caps["onnx_plate_detector"]:
+            precise_boxes = self._detect_plate_boxes(bgr)
+            persian = self._read_persian(recognizer, bgr, precise_boxes, min_conf, detected=True)
+            if persian is not None:
+                method_prefix = "onnx-yolov9"
         ocr_crops_ms = time.perf_counter() - t2
         if persian is not None:
             persian.method = f"{method_prefix}+{persian.method}"
@@ -1506,7 +1554,7 @@ class PlateReader:
             "best": best_item,
             "plates": plate_items,
             "engine": {
-                "detector": "yolo" if caps["yolo_weights"] and caps["ultralytics"] else "classical",
+                "detector": method_prefix,
                 "ocr": ("hezar" if persian is not None else
                         "crnn+easyocr" if caps["crnn_weights"] and caps["torch"] else "easyocr"),
                 "easyocr_error": self._easy_err,

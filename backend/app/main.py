@@ -66,7 +66,8 @@ async def lifespan(app: FastAPI):
             t_w = time.perf_counter()
             reader = get_reader(models_dir)
             if caps["hezar"] and reader._get_crnn() is None:
-                reader._get_persian()
+                if reader._get_persian() is not None and caps["onnx_plate_detector"]:
+                    reader._get_plate_detector()
             if caps["easyocr"]:
                 reader._get_easy()
             logger.info(f"[lifespan] plate-ocr warmup done in {time.perf_counter() - t_w:.1f}s")

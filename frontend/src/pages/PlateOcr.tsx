@@ -125,7 +125,7 @@ export default function PlateOcr() {
   const best = res?.best
   const engineFa = (e?: { detector?: string; ocr?: string }) => {
     if (!e) return ''
-    const det = e.detector === 'yolo' ? 'YOLO' : 'تشخیص کلاسیک (CV)'
+    const det = e.detector === 'onnx-yolov9' ? 'YOLOv9 (ONNX)' : e.detector === 'yolo' ? 'YOLO' : 'تشخیص کلاسیک (CV)'
     const ocr = e.ocr === 'hezar' ? 'Hezar CRNN' : e.ocr === 'crnn+easyocr' ? 'CRNN + EasyOCR' : 'EasyOCR'
     return `${det} + ${ocr}`
   }
