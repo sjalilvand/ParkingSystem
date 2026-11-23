@@ -32,13 +32,23 @@ try { powercfg /hibernate off 2>$null | Out-Null } catch {}
 
 # ۶) خواب‌شدن tabهای Edge (Sleeping Tabs) خاموش شود — صفحهٔ گیت تا ابد بیدار
 #    (به‌علاوه خود صفحهٔ گیت با «بیدارماندن صفحه» هم محافظت شده است)
-try {
-    $edge = "HKLM:\SOFTWARE\Policies\Microsoft\Edge"
-    if (-not (Test-Path $edge)) { New-Item -Path $edge -Force | Out-Null }
-    Set-ItemProperty -Path $edge -Name SleepingTabsEnabled -Value 0 -Type DWord -ErrorAction SilentlyContinue
-    Write-Host "  ✔ خواب‌شدن tabهای Edge (Sleeping Tabs) خاموش شد" -ForegroundColor Green
-} catch {
-    Write-Host "  ⚠ تنظیم Edge اعمال نشد (دسترسی Administrator لازم است) — چندان مهم نیست؛ صفحهٔ گیت خودش محافظت شده" -ForegroundColor Yellow
+#    ریشهٔ ارور قبلی («Access to the registry key ... denied»): HKLM دسترسی
+#    Administrator می‌خواهد — اما Edge سیاست‌ها را از HKCU هم می‌خواند؛ پس اول
+#    HKCU (بدون نیاز به admin) و فقط اگر نشد HKLM تلاش می‌شود.
+$edgeDone = $false
+foreach ($edge in @("HKCU:\SOFTWARE\Policies\Microsoft\Edge", "HKLM:\SOFTWARE\Policies\Microsoft\Edge")) {
+    try {
+        if (-not (Test-Path $edge)) { New-Item -Path $edge -Force | Out-Null }
+        Set-ItemProperty -Path $edge -Name SleepingTabsEnabled -Value 0 -Type DWord -ErrorAction Stop
+        Write-Host "  ✔ خواب‌شدن tabهای Edge (Sleeping Tabs) خاموش شد ($edge)" -ForegroundColor Green
+        $edgeDone = $true
+        break
+    } catch {
+        # تلاش با hive بعدی
+    }
+}
+if (-not $edgeDone) {
+    Write-Host "  ⚠ تنظیم Edge اعمال نشد (نیاز به Administrator) — مهم نیست؛ صفحهٔ گیت خودش با Wake Lock محافظت شده" -ForegroundColor Yellow
 }
 
 # ---- تأیید ----

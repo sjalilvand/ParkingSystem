@@ -75,6 +75,9 @@ services:
   nginx:
     build:
       context: ./frontend
+      # dist-only: dist روی هاست ساخته شده — بدون نیاز به node:20-alpine/Docker Hub
+      # with-node: بیلد کامل داخل Docker — UPDATE-AND-RUN.ps1 انتخاب می‌کند
+      target: ${FRONTEND_BUILD_TARGET:-with-node}
     restart: unless-stopped
     ports:
       - "${APP_PORT:-8880}:80"

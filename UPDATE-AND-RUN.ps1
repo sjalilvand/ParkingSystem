@@ -179,10 +179,41 @@ if ($Prod) {
 Write-Host ""
 Write-Host "=== [۴] آماده‌سازی فرانت‌اند ===" -ForegroundColor Yellow
 if ($Prod) {
-    # در حالت -Prod فرانت داخل Docker بیلد می‌شود (مرحلهٔ nginx در compose).
-    # بیلد محلی با Node نه لازم است نه می‌خواهد — قبلاً همین‌جا قفل node.exe
-    # گیت‌پول را می‌شکست و npm.cmd نبودن هم ارور می‌داد. پس در -Prod کلاً رد می‌کنیم.
-    Write-Host "  حالت -Prod: بیلد فرانت‌اند داخل Docker انجام می‌شود — این گام رد شد ✔" -ForegroundColor Gray
+    # ------------------------------------------------------------------
+    # حالت -Prod: بیلد فرانت را روی هاست با Node محلی انجام می‌دهیم تا تصویر
+    # nginx بدون node:20-alpine ساخته شود — ریشهٔ ارور «403 Forbidden»:
+    # Docker Hub به IP بعضی شبکه‌ها node:20-alpine را نمی‌دهد و کل استقرار در
+    # گام [۶] می‌شکست. اگر بیلد هاست ناموفق بود، مثل قبل داخل Docker بیلد می‌شود.
+    # ------------------------------------------------------------------
+    $env:FRONTEND_BUILD_TARGET = "with-node"
+    Write-Host "  حالت -Prod: تلاش برای بیلد فرانت روی هاست (بدون نیاز به Docker Hub) …"
+    $pNodeCmd = $null
+    if (Test-Path (Join-Path $root "tools\node\node.exe")) { $pNodeCmd = Join-Path $root "tools\node\node.exe" }
+    elseif (Test-Path (Join-Path $root "tools\node\node-v24-x64\node.exe")) { $pNodeCmd = Join-Path $root "tools\node\node-v24-x64\node.exe" }
+    else { $pNodeCmd = (Get-Command node -ErrorAction SilentlyContinue).Source }
+    if ($pNodeCmd) {
+        $pNpmCmd = $pNodeCmd.Replace("node.exe", "npm.cmd")
+        if (-not (Test-Path $pNpmCmd)) { $pNpmCmd = (Get-Command npm.cmd -ErrorAction SilentlyContinue).Source }
+        $pNodeDir = Split-Path -Parent $pNodeCmd
+        if ($pNodeDir -and (($env:PATH -split ';') -notcontains $pNodeDir)) { $env:PATH = "$pNodeDir;$env:PATH" }
+        Write-Host "  Node: $pNodeCmd" -ForegroundColor Gray
+        if (-not (Test-Path (Join-Path $frontend "node_modules"))) {
+            Write-Host "  نصب node_modules …"
+            Push-Location $frontend; & $pNpmCmd install --no-audit --no-fund; Pop-Location
+        }
+        Write-Host "  ساخت نسخهٔ نهایی فرانت (vite build) …"
+        Push-Location $frontend
+        & $pNpmCmd run build
+        Pop-Location
+        if (Test-Path (Join-Path $frontend "dist\index.html")) {
+            $env:FRONTEND_BUILD_TARGET = "dist-only"
+            Write-Host "  ✔ dist روی هاست ساخته شد — تصویر nginx بدون node:20-alpine ساخته می‌شود (dist-only) ✔" -ForegroundColor Green
+        } else {
+            Write-Host "  ⚠ ساخت dist ناموفق بود — بیلد فرانت داخل Docker انجام می‌شود (with-node — به Docker Hub نیاز دارد)" -ForegroundColor Yellow
+        }
+    } else {
+        Write-Host "  ⚠ Node محلی یافت نشد — بیلد فرانت داخل Docker انجام می‌شود (with-node — به Docker Hub نیاز دارد)" -ForegroundColor Yellow
+    }
 } else {
 $nodeCmd = $null
 if (Test-Path (Join-Path $root "tools\node\node.exe")) { $nodeCmd = Join-Path $root "tools\node\node.exe" }
@@ -279,9 +310,16 @@ if ($Prod) {
         exit 1
     }
     Write-Host "  Docker آماده است ✔" -ForegroundColor Green
+    Write-Host "  تارگت بیلد فرانت: $env:FRONTEND_BUILD_TARGET" -ForegroundColor Gray
     docker compose --env-file $envFile -f (Join-Path $root "docker-compose.prod.yml") up -d --build
     if ($LASTEXITCODE -ne 0) {
-        Write-Host "  ✗ docker compose ناموفق — Docker Desktop روشن است؟ لاگ بالا را بررسی کن." -ForegroundColor Red
+        Write-Host "  ✗ docker compose ناموفق — لاگ بالا را بررسی کن." -ForegroundColor Red
+        Write-Host "    اگر خطا «403 Forbidden» برای node:20-alpine/nginx یا هر تصویر دیگر بود → Docker Hub به IP شما دسترسی نمی‌دهد. دو راه:" -ForegroundColor Yellow
+        Write-Host "      راه ۱ (یک‌بار برای همیشه): Docker Desktop → Settings → Docker Engine → این خط را به JSON اضافه کن و Apply & Restart:" -ForegroundColor Yellow
+        Write-Host "        \"registry-mirrors\": [\"https://docker.m.daocloud.io\"]" -ForegroundColor Yellow
+        Write-Host "      راه ۲ (فقط همین تصویر):" -ForegroundColor Yellow
+        Write-Host "        docker pull docker.m.daocloud.io/library/node:20-alpine" -ForegroundColor Yellow
+        Write-Host "        docker tag docker.m.daocloud.io/library/node:20-alpine node:20-alpine" -ForegroundColor Yellow
         if ($appPort -eq 80) {
             Write-Host "    اگر خطا «Bind for 0.0.0.0:80 failed: port is already allocated» بود → پورت ۸۰ سرور اشغال است:" -ForegroundColor Yellow
             Write-Host "      docker ps --format \"table {{.Names}}\t{{.Ports}}\"   ← ببین چه کانتینری پورت ۸۰ را دارد" -ForegroundColor Yellow

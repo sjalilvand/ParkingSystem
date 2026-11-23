@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     # نسخهٔ سامانه — با هر تغییر قابل‌مشاهده یک عدد جلو می‌رود.
     # در ۴ جا دیده می‌شود: /health/live ، چیپ نوار بالای UI ، بنر استارت لاگ
     # و خروجی UPDATE-AND-RUN.ps1 — تا مقایسهٔ «کد جدید اعمال شده یا نه» ساده باشد.
-    APP_VERSION: str = "2.7.1"
+    APP_VERSION: str = "2.7.2"
     APP_SECRET_KEY: str = "change-me-in-production"
     APP_TIMEZONE: str = "Asia/Tehran"
 
