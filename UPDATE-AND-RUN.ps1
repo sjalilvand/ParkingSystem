@@ -108,6 +108,13 @@ if (Test-Path $alwaysOnScript) {
 }
 
 # ---------- [۲] محیط مجازی پایتون ----------
+# در حالت -Prod کلاً رد می‌شود: بک‌اند داخل Docker از PyPI رسمی نصب می‌شود و
+# venv محلی هیچ نقشی در prod ندارد. (پیش‌تر میرورِ قطعِ pip اینجا ارور
+# «cryptography==44.0.0 not found» می‌داد و انگار استقرار را خراب کرده بود)
+if ($Prod) {
+    Write-Host ""
+    Write-Host "=== [۲] محیط بک‌اند: در حالت -Prod داخل Docker نصب می‌شود — رد شد ✔ ===" -ForegroundColor Gray
+} else {
 Write-Host ""
 Write-Host "=== [۲] آماده‌سازی محیط بک‌اند ===" -ForegroundColor Yellow
 $pyExe = $null
@@ -140,11 +147,18 @@ if ($needInstall) {
     Write-Host "  نصب وابستگی‌ها (requirements.txt) …"
     & $venvPy -m pip install --upgrade pip -q
     & $venvPy -m pip install -r (Join-Path $backend "requirements.txt") -q
+    if ($LASTEXITCODE -ne 0) {
+        # میرور pip ماشینِ محلی (مثلاً archive.ito.gov.ir) ممکن است قطع/کند باشد —
+        # یک بار با PyPI رسمی تلاش می‌کنیم (بسته‌های نصب‌شده دوباره نصب نمی‌شوند)
+        Write-Host "  ⚠ نصب با ایندکس پیش‌فرض ناموفق بود — تلاش دوباره با PyPI رسمی …" -ForegroundColor Yellow
+        & $venvPy -m pip install -r (Join-Path $backend "requirements.txt") -q -i https://pypi.org/simple --timeout 60
+    }
     if ($LASTEXITCODE -eq 0) { New-Item -ItemType File -Path $marker -Force | Out-Null }
-    else { Write-Host "  ⚠ نصب با خطا مواجه شد — لاگ بالا را بررسی کن" -ForegroundColor Yellow }
+    else { Write-Host "  ⚠ نصب با خطا مواجه شد — فقط حالت dev لازم است؛ لاگ بالا را بررسی کن" -ForegroundColor Yellow }
 } else {
     Write-Host "  وابستگی‌ها به‌روز و نصب‌اند (هش requirements: $reqHash)" -ForegroundColor Gray
 }
+} # پایان شاخهٔ dev گام [۲]
 
 # ---------- [۳] مهاجرت پایگاه‌داده ----------
 if ($Prod) {
@@ -236,6 +250,35 @@ if ($Prod) {
         Write-Host "  بک‌آپ پایگاه‌داده پیش از ارتقا …" -ForegroundColor Gray
         try { & powershell -NoProfile -ExecutionPolicy Bypass -File $bak 2>$null | Out-Null } catch {}
     }
+    # پیش‌خوان Docker — ریشهٔ ارور «failed to connect to the docker API … pipe»:
+    # Docker Desktop روشن نیست. اگر خاموش باشد خودش اجرایش می‌کنیم و تا ۱۲۰ ثانیه صبر می‌کنیم.
+    Write-Host "  بررسی Docker …" -ForegroundColor Gray
+    function Test-DockerReady {
+        try { docker info *> $null; return ($LASTEXITCODE -eq 0) } catch { return $false }
+    }
+    if (-not (Test-DockerReady)) {
+        Write-Host "  Docker در دسترس نیست — تلاش برای اجرای Docker Desktop …" -ForegroundColor Yellow
+        $dd = @(
+            "$env:ProgramFiles\Docker\Docker\Docker Desktop.exe",
+            "${env:ProgramFiles(x86)}\Docker\Docker\Docker Desktop.exe",
+            "$env:LOCALAPPDATA\Docker\Docker Desktop.exe"
+        ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+        if ($dd) {
+            try { Start-Process -FilePath $dd } catch { Write-Host "  اجرای Docker Desktop ناموفق بود — دستی بازش کن." -ForegroundColor Yellow }
+            Write-Host "  منتظر آماده‌شدن کامل Docker (تا ۱۲۰ ثانیه) …" -ForegroundColor Gray
+            for ($wi = 0; $wi -lt 24; $wi++) {
+                Start-Sleep -Seconds 5
+                if (Test-DockerReady) { break }
+            }
+        } else {
+            Write-Host "  Docker Desktop در مسیرهای معمول پیدا نشد." -ForegroundColor Yellow
+        }
+    }
+    if (-not (Test-DockerReady)) {
+        Write-Host "  ✗ Docker روشن نیست — Docker Desktop را باز کن، صبر کن آیکون نهنگ ثابت شود، بعد دوباره اجرا کن:  .\UPDATE-AND-RUN.ps1 -Prod" -ForegroundColor Red
+        exit 1
+    }
+    Write-Host "  Docker آماده است ✔" -ForegroundColor Green
     docker compose --env-file $envFile -f (Join-Path $root "docker-compose.prod.yml") up -d --build
     if ($LASTEXITCODE -ne 0) {
         Write-Host "  ✗ docker compose ناموفق — Docker Desktop روشن است؟ لاگ بالا را بررسی کن." -ForegroundColor Red
