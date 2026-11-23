@@ -310,20 +310,38 @@ if ($Prod) {
         exit 1
     }
     Write-Host "  Docker آماده است ✔" -ForegroundColor Green
+    # پیش‌خوان پورت — ریشهٔ ارور «Bind for 0.0.0.0:80 failed: port is already allocated»:
+    # روی ویندوز معمولاً سرویس سیستمی (http.sys/IIS) پورت ۸۰ را از قبل گرفته و
+    # کانتینر nginx نمی‌تواند bind کند. اگر پروسهٔ غیر Docker روی پورت انتشار
+    # نشسته باشد، همین‌جا با پیام روشن متوقف می‌شویم — نه وسط استقرار.
+    $listener = Get-NetTCPConnection -LocalPort $appPort -State Listen -ErrorAction SilentlyContinue |
+        Select-Object -ExpandProperty OwningProcess -Unique | Select-Object -First 1
+    if ($listener) {
+        $pname = try { (Get-Process -Id $listener -ErrorAction Stop).ProcessName } catch { "PID $listener" }
+        if ($pname -notlike "*docker*") {
+            Write-Host "  ✗ پورت $appPort روی این ماشین توسط پروسهٔ «$pname» (PID $listener) اشغال است — کانتینر nginx bind نمی‌شود." -ForegroundColor Red
+            Write-Host "    یعنی APP_PORT در .env.prod با یک سرویس ویندوز (مثلاً IIS/http.sys روی پورت ۸۰) تداخل دارد." -ForegroundColor Yellow
+            Write-Host "    یک‌خطی‌ترین راه — انتقال پورت سامانه به 8085 و بالا آوردن دوباره:" -ForegroundColor Yellow
+            Write-Host "      .\scripts\prod-repair.ps1 -Port 8085 -SkipBuild" -ForegroundColor Yellow
+            Write-Host "    یا دستی: خط APP_PORT در .env.prod را به 8085 (یا 8880) تغییر بده و دوباره اجرا کن:" -ForegroundColor Yellow
+            Write-Host "      .\UPDATE-AND-RUN.ps1 -Prod" -ForegroundColor Yellow
+            exit 1
+        }
+    }
     Write-Host "  تارگت بیلد فرانت: $env:FRONTEND_BUILD_TARGET" -ForegroundColor Gray
     docker compose --env-file $envFile -f (Join-Path $root "docker-compose.prod.yml") up -d --build
     if ($LASTEXITCODE -ne 0) {
         Write-Host "  ✗ docker compose ناموفق — لاگ بالا را بررسی کن." -ForegroundColor Red
         Write-Host "    اگر خطا «403 Forbidden» برای node:20-alpine/nginx یا هر تصویر دیگر بود → Docker Hub به IP شما دسترسی نمی‌دهد. دو راه:" -ForegroundColor Yellow
         Write-Host "      راه ۱ (یک‌بار برای همیشه): Docker Desktop → Settings → Docker Engine → این خط را به JSON اضافه کن و Apply & Restart:" -ForegroundColor Yellow
-        Write-Host "        \"registry-mirrors\": [\"https://docker.m.daocloud.io\"]" -ForegroundColor Yellow
+        Write-Host '        "registry-mirrors": ["https://docker.m.daocloud.io"]' -ForegroundColor Yellow
         Write-Host "      راه ۲ (فقط همین تصویر):" -ForegroundColor Yellow
         Write-Host "        docker pull docker.m.daocloud.io/library/node:20-alpine" -ForegroundColor Yellow
         Write-Host "        docker tag docker.m.daocloud.io/library/node:20-alpine node:20-alpine" -ForegroundColor Yellow
         if ($appPort -eq 80) {
-            Write-Host "    اگر خطا «Bind for 0.0.0.0:80 failed: port is already allocated» بود → پورت ۸۰ سرور اشغال است:" -ForegroundColor Yellow
-            Write-Host "      docker ps --format \"table {{.Names}}\t{{.Ports}}\"   ← ببین چه کانتینری پورت ۸۰ را دارد" -ForegroundColor Yellow
-            Write-Host "      یا پورت سامانه را عوض کن:  .\scripts\prod-repair.ps1 -Port 8085 -SkipBuild" -ForegroundColor Yellow
+            Write-Host '    اگر خطا «Bind for 0.0.0.0:80 failed: port is already allocated» بود → پورت ۸۰ سرور اشغال است:' -ForegroundColor Yellow
+            Write-Host '      docker ps --format "table {{.Names}}\t{{.Ports}}"   ← ببین چه کانتینری پورت ۸۰ را دارد' -ForegroundColor Yellow
+            Write-Host '      یا پورت سامانه را عوض کن:  .\scripts\prod-repair.ps1 -Port 8085 -SkipBuild' -ForegroundColor Yellow
         }
         exit 1
     }
